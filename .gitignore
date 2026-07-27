@@ -1,0 +1,17 @@
+﻿# Godot
+godot/.godot/
+godot/.import/
+godot/build/
+*.translation
+
+# Tools (Godot console exe, not committed)
+tools/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Temp
+*.tmp
+*.log
