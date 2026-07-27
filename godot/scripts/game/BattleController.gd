@@ -9,19 +9,107 @@ extends RefCounted
 
 const FlowNetwork := preload("res://scripts/sim/FlowNetwork.gd")
 const Build := preload("res://scripts/sim/Build.gd")
+const Tide := preload("res://scripts/sim/Tide.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
+const Enemies := preload("res://data/Enemies.gd")
+const Maps := preload("res://data/Maps.gd")
 
 const TICK := 0.1
 
 
 ## 推進一個 tick。就地變更 `s`。
 static func step(s: RefCounted) -> void:
+	if s.phase == "lost":
+		return
 	s.tick_count += 1
+	s.phase_time += TICK
+	_tide(s)
 	# 邊只建一次：兩個資源網與回寫共用同一份，索引順序才對得起來。
 	var edges := _edges(s)
 	var ore_res := _solve_ore(s, edges)
 	var power_res := _solve_power(s, edges, ore_res)
 	_write_rates(s, edges, ore_res, power_res)
+
+
+# ── 敵潮：時間流 ＋ walk-by 破壞 ──────────────────────────────────────
+
+static func _tide(s: RefCounted) -> void:
+	match s.phase:
+		"prep":
+			if s.phase_time >= s.prep_time():
+				start_wave(s)
+		"wave":
+			_spawn_due(s)
+			_advance_and_damage(s)
+			# 一波「結束」＝ 沒有還在路上的敵人，也沒有還沒出場的。
+			# 走到核心的會留下來繼續啃——**它們是駐足，不是消失**。
+			if s.spawn_queue.is_empty() and not _anyone_walking(s):
+				s.phase = "prep"
+				s.phase_time = 0.0
+				s.speed_mult = 1
+
+
+## 開打。準備期可以提前結束（提前召喚的獎勵倍率是 B0.6）。
+static func start_wave(s: RefCounted) -> void:
+	if s.phase != "prep":
+		return
+	s.spawn_queue = Enemies.schedule(Maps.waves_of(s.map), s.wave_index)
+	s.wave_index += 1
+	s.phase = "wave"
+	s.phase_time = 0.0
+	s.speed_mult = 1  # 戰鬥期不可加速也不可減速（`10_GDD.md` B5）
+
+
+static func _spawn_due(s: RefCounted) -> void:
+	while not s.spawn_queue.is_empty() and float(s.spawn_queue[0]["at"]) <= s.phase_time:
+		s.add_enemy(String(s.spawn_queue[0]["type"]))
+		s.spawn_queue.remove_at(0)
+
+
+static func _anyone_walking(s: RefCounted) -> bool:
+	for e: Dictionary in s.enemies:
+		if not Tide.at_core(float(e["progress"]), s.path.size()):
+			return true
+	return false
+
+
+## ★ walk-by：先打相鄰 1 格內的建築，然後**繼續走**。
+## 推進與破壞完全不互相影響——沒有任何建築能改變一隻敵人的到達時間。
+static func _advance_and_damage(s: RefCounted) -> void:
+	var crossings: Dictionary = s.sets["crossings"]
+	for e: Dictionary in s.enemies:
+		var def := Enemies.of(String(e["type"]))
+		var cell := Tide.cell_of(s.path, float(e["progress"]))
+		var dmg := float(def.get("dmg", 0.0)) * TICK
+
+		for n: Dictionary in s.nodes:
+			if Tide.in_blast(cell, n["cell"]):
+				n["hp"] = float(n["hp"]) - dmg
+		for c: Dictionary in s.conduits:
+			if Tide.conduit_hit(c["cells"], crossings, cell):
+				c["hp"] = float(c["hp"]) - dmg
+
+		e["progress"] = Tide.advance(
+			float(e["progress"]), float(def.get("speed", 1.0)), s.path.size()
+		)
+
+	_clear_wreckage(s)
+
+
+## 打掉的東西要真的消失——**產能中斷是玩家該看到的後果**，
+## 留著一條 0 血的線只會讓瓶頸圖說謊。
+static func _clear_wreckage(s: RefCounted) -> void:
+	if s.core_hp() <= 0.0:
+		s.phase = "lost"
+		return
+	for i in range(s.nodes.size() - 1, -1, -1):
+		var n: Dictionary = s.nodes[i]
+		if float(n["hp"]) > 0.0 or int(n["id"]) == s.core_id:
+			continue
+		s.remove_node_at(n["cell"])
+	for i in range(s.conduits.size() - 1, -1, -1):
+		if float((s.conduits[i] as Dictionary)["hp"]) <= 0.0:
+			s.conduits.remove_at(i)
 
 
 # ── 礦砂網 ────────────────────────────────────────────────────────────

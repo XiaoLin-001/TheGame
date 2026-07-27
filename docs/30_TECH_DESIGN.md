@@ -76,7 +76,7 @@ TheGame/
     │   ├── ui/                 UiKit.gd（共用 UI helpers，static）
     │   └── meta/               TechTree.gd / RosterData.gd / TycoonSim.gd
     ├── data/                   角色、敵人、關卡、訂單的資料表（.json 或 .tres）
-    ├── tests/                  flow_test.gd / build_test.gd / combat_test.gd / save_test.gd / determinism_test.gd
+    ├── tests/                  flow_test.gd / build_test.gd / tide_test.gd / combat_test.gd / save_test.gd / determinism_test.gd
     └── assets/audio/
 ```
 

@@ -11,10 +11,15 @@ const BuildController := preload("res://scripts/game/BuildController.gd")
 const Build := preload("res://scripts/sim/Build.gd")
 const MapsData := preload("res://data/Maps.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
+const Enemies := preload("res://data/Enemies.gd")
+const Tide := preload("res://scripts/sim/Tide.gd")
 
 ## 地圖左上角。36×19 格 ×32px = 1152×608；左側 120px 留給建造欄，
 ## 浮層與地圖**不重疊**（RG-20 的先行實踐，正式驗收在 B0.6）。
 const ORIGIN := Vector2(120.0, 56.0)
+
+## `10_GDD.md` §7.1。**只在準備期可用。**
+const FAST_FORWARD_RATE := 4
 
 enum Mode { BUILD, CONNECT, UPGRADE, DEMOLISH }
 
@@ -30,6 +35,8 @@ var _message: String = ""
 var _top: HBoxContainer = null
 var _hint: Label = null
 var _mode_buttons: Dictionary = {}
+var _ff_button: Button = null
+var _lost_panel: Control = null
 
 
 func _ready() -> void:
@@ -45,12 +52,17 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_accum += delta
+	# 快進＝**多跑幾個 tick**，不是把 tick 拉長。固定時間步不能動，
+	# 否則同一組操作在不同倍率下會跑出不同結果（§2.4 確定性）。
+	var mult: int = s.speed_mult if s.phase == "prep" else 1
 	var guard := 0
-	while _accum >= BattleController.TICK and guard < 8:
-		BattleController.step(s)
+	while _accum >= BattleController.TICK and guard < 8 * mult:
+		for _i in mult:
+			BattleController.step(s)
 		_accum -= BattleController.TICK
-		guard += 1
+		guard += mult
 	_refresh_top()
+	_refresh_lost()
 	queue_redraw()
 
 
@@ -127,6 +139,7 @@ func _draw() -> void:
 	_draw_ore_cells()
 	_draw_conduits()
 	_draw_nodes()
+	_draw_enemies()
 	_draw_hover()
 
 
@@ -183,6 +196,14 @@ func _draw_conduits() -> void:
 			not to_node.is_empty() and float(sat.get(to_node["id"], 1.0)) < 0.95 and flow > 0.0
 		)
 		var w := Shapes.conduit_width(flow, cap)
+		# 受損：先鋪一圈 warn.orange 光暈。**線被打斷之前要先看得出它在挨打**，
+		# 否則產能中斷對玩家來說會是憑空發生的。
+		if float(c["hp"]) < 40.0:
+			var hurt := 1.0 - float(c["hp"]) / 40.0
+			draw_line(
+				_center(c["a"]), _center(c["b"]),
+				Palette.alpha(Palette.WARN_ORANGE, 0.25 + 0.55 * hurt), w + 6.0
+			)
 		draw_line(_center(c["a"]), _center(c["b"]), Palette.conduit(flow, cap, starving), w)
 		# 升級過的幹線在端點加刻度，讓「我升過這條」在無數值下也看得見。
 		for i in range(int(c["level"])):
@@ -193,6 +214,15 @@ func _draw_conduits() -> void:
 func _draw_nodes() -> void:
 	for n: Dictionary in s.nodes:
 		var p := _center(n["cell"])
+		var full := NodeDefs.hp(String(n["type"]))
+		if float(n["hp"]) < full:
+			# **血條不是圓環**：儲槽的充能也是琥珀色圓弧，兩個圓弧疊在同一顆
+			# 12px 的節點上肉眼分不出來（本批截圖當場抓到）。形狀不同才分得開。
+			var frac := clampf(float(n["hp"]) / full, 0.0, 1.0)
+			var bar := Vector2(24.0, 3.0)
+			var at := p + Vector2(-bar.x * 0.5, 15.0)
+			draw_rect(Rect2(at, bar), Palette.alpha(Palette.BG_DEEP, 0.8))
+			draw_rect(Rect2(at, Vector2(bar.x * frac, bar.y)), Palette.WARN_ORANGE)
 		match String(n["type"]):
 			"core":
 				# 最大的幾何體，order.bright 描邊（§1.6）。
@@ -217,6 +247,41 @@ func _draw_nodes() -> void:
 				draw_arc(p, 12.0, 0.0, TAU, 32, Palette.ORDER_DIM, 2.0)
 				if frac > 0.0:
 					draw_arc(p, 12.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 32, Palette.ENERGY_AMBER, 4.0)
+
+
+## 敵潮屬於**混沌**側（`20_ART_DIRECTION.md` §0）：不規則凸包、不對齊網格、
+## 呼吸式脈動。玩家的一切則是正圓正方、嚴格對齊——這個對比就是主題本身。
+func _draw_enemies() -> void:
+	for e: Dictionary in s.enemies:
+		var def := Enemies.of(String(e["type"]))
+		var p := _enemy_pos(e)
+		var r := float(def.get("radius", 9.0))
+		# 脈動用 tick 數推，不用系統時間——渲染可以不確定，但別引入新的亂數源。
+		var pulse := 1.0 + 0.12 * sin(float(s.tick_count) * 0.25 + float(e["id"]))
+		var pts := PackedVector2Array()
+		for i in 9:
+			var a := TAU * float(i) / 9.0
+			# 每隻各自的不規則度，由 id 決定（同一隻永遠長同一個樣子）。
+			# 值域收在 0.85–1.15：再寬就會有頂點塌進去，變成尖角旗子而不是水滴。
+			var wobble := 1.0 + 0.15 * sin(float(e["id"]) * 3.7 + a * 2.0)
+			pts.append(p + Vector2(cos(a), sin(a)) * r * pulse * wobble)
+		draw_colored_polygon(pts, Palette.TIDE_MAGENTA)
+		var frac := float(e["hp"]) / maxf(1.0, float(def.get("hp", 1.0)))
+		if frac < 1.0:
+			draw_arc(p, r + 4.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 20, Palette.TIDE_DEEP, 2.0)
+
+
+func _enemy_pos(e: Dictionary) -> Vector2:
+	var prog := float(e["progress"])
+	var i := clampi(int(floor(prog)), 0, s.path.size() - 1)
+	var j := mini(i + 1, s.path.size() - 1)
+	# 格與格之間插值：模擬是離散的，呈現不必是（60Hz 插值，§2.4）。
+	return _center(s.path[i]).lerp(_center(s.path[j]), prog - float(i))
+
+
+## 受損顯示：**線被打斷之前要先看得出它在挨打**，否則產能中斷會來得莫名其妙。
+func _damage_tint(hp: float, full: float) -> Color:
+	return Palette.WARN_ORANGE if hp < full * 0.999 else Palette.TEXT_PRIMARY
 
 
 func _draw_hover() -> void:
@@ -250,7 +315,7 @@ func _build_ui() -> void:
 	_top = UiKit.hbox(20)
 	_top.position = Vector2(120, 14)
 	add_child(_top)
-	for i in 4:
+	for i in 6:
 		_top.add_child(UiKit.label("", 16, Palette.TEXT_PRIMARY, false))
 
 	var col := UiKit.vbox(4)
@@ -275,6 +340,16 @@ func _build_ui() -> void:
 		b.pressed.connect(_on_mode.bind(int(pair[0])))
 		_mode_buttons[int(pair[0])] = b
 		col.add_child(UiKit.touchable(b))
+
+	col.add_child(_spacer(12))
+	_ff_button = Button.new()
+	_ff_button.text = "快進 4×"
+	_ff_button.pressed.connect(_on_fast_forward)
+	col.add_child(UiKit.touchable(_ff_button))
+	var summon := Button.new()
+	summon.text = "提前召喚"
+	summon.pressed.connect(_on_summon_now)
+	col.add_child(UiKit.touchable(summon))
 
 	_hint = UiKit.label("", 14, Palette.TEXT_SECONDARY, false)
 	_hint.position = Vector2(120, 672)
@@ -310,16 +385,94 @@ func _refresh_top() -> void:
 		_top.visible = false
 		return
 	var r: Dictionary = s.rates
+	var core_full := NodeDefs.hp("core")
+	var core_col: Color = (
+		Palette.WARN_ORANGE if s.core_hp() < core_full else Palette.ORDER_BRIGHT
+	)
 	var texts := [
 		["礦砂 %s　▲%.1f/秒" % [UiKit.commas(int(s.ore)), r["ore_in"]], Palette.ORDER_CYAN],
 		["能量 %.0f/%.0f" % [r["power_supply"], r["power_demand"]], Palette.ENERGY_AMBER],
 		["儲槽 %.0f/%.0f" % [r["silo_charge"], r["silo_capacity"]], Palette.ENERGY_AMBER],
+		[_phase_text(), Palette.TIDE_MAGENTA if s.phase == "wave" else Palette.TEXT_SECONDARY],
+		["核心 %.0f/%.0f" % [maxf(0.0, s.core_hp()), core_full], core_col],
 		["節點 %d　導管 %d" % [s.nodes.size(), s.conduits.size()], Palette.TEXT_SECONDARY],
 	]
 	for i in texts.size():
 		var l := _top.get_child(i) as Label
 		l.text = String(texts[i][0])
 		l.add_theme_color_override("font_color", texts[i][1])
+
+
+## 準備期顯示倒數（**計時器就在畫面上**——它是關卡參數不是隱藏係數，§7.7）。
+func _phase_text() -> String:
+	match s.phase:
+		"prep":
+			var left: float = maxf(0.0, s.prep_time() - s.phase_time)
+			var ff := "　▶%d×" % s.speed_mult if s.speed_mult > 1 else ""
+			# 駐足在核心的敵人不會隨波次結束而消失（§3.5）。不講的話，
+			# 玩家會看到核心在準備期掉血卻找不到原因。
+			var left_over := "　殘敵 %d" % s.enemies.size() if not s.enemies.is_empty() else ""
+			return "準備期 %0.1fs　下一波 %d%s%s" % [left, s.wave_index + 1, ff, left_over]
+		"wave":
+			return "第 %d 波　敵人 %d" % [s.wave_index, s.enemies.size()]
+		_:
+			return "核心已毀"
+
+
+## 快進只在準備期能按（`10_GDD.md` B5：可跳過等待，戰鬥期不可加速也不可減速）。
+func _on_fast_forward() -> void:
+	if s.phase != "prep":
+		return
+	s.speed_mult = 1 if s.speed_mult > 1 else FAST_FORWARD_RATE
+	_refresh_top()
+
+
+func _on_summon_now() -> void:
+	# 提前召喚的**獎勵倍率**是 B0.6；這裡先給「跳過等待」這個動作本身。
+	BattleController.start_wave(s)
+	_refresh_top()
+
+
+## 失敗：核心歸零。**重來按鈕必須在 1 次點擊之內**（`50_QA_PLAN.md` §4.4），
+## 而且失敗不扣任何東西（紅線 R1）——局內狀態本來就不持久化。
+func _refresh_lost() -> void:
+	if _ff_button != null:
+		_ff_button.disabled = s.phase != "prep"
+	if s.phase != "lost":
+		if _lost_panel != null:
+			_lost_panel.queue_free()
+			_lost_panel = null
+		return
+	if _lost_panel != null:
+		return
+	var box := PanelContainer.new()
+	box.set_anchors_preset(Control.PRESET_CENTER)
+	box.position = Vector2(480, 300)
+	var col := UiKit.vbox(12)
+	box.add_child(col)
+	col.add_child(UiKit.label("核心已毀", 32, Palette.TIDE_MAGENTA))
+	col.add_child(UiKit.label("撐過 %d 波　失敗不扣任何東西" % maxi(0, s.wave_index - 1),
+		14, Palette.TEXT_SECONDARY))
+	var again := Button.new()
+	again.text = "立刻重來"
+	again.pressed.connect(_restart)
+	col.add_child(UiKit.touchable(again))
+	add_child(box)
+	_lost_panel = box
+
+
+func _restart() -> void:
+	for c: Node in get_children():
+		c.queue_free()
+	_lost_panel = null
+	_top = null
+	_hint = null
+	_ff_button = null
+	s = SessionState.new()
+	s.setup(MapsData.SHOAL)
+	_accum = 0.0
+	_message = ""
+	_build_ui()
 
 
 func _refresh_hint() -> void:
@@ -352,3 +505,5 @@ func _demo_layout() -> void:
 	var failures := BuildController.apply_ops(s, MapsData.SHOAL_DEMO)
 	for f: Dictionary in failures:
 		push_warning("示範佈局第 %d 步失敗：%s" % [f["index"], f["reason"]])
+	# 直接開打：準備期 60 秒，等它跑完的截圖只會拍到一張空曠的地圖。
+	BattleController.start_wave(s)

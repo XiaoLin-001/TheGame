@@ -64,6 +64,10 @@ func _run_sim() -> void:
 		"ticks_run": s.tick_count,
 		"build_failures": failures,
 		"state": {
+			"phase": s.phase,
+			"wave": s.wave_index,
+			"enemies": s.enemies.size(),
+			"core_hp": snappedf(s.core_hp(), 0.01),
 			"ore": snappedf(s.ore, 0.01),
 			"ore_in_per_sec": snappedf(float(s.rates["ore_in"]), 0.01),
 			"power_supply": snappedf(float(s.rates["power_supply"]), 0.01),

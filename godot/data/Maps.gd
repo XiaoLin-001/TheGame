@@ -1,5 +1,7 @@
 extends RefCounted
 ## 手作地圖資料（`10_GDD.md` §7.3 地圖元素）。不宣告 `class_name`，一律 preload。
+
+const Enemies := preload("res://data/Enemies.gd")
 ##
 ## **戰役關卡硬性一屏可見**（`CLAUDE.md`）：36×19 格 × 32px = 1152×608，
 ## 放進 1280×720 的設計基準還剩邊界給浮層。B0.3 只需要一張測試圖，
@@ -67,6 +69,13 @@ static func path_of(map: Dictionary) -> Array:
 	for x in range(31, 35):
 		cells.append(Vector2i(x, 14))
 	return cells
+
+
+## 這張圖的波次表（`data/Enemies.gd`）。B1.2 的五關各自一張。
+static func waves_of(map: Dictionary) -> Array:
+	if String(map.get("id", "")) != "shoal":
+		return []
+	return Enemies.SHOAL_WAVES
 
 
 ## 地圖 → 解算與建造要用的集合形式（`Dictionary` 當 set，查詢 O(1)）。

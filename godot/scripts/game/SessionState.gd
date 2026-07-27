@@ -11,6 +11,7 @@ const Maps := preload("res://data/Maps.gd")
 ## `--script` 模式不載入 autoload，模擬層必須自足（`50_QA_PLAN.md` §2）。
 const Build := preload("res://scripts/sim/Build.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
+const Enemies := preload("res://data/Enemies.gd")
 
 ## 地圖原始資料與它的集合形式（查詢用，每局只轉一次）。
 var map: Dictionary = {}
@@ -30,6 +31,24 @@ var priorities: Dictionary = {}
 var tick_count: int = 0
 var core_id: int = -1
 
+# ── 敵潮與時間流（B0.4）──────────────────────────────────────────────
+## `prep` 準備期／`wave` 波次中／`lost` 核心已毀。**沒有 `paused`**：
+## 純即時不可暫停是鎖定的設計（`10_GDD.md` B5）。
+var phase: String = "prep"
+## 已完成的波次數。`wave_index` 同時是「下一波」的索引（0-based）。
+var wave_index: int = 0
+## 本階段已經過的秒數。
+var phase_time: float = 0.0
+## 準備期快進倍率（`10_GDD.md` §7.1 `FAST_FORWARD_RATE = 4`）。
+## **戰鬥期恆為 1**——可跳過空等，不可加速戰鬥（B5）。
+var speed_mult: int = 1
+## `{id, type, progress, hp}`。`progress` 單位是路徑格。
+var enemies: Array[Dictionary] = []
+## 本波尚未出場的：`[{type, at}]`，`at` 是距波次開始的秒數。
+var spawn_queue: Array = []
+## 敵人路徑（有序格）。每局算一次——它每 tick 都要用。
+var path: Array = []
+
 ## 最近一次解算的顯示值（**單位/秒**，供渲染與頂欄讀取）。
 ## `conduit_flow` 依 conduit 索引；其餘依 node id。
 var rates: Dictionary = {
@@ -48,9 +67,27 @@ var _next_id: int = 1
 func setup(map_def: Dictionary) -> void:
 	map = map_def
 	sets = Maps.to_sets(map_def)
+	path = Maps.path_of(map_def)
 	ore = float(map_def.get("start_ore", 0))
 	priorities = NodeDefs.DEFAULT_PRIORITY.duplicate()
 	core_id = add_node("core", map_def.get("core", Vector2i.ZERO))
+
+
+func core() -> Dictionary:
+	for n: Dictionary in nodes:
+		if int(n["id"]) == core_id:
+			return n
+	return {}
+
+
+func core_hp() -> float:
+	var c := core()
+	return 0.0 if c.is_empty() else float(c["hp"])
+
+
+## 本關宣告的準備期。**是關卡參數不是隱藏係數**——計時器就在畫面上（§7.7）。
+func prep_time() -> float:
+	return float(map.get("prep_time", 45.0))
 
 
 func add_node(type: String, cell: Vector2i) -> int:
@@ -69,7 +106,24 @@ func add_node(type: String, cell: Vector2i) -> int:
 func add_conduit(a: Vector2i, b: Vector2i) -> int:
 	var id := _next_id
 	_next_id += 1
-	conduits.append({"id": id, "a": a, "b": b, "level": 0, "hp": 40.0})
+	# `cells` 在建造時算一次就存著：敵潮每 tick 要拿它做破壞判定，
+	# 每次重算等於把 O(敵人 × 導管) 再乘上一個長度。
+	conduits.append({
+		"id": id, "a": a, "b": b, "level": 0, "hp": 40.0,
+		"cells": Build.line_cells(a, b),
+	})
+	return id
+
+
+func add_enemy(type: String) -> int:
+	var id := _next_id
+	_next_id += 1
+	enemies.append({
+		"id": id,
+		"type": type,
+		"progress": 0.0,
+		"hp": float(Enemies.of(type).get("hp", 1.0)),
+	})
 	return id
 
 
