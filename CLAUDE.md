@@ -132,7 +132,8 @@ TheGame/
 │   ├── 20_ART_DIRECTION.md    美術方向（token、字型、動效、音訊、素材管線）
 │   ├── 30_TECH_DESIGN.md      技術設計（架構、確定性、存檔、鉤子、效能）
 │   ├── 40_PRODUCTION_PLAN.md  生產計畫（里程碑、批次、風險、砍案）
-│   └── 50_QA_PLAN.md          QA（五層梯、bug 登記、回歸清單）
+│   ├── 50_QA_PLAN.md          QA（五層梯、bug 登記、回歸清單）
+│   └── agents/                外掛 skill 的設定（見「Agent skills」）
 ├── tools/godot/               （gitignore）Godot console exe
 └── godot/
     ├── scripts/core/          GameState / SaveService / Hooks / AudioBus / Rng
@@ -156,3 +157,27 @@ TheGame/
 3. 自檢 L1–L3 並附證據（測試輸出／截圖路徑）
 4. commit（標題含批次編號，如 `B0.3 建造與地圖：網格、節點放置、導管拉線`）
 5. **可玩 build**——絕不讓主線處於「改到一半跑不起來」過夜
+
+---
+
+## Agent skills
+
+外掛 engineering skills（`to-tickets` / `triage` / `to-spec` / `qa` / `wayfinder` …）讀的設定。
+**與本檔及 `docs/00`–`50` 衝突時，一律以本專案文件為準。**
+
+### Issue tracker
+
+GitHub issues（`gh` CLI）。**遠端尚未建立**——建法與 `--private` 的理由見 `docs/agents/issue-tracker.md`。
+**批次 backlog 不搬到 issues**：`40_PRODUCTION_PLAN.md` 仍是里程碑排程的權威，
+issues 給的是 bug、回鍋的點子、`/to-tickets` 拆出來的實作票。
+
+### Triage labels
+
+五個預設標籤（`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`）。
+**判準寫「好不好玩」「陌生人」的一律 `ready-for-human`**（§0.1 判官分工、R-14）。
+見 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+Single-context，但**不建 `CONTEXT.md` 與 `docs/adr/`**——`docs/00`–`50` 已經在做同一件事。
+詞彙讀 `10_GDD.md` §3、數值讀 §7、決策紀錄讀 §8 與 `CHANGELOG.md`。見 `docs/agents/domain.md`。

@@ -1,17 +1,76 @@
-﻿# Godot
-godot/.godot/
-godot/.import/
-godot/build/
-*.translation
+# 《潮與線 / Tide & Line》
+#
+# 本 repo 是**公開**的。這份清單的判準不是「這檔案有沒有用」，
+# 而是「它公開之後會不會出事，或只是別人機器上的垃圾」。
+#
+# ⚠ .gitignore 只擋**還沒被追蹤**的檔案。已經 commit 過的東西加進來也不會消失，
+#   那要 `git rm --cached`（停止追蹤，但歷史仍在）或改寫歷史。
 
-# Tools (Godot console exe, not committed)
+# ── 機密：任何情況下都不進 repo ──────────────────────────────────────
+# export_presets.cfg 是最容易出事的一個：Godot 會把 **Android keystore 的
+# 密碼明文**寫在裡面，順便帶上你本機的絕對輸出路徑。
+godot/export_presets.cfg
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.mobileprovision
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+
+# 上線後接排行榜／IAP 平台 API 時（M4，30_TECH_DESIGN.md §3）會出現的東西
+secrets.json
+credentials.json
+service-account*.json
+
+# ── 本機工具與設定：換台電腦就不一樣，公開了只會誤導人 ────────────────
+# Godot console exe（約 100MB，且有自己的授權；各自去官網下載）
 tools/
 
-# OS
+# Claude Code 的本機權限設定。原本只靠**全域** ignore 擋著
+# （C:\Users\<you>/.config/git/ignore）——那是你這台機器上的檔案，
+# 別人 clone 下來就沒有那層保護，所以在 repo 自己這份也擋一次。
+.claude/settings.local.json
+.claude/*.local.json
+
+# 編輯器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Godot 產物：可重新生成，且會製造無意義的 diff ─────────────────────
+# .godot/ 是匯入快取（每次 --import 都變）。
+# 注意：**`.uid` 與 `.import` 要 commit**（CLAUDE.md「跑與測」），它們不是快取。
+.godot/
+.import/
+*.translation
+
+# 匯出的 build
+godot/build/
+build/
+dist/
+export/
+*.exe
+*.pck
+*.apk
+*.aab
+*.zip
+*.dmg
+
+# ── QA 與除錯的暫存產物 ──────────────────────────────────────────────
+# TL_SHOT 的截圖預設丟 C:/tmp（repo 外），但別人可能會設成 repo 內。
+shots/
+*.log
+*.tmp
+tmp/
+.scratch/
+
+# ── OS ───────────────────────────────────────────────────────────────
 Thumbs.db
 desktop.ini
 .DS_Store
-
-# Temp
-*.tmp
-*.log
