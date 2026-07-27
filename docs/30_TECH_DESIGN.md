@@ -21,6 +21,8 @@
 **不選 Unity/Unreal**：3D 引擎的體積與複雜度對純 2D 專案是純負擔。
 **不選 Web/HTML5**：本作的模擬密度（數百節點 × 10 tick/秒）與長時遊玩（30 分/局）在瀏覽器上有風險，且交付形式已定為 exe。
 
+**手機移植預留**：Godot 原生支援 Android / iOS 匯出，引擎層面無阻礙。真正的成本在 UI 與操作（`20_ART_DIRECTION.md` §1.3b 的 P1–P4 條款）、廣告 SDK 接入、帳號與雲端存檔、上架流程。**架構預留不代表承諾移植**（`00_CONCEPT.md` 風險 5）。
+
 ### 1.1 工具鏈
 
 - 使用 **console 版**執行檔（`Godot_v4.7-stable_win64_console.exe`）才看得到 stdout/stderr。放 `tools/godot/`（gitignore）。
@@ -153,11 +155,17 @@ TheGame/
   "campaign": { "cleared": [], "stars": {} },
   "endless": { "best_wave": 0, "best_score": 0 },
   "daily": { "2026-07-27": { "score": 0, "wave": 0 } },
-  "tycoon": { "level": 1, "credit": 0, "lines": [], "last_seen_unix": 0 },
+  "tycoon": { "level": 1, "credit": 0, "components": 0, "lines": [], "last_seen_unix": 0 },
+  "levels": { "towers": {}, "nodes": {} },
+  "entitlements": { "purchases": [], "no_ads": false, "pass_season": 0, "pass_owned": false },
   "blueprints": [],
   "settings": { "master": 0.8, "bgm": 0.6, "sfx": 0.8, "reduce_motion": false }
 }
 ```
+
+**`daily` 欄位存兩榜成績**：`{ "2026-07-27": { "unified": {...}, "free": {...} } }`（統一配置榜／自由配置榜）。
+
+**購買驗證的固有限制**：離線單機的存檔可被本機竄改，`entitlements` 無法在客戶端可靠防偽。這是桌面 F2P 的結構性限制，**不在 M0–M3 處理**；M4 接平台 API（Steam Inventory 等）時，以平台收據為權威來源，本機 `entitlements` 降為快取。**不要為此在早期批次做加密或混淆——那只會增加除錯痛苦而擋不住任何真正想改的人。**
 
 **離線結算**（tycoon 掛機）：以 `last_seen_unix` 與當前時間差計算，**但上限為倉儲容量**。時間差為負（使用者改系統時鐘）時視為 0，不獎勵也不懲罰。
 
@@ -222,6 +230,9 @@ TL_SHOT="C:/tmp/shot.png" TL_PANEL=battle TL_SEED=42 <godot> --path godot --rend
 | exe 體積 | < 80 MB | < 150 MB |
 | 冷啟動到主選單 | < 3 秒 | < 6 秒 |
 | 最低規格 | Windows 10 64-bit、雙核 2.0GHz、4GB RAM、支援 OpenGL 3.3 的內顯 | — |
+| **行動參考**（移植前的預算，非承諾） | 中階 Android（2020 年後、4GB RAM）維持 30 FPS；壓力情境降為 250 節點／1000 導管／100 敵人 | — |
+
+**每個里程碑的壓力情境測試**同時記錄桌面實測值與「模擬層單 tick 耗時」——後者是行動端可行性的主要指標（渲染可以降級，模擬不能）。
 
 **效能策略**：
 - 模擬層與渲染層解耦：模擬固定 10 Hz，渲染 60 Hz **以插值呈現**（導管粗細、敵人位置在 tick 之間補間）。
