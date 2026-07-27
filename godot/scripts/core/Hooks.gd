@@ -34,8 +34,9 @@ func _ready() -> void:
 
 
 ## headless 模擬：跑 N 個 tick，輸出狀態摘要 JSON 到 stdout 後退出。
-## B0.1 尚無模擬層（sim/ 於 B0.2 建立），此處先輸出可被解析的骨架，
-## 讓下游的平衡工具與回歸腳本現在就能接上格式。
+## B0.2 已有解算器（`sim/FlowNetwork.gd`），但還沒有可跑的**局**——
+## 地圖、節點放置與 SessionState 在 B0.3 才長出來，在那之前跑 tick 沒有對象。
+## 此處維持可被解析的骨架，讓下游的平衡工具與回歸腳本先接上格式。
 func _run_sim() -> void:
 	var out := {
 		"version": GameState.VERSION,
@@ -43,7 +44,7 @@ func _run_sim() -> void:
 		"ticks_requested": sim_ticks,
 		"ticks_run": 0,
 		"state": {},
-		"note": "B0.1：模擬層尚未建立（sim/ 於 B0.2 實作），此為輸出格式骨架",
+		"note": "B0.2：解算器已就緒，但可跑的局要等 B0.3（地圖與節點放置），此為輸出格式骨架",
 	}
 	print(JSON.stringify(out, "  "))
 	get_tree().quit(0)
