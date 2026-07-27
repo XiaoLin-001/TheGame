@@ -33,20 +33,46 @@ func _ready() -> void:
 		_run_shot()
 
 
-## headless 模擬：跑 N 個 tick，輸出狀態摘要 JSON 到 stdout 後退出。
-## B0.2 已有解算器（`sim/FlowNetwork.gd`），但還沒有可跑的**局**——
-## 地圖、節點放置與 SessionState 在 B0.3 才長出來，在那之前跑 tick 沒有對象。
-## 此處維持可被解析的骨架，讓下游的平衡工具與回歸腳本先接上格式。
+## headless 模擬：不開視窗跑 N 個 tick，輸出狀態摘要 JSON 到 stdout 後退出。
+##
+## **平衡調校的主力工具**（`CLAUDE.md`「跑與測」）：它跑的是與 `TL_PANEL=battle`
+## 截圖**同一份**示範佈局（`data/Maps.gd` 的 `SHOAL_DEMO`），所以圖上看到的線
+## 和這裡印出來的數字保證是同一個局面——截圖不會和數字各說各話。
 func _run_sim() -> void:
-	var out := {
+	var SessionState := preload("res://scripts/game/SessionState.gd")
+	var BattleController := preload("res://scripts/game/BattleController.gd")
+	var BuildController := preload("res://scripts/game/BuildController.gd")
+	var MapsData := preload("res://data/Maps.gd")
+
+	var s: RefCounted = SessionState.new()
+	s.setup(MapsData.SHOAL)
+	var failures := BuildController.apply_ops(s, MapsData.SHOAL_DEMO)
+	for _i in sim_ticks:
+		BattleController.step(s)
+
+	var flows: Dictionary = {}
+	for c: Dictionary in s.conduits:
+		flows["%s→%s" % [c["a"], c["b"]]] = snappedf(
+			float((s.rates["conduit_flow"] as Dictionary).get(c["id"], 0.0)), 0.01
+		)
+
+	print(JSON.stringify({
 		"version": GameState.VERSION,
 		"seed": Rng.seed_value,
+		"map": s.map.get("id", ""),
 		"ticks_requested": sim_ticks,
-		"ticks_run": 0,
-		"state": {},
-		"note": "B0.2：解算器已就緒，但可跑的局要等 B0.3（地圖與節點放置），此為輸出格式骨架",
-	}
-	print(JSON.stringify(out, "  "))
+		"ticks_run": s.tick_count,
+		"build_failures": failures,
+		"state": {
+			"ore": snappedf(s.ore, 0.01),
+			"ore_in_per_sec": snappedf(float(s.rates["ore_in"]), 0.01),
+			"power_supply": snappedf(float(s.rates["power_supply"]), 0.01),
+			"power_demand": snappedf(float(s.rates["power_demand"]), 0.01),
+			"silo": "%.1f/%.0f" % [s.rates["silo_charge"], s.rates["silo_capacity"]],
+			"nodes": s.nodes.size(),
+			"conduit_flow_per_sec": flows,
+		},
+	}, "  "))
 	get_tree().quit(0)
 
 

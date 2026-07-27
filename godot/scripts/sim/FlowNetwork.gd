@@ -216,12 +216,14 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 
 	var charge_delta: Dictionary = {}
 	var silo_discharge := 0.0
+	var silo_demand := 0.0
 	for nid: int in silo_ids:
 		if silo_discharging:
 			charge_delta[nid] = -float(sent[nid])
 			silo_discharge += float(sent[nid])
 		else:
 			charge_delta[nid] = float(received[nid])
+			silo_demand += float(demand[nid])
 
 	return {
 		"flow": flow,
@@ -230,9 +232,11 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 		"sent": sent,
 		"charge_delta": charge_delta,
 		# 頂欄顯示的是「本 tick 供給／需求」，不是存量／容量（GDD §3.1）。
-		# 儲槽充能不進 demand_total —— 它在頂欄另列一格。
+		# 儲槽的充能需求另外給一個數字，讓呼叫端自己決定要不要算進頂欄的「需求」。
 		"supply_total": base_supply + silo_discharge,
 		"demand_total": base_demand,
+		"silo_demand_total": silo_demand,
+		"silo_supply_total": silo_discharge,
 	}
 
 

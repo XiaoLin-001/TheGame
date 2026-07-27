@@ -76,7 +76,7 @@ TheGame/
     │   ├── ui/                 UiKit.gd（共用 UI helpers，static）
     │   └── meta/               TechTree.gd / RosterData.gd / TycoonSim.gd
     ├── data/                   角色、敵人、關卡、訂單的資料表（.json 或 .tres）
-    ├── tests/                  flow_test.gd / combat_test.gd / save_test.gd / determinism_test.gd
+    ├── tests/                  flow_test.gd / build_test.gd / combat_test.gd / save_test.gd / determinism_test.gd
     └── assets/audio/
 ```
 
@@ -200,10 +200,10 @@ TheGame/
 |---|---|
 | `TL_SHOT=<png絕對路徑>` | 渲染數秒後截圖存檔並自動退出（截圖驗證的地基） |
 | `TL_SHOT_DELAY=<秒>` | 截圖前等待秒數，讓動效跑完（預設 3） |
-| `TL_PANEL=<畫面名>` | 直接開啟指定畫面，跳過導航（`battle` / `tech` / `roster` / `tycoon` / `settings`） |
+| `TL_PANEL=<畫面名>` | 直接開啟指定畫面，跳過導航（`battle` / `tech` / `roster` / `tycoon` / `settings`）。**B0.3 起 `battle` 會自動蓋出示範佈局**（`data/Maps.gd` 的 `SHOAL_DEMO`）——空地圖的截圖證明不了任何事 |
 | `TL_MUTE=1` | 全域靜音 |
 | `TL_SEED=<int>` | 覆寫隨機種子，用於重現特定局面 |
-| `TL_SIM=<ticks>` | **headless 模擬**：不開視窗，跑 N 個 tick 後把 `SessionState` 摘要以 JSON 輸出到 stdout 並退出。平衡調校與回歸測試的主力工具 |
+| `TL_SIM=<ticks>` | **headless 模擬**：不開視窗，跑 N 個 tick 後把 `SessionState` 摘要以 JSON 輸出到 stdout 並退出。平衡調校與回歸測試的主力工具。**跑的是與 `TL_PANEL=battle` 同一份示範佈局**——截圖與數字不會各說各話 |
 | **`TL_NAKED=1`** ★ | **隱藏所有數值標籤**（頂欄數字、節點數值、優先權面板刻度、tooltip），只留圖形——線寬、顏色、節點三態徽章。**R-3 可讀性驗收專用**（見下） |
 
 **★ `TL_NAKED` 存在的理由**（B0.6 起生效）：

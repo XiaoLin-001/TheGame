@@ -4,14 +4,27 @@ extends Control
 ## B0.1 只需要它證明三件事：專案能開起來、版面走容器（P1）、CJK 字型不是豆腐字。
 ## 主選單與各面板排在 M1（B1.4）；`TL_PANEL` 的路由表也在那時才長出來。
 
-## TL_PANEL 目前認得的畫面。B0.1 只有標題，其餘由後續批次補進來。
-const KNOWN_PANELS := ["title"]
+const BattleScreen := preload("res://scripts/screens/Battle.gd")
+
+## TL_PANEL 目前認得的畫面。其餘由後續批次補進來。
+const KNOWN_PANELS := ["title", "battle"]
 
 
 func _ready() -> void:
 	theme = UiKit.theme()
+	if Hooks.panel == "battle":
+		_enter_battle()
+		return
 	_build()
 	_route_panel()
+
+
+## 切到局內。B1.4 會有真正的主選單與關卡選擇；現在只有一張測試圖。
+func _enter_battle() -> void:
+	for c: Node in get_children():
+		c.queue_free()
+	var battle := BattleScreen.new()
+	add_child(battle)
 
 
 func _build() -> void:
@@ -31,6 +44,12 @@ func _build() -> void:
 	col.add_child(gap)
 
 	col.add_child(UiKit.label(GameState.TAGLINE, 16, Palette.TEXT_SECONDARY))
+
+	# 可玩 build 的入口（工作室鐵律 2）。真正的主選單在 B1.4。
+	var start := Button.new()
+	start.text = "進入測試圖　淺灘"
+	start.pressed.connect(_enter_battle)
+	col.add_child(UiKit.touchable(start))
 
 	# TL_NAKED 的語意是「隱藏所有數值標籤，只留圖形」（30_TECH_DESIGN.md §4.1）。
 	# 本批還沒有 HUD 可遮，先把版本／鉤子這行納管，證明這條路徑真的接通了；
