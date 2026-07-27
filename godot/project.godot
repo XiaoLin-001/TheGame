@@ -1,0 +1,40 @@
+; 《潮與線 / Tide & Line》
+; 設定與 autoload 註冊。改動前先讀 docs/30_TECH_DESIGN.md §2。
+
+config_version=5
+
+[application]
+
+config/name="潮與線 Tide & Line"
+config/description="塔防 × 節點連線式自動化。你的生產線就是你的防線。"
+run/main_scene="res://scenes/Main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[autoload]
+
+; 載入順序即宣告順序。Hooks 必須最先——其餘服務的行為都受測試鉤子影響。
+; 注意：所有 autoload 一律透過 Env（純靜態）讀環境變數，彼此不互相引用，
+; 以免 _ready 的執行順序變成隱性依賴。
+Hooks="*res://scripts/core/Hooks.gd"
+Rng="*res://scripts/core/Rng.gd"
+AudioBus="*res://scripts/core/AudioBus.gd"
+SaveService="*res://scripts/core/SaveService.gd"
+GameState="*res://scripts/core/GameState.gd"
+
+[display]
+
+; 1280×720 為設計基準，但 stretch 設為 canvas_items + expand，
+; 讓版面在任何解析度下等比縮放 —— 手機移植預留條款 P1（20_ART_DIRECTION.md §1.3b）。
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[rendering]
+
+; 2D 掛機/塔防用 gl_compatibility 足夠：體積小、相容性好、行動端也跑得動。
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+; bg.deep #0a1420（20_ART_DIRECTION.md §1.1）
+environment/defaults/default_clear_color=Color(0.039216, 0.078431, 0.125490, 1)

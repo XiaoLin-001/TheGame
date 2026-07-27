@@ -1,0 +1,24 @@
+extends Node
+## 跨局持久狀態的擁有者（autoload）。
+##
+## VERSION 是**盤點進度的第一手依據**（CLAUDE.md「開工前必做」）。
+## 版本規則：`0.<全域批次序號>.<修補>`，一路遞增到 Gold 才 bump 為 1.0.0
+## （30_TECH_DESIGN.md §6）。B0.1 = 0.1.0，B4.6 = 0.37.0。
+##
+## 局內狀態不放這裡 —— 那是 SessionState 的事（§2.3），局結束即銷毀。
+
+const VERSION := "0.1.0"
+const BATCH := "B0.1 地基"
+
+const GAME_NAME := "潮與線"
+const GAME_NAME_EN := "Tide & Line"
+const TAGLINE := "你的生產線就是你的防線"
+
+## 持久資料。結構見 30_TECH_DESIGN.md §3。
+## **原地變更，絕不重新賦值**（§2.3）——重新賦值會讓已持有引用的面板拿到斷裂的舊物件。
+var data: Dictionary = {}
+
+
+func _ready() -> void:
+	# autoload 順序把 SaveService 排在 GameState 之前，所以這裡它已經就緒。
+	SaveService.load_into(data)
