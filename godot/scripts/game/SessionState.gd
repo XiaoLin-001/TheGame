@@ -200,6 +200,44 @@ func conduit_at(cell: Vector2i) -> int:
 	return -1
 
 
+## ★ 局狀態雜湊（`30_TECH_DESIGN.md` §2.4）。**同一組 `(seed, ops)` 跑兩次必得同一個字串。**
+##
+## 這是每日挑戰雙榜（B2.2）、重播、可驗證榜單的地基：沒有它，「同種子同地圖」
+## 就只是一句宣稱。`determinism_test` 拿它當唯一判準。
+##
+## 兩條紀律：
+##   ① **遍歷一律依 id 排序**——Dictionary 與 Array 的順序不是狀態的一部分，
+##      拿插入順序當狀態會讓「刪一個節點再蓋回來」變成不同的局。
+##   ② **只雜湊權威狀態，不雜湊 `rates`**——後者是同一份狀態推導出來的，
+##      放進來只會讓同一個缺陷被記兩次，卻讓雜湊看起來更可靠。
+func state_hash() -> String:
+	var parts := PackedStringArray([
+		"tick=%d" % tick_count,
+		"phase=%s/%s/%s" % [phase, wave_index, phase_time],
+		"ore=%s" % ore,
+		"tally=%s/%s/%s/%s" % [kills, salvage_total, reclaimed_total, delivered_total],
+		"bonus=%s/%s" % [wave_bonus, bonus_data],
+	])
+	for type: String in priorities.keys().duplicate():
+		parts.append("p:%s=%d" % [type, int(priorities[type])])
+	parts.sort()  # 優先權是 Dictionary，鍵序不保證——排序後才是狀態本身
+	for n: Dictionary in _by_id(nodes):
+		parts.append("n:%d,%s,%s,%s,%s,%s,%s" % [
+			n["id"], n["type"], n["cell"], n["hp"], n["charge"], n["cd"], n["buffer"]
+		])
+	for c: Dictionary in _by_id(conduits):
+		parts.append("c:%d,%s,%s,%d,%s" % [c["id"], c["a"], c["b"], int(c["level"]), c["hp"]])
+	for e: Dictionary in _by_id(enemies):
+		parts.append("e:%d,%s,%s,%s" % [e["id"], e["type"], e["progress"], e["hp"]])
+	return "|".join(parts).sha256_text()
+
+
+static func _by_id(rows: Array) -> Array:
+	var out := rows.duplicate()
+	out.sort_custom(func(x: Dictionary, y: Dictionary) -> bool: return int(x["id"]) < int(y["id"]))
+	return out
+
+
 func count_of(type: String) -> int:
 	var n := 0
 	for node: Dictionary in nodes:

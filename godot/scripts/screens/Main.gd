@@ -55,12 +55,10 @@ func _build() -> void:
 	# 本批還沒有 HUD 可遮，先把版本／鉤子這行納管，證明這條路徑真的接通了；
 	# 它真正的工作對象（頂欄數字、節點數值、優先權刻度）在 B0.6 出現。
 	if Hooks.naked:
-		print("[TL_NAKED] 版本列已隱藏；version=%s batch=%s" % [GameState.VERSION, GameState.BATCH])
+		print("[TL_NAKED] 版本列已隱藏；version=%s" % GameState.VERSION)
 		return
 
-	col.add_child(UiKit.label(
-		"v%s ・ %s" % [GameState.VERSION, GameState.BATCH], 13, Palette.TEXT_DISABLED
-	))
+	col.add_child(UiKit.label("v%s" % GameState.VERSION, 13, Palette.TEXT_DISABLED))
 
 	# 只列名稱不列值 —— 值（例如 TL_SHOT 的絕對路徑）會撐爆版面，細節在 stdout。
 	var hooks := Env.active_names()

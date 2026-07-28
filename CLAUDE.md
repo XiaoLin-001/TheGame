@@ -91,7 +91,11 @@
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # 截圖驗證（自動靜音、約 3 秒後存圖並退出）
+# TL_SHOT 存在時模擬凍結在 TL_DEMO_TICKS 那一格 → 同參數在任何機器上拍出同一張圖
 TL_SHOT="C:/tmp/shot.png" TL_PANEL=battle TL_SEED=42 <godot> --path godot --rendering-driver opengl3
+
+# 拍玩家真正的第一眼（TL_DEMO_TICKS=0 ＝ 不要示範佈局）
+TL_SHOT="C:/tmp/first.png" TL_DEMO_TICKS=0 TL_PANEL=battle <godot> --path godot --rendering-driver opengl3
 
 # 可讀性驗收：隱藏所有數值標籤，只留線寬／顏色／三態徽章
 TL_SHOT="C:/tmp/naked.png" TL_NAKED=1 TL_PANEL=battle TL_SEED=42 <godot> --path godot --rendering-driver opengl3

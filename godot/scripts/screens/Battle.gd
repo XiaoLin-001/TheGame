@@ -43,6 +43,7 @@ var _message: String = ""
 var _top: HBoxContainer = null
 var _hint: Label = null
 var _mode_buttons: Dictionary = {}
+var _build_buttons: Dictionary = {}
 var _ff_button: Button = null
 var _summon_button: Button = null
 var _over_panel: Control = null
@@ -59,8 +60,10 @@ func _ready() -> void:
 	s = SessionState.new()
 	s.setup(MapsData.SHOAL)
 	_build_ui()
-	if Hooks.panel == "battle":
-		# 截圖驗證要看得到「流動中的網路」，空地圖證明不了任何事。
+	# 截圖驗證要看得到「流動中的網路」，空地圖證明不了任何事——
+	# **除了首次體驗**（`50_QA_PLAN.md` §4.4），那正好要看玩家真正的第一眼，
+	# 所以 `TL_DEMO_TICKS=0` 的語意是「不要示範佈局」。
+	if Hooks.panel == "battle" and Hooks.demo_ticks > 0:
 		_demo_layout()
 
 
@@ -80,6 +83,10 @@ func _process(delta: float) -> void:
 			_accum -= BattleController.TICK
 			guard += mult
 	_refresh_top()
+	# 提示列每幀重算：它講的是**當前狀態**下的下一步，而狀態每 tick 都在變。
+	# B0.7 之前它只在滑鼠移動時更新，於是「礦砂開始入帳了」「波次開打了」這類
+	# 轉折要等玩家碰一下滑鼠才會反映——手不動的那幾秒，提示列是在說謊。
+	_refresh_hint()
 	_refresh_over()
 	queue_redraw()
 
@@ -173,10 +180,28 @@ func _draw() -> void:
 func _draw_path() -> void:
 	# 敵人路徑屬於**混沌**側：低透明度帶狀底色（20_ART_DIRECTION.md §1.6）。
 	var band := Palette.alpha(Palette.TIDE_DEEP, 0.45)
-	for c: Vector2i in MapsData.path_of(s.map):
+	for c: Vector2i in s.path:
 		draw_rect(Rect2(_world(c), Vector2(Shapes.GRID, Shapes.GRID)), band)
+	_draw_incoming()
 	for c: Vector2i in s.map.get("crossings", []):
 		_draw_crossing(c)
+
+
+## ★ 來襲方向（`20_ART_DIRECTION.md` §1.6）。一條帶子只說「這裡是路」，
+## **沒說潮從哪邊來**——而那是新玩家的第一個問題，也決定所有擺位。
+## 順著箭羽走就找得到核心，一個元素答兩題（`50_QA_PLAN.md` §4.4）。
+func _draw_incoming() -> void:
+	var col := Palette.alpha(Palette.TIDE_MAGENTA, 0.35)
+	var i := 2
+	while i < s.path.size() - 1:
+		var here: Vector2i = s.path[i]
+		var dir := Vector2(s.path[i + 1] - here).normalized()
+		var back := -dir * 5.0
+		var wing := dir.orthogonal() * 5.0
+		var tip := _center(here) + dir * 4.0
+		draw_line(tip, tip + back + wing, col, 2.0)
+		draw_line(tip, tip + back - wing, col, 2.0)
+		i += 4
 
 
 ## 跨越點（橋）：**「架高」必須用畫的說清楚**——它是「橋上導管不受攻擊」
@@ -483,20 +508,25 @@ func _build_ui() -> void:
 	col.custom_minimum_size = Vector2(104, 0)
 	add_child(col)
 
+	# ★ 全部 11 個鈕共用一個 `ButtonGroup`：任一時刻**恰好一個**是按下狀態，
+	#   而那正好就是這個 UI 的真相（選了建造類型就是離開連線模式）。
+	#   用 Godot 內建的 toggle 群組，不自己維護一套「哪個被選中」的高亮。
+	#   B0.6 之前完全沒有選中指示——玩家只能從提示列的文字推自己在哪個模式。
+	var group := ButtonGroup.new()
 	for type: String in NodeDefs.BUILDABLE:
-		var b := Button.new()
 		# TL_NAKED 連造價都遮：它的語意是「隱藏所有數值標籤」，不是「隱藏狀態數值」。
-		b.text = (
+		var b := _tool_button(group, (
 			NodeDefs.label(type) if Hooks.naked
 			else "%s %d" % [NodeDefs.label(type), NodeDefs.cost(type)]
-		)
+		))
 		b.pressed.connect(_on_build_type.bind(type))
+		_build_buttons[type] = b
 		col.add_child(UiKit.touchable(b))
+	(_build_buttons[_build_type] as Button).button_pressed = true
 
 	col.add_child(_spacer(12))
 	for pair: Array in [[Mode.CONNECT, "連線"], [Mode.UPGRADE, "加粗"], [Mode.DEMOLISH, "拆除"]]:
-		var b := Button.new()
-		b.text = String(pair[1])
+		var b := _tool_button(group, String(pair[1]))
 		b.pressed.connect(_on_mode.bind(int(pair[0])))
 		_mode_buttons[int(pair[0])] = b
 		col.add_child(UiKit.touchable(b))
@@ -513,9 +543,12 @@ func _build_ui() -> void:
 	_summon_button = Button.new()
 	_summon_button.pressed.connect(_on_summon_now)
 	bar.add_child(UiKit.touchable(_summon_button))
+	# 抽屜開關本來就是一個開關：做成 toggle，按下狀態才**真的**等於「抽屜開著」。
+	# 之前是普通按鈕，它拿到焦點時的外框看起來就像被選中，玩家會以為抽屜開了。
 	var prio := Button.new()
 	prio.text = "優先權"
-	prio.pressed.connect(_on_toggle_priority)
+	prio.toggle_mode = true
+	prio.toggled.connect(_on_toggle_priority)
 	bar.add_child(UiKit.touchable(prio))
 
 	_build_priority_panel()
@@ -566,8 +599,8 @@ func _build_priority_panel() -> void:
 	_refresh_priority()
 
 
-func _on_toggle_priority() -> void:
-	_prio_panel.visible = not _prio_panel.visible
+func _on_toggle_priority(open: bool) -> void:
+	_prio_panel.visible = open
 
 
 func _on_priority(type: String, delta: int) -> void:
@@ -583,6 +616,16 @@ func _refresh_priority() -> void:
 	for type: String in _prio_labels:
 		var v := int(s.priorities.get(type, 1))
 		(_prio_labels[type] as Label).text = "▪".repeat(v) if Hooks.naked else str(v)
+
+
+## 左欄的工具鈕。`toggle_mode` ＋ 共用群組 ＝ 內建的「選中」外觀，
+## 不必自己塗顏色（`20_ART_DIRECTION.md`：能用主題就別硬編碼色值）。
+func _tool_button(group: ButtonGroup, text: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.toggle_mode = true
+	b.button_group = group
+	return b
 
 
 func _spacer(h: int) -> Control:
@@ -735,6 +778,10 @@ func _restart() -> void:
 	_summon_button = null
 	_prio_panel = null
 	_prio_labels.clear()
+	_mode_buttons.clear()
+	_build_buttons.clear()
+	_mode = Mode.BUILD
+	_build_type = "extractor"
 	s = SessionState.new()
 	s.setup(MapsData.SHOAL)
 	_accum = 0.0
@@ -752,7 +799,7 @@ func _refresh_hint() -> void:
 			if _in_map(_hover):
 				parts.append_array(BuildController.preview_place(s, _build_type, _hover)["lines"])
 			else:
-				parts.append("建造：%s" % NodeDefs.label(_build_type))
+				parts.append("▶ " + _next_step())
 		Mode.CONNECT:
 			parts.append("連線：點兩個節點。導管只能走水平／垂直／45°，過路徑只能走橋。")
 		Mode.UPGRADE:
@@ -762,6 +809,52 @@ func _refresh_hint() -> void:
 	if _message != "":
 		parts.append(_message)
 	_hint.text = "　".join(parts)
+
+
+## ★ 下一步（`50_QA_PLAN.md` §4.4「新玩家開局後 15 秒內知道要做什麼嗎」）。
+##
+## 這**不是教學系統**，是一句讀當前狀態算出來的話——沒有進度旗標、沒有步驟機、
+## 不持久化，玩家拆光重蓋它就跟著退回去。做成教學系統的話它會變成第二套要維護的
+## 狀態，而且擋在玩家和遊戲之間；一行提示不會。
+##
+## 順序＝這張圖真正的依賴鏈：礦→入帳→電→塔→接電。**每一條都指向一個具體動作。**
+func _next_step() -> String:
+	if s.count_of("extractor") == 0:
+		return "先在礦點（青色空心圓）上蓋一台採集器——這是所有東西的源頭。"
+	if float(s.rates["ore_in"]) <= 0.0:
+		return "採到的礦砂要**送達核心**才入帳：切「連線」，把採集器一路接到核心。"
+	if s.count_of("generator") == 0:
+		return "有礦砂了。蓋一台發電機（吃 4 礦砂/秒，產 20 能量/秒），並接上礦砂線餵它。"
+	if _towers() == 0:
+		return "電有了。蓋一座塔擋住路徑，再把它接進電網——**塔只有交戰時吃電，待機 0**。"
+	if _unpowered_tower():
+		return "有塔沒接進電網：它交戰時一發都打不出。切「連線」把它接到發電機那一側。"
+	if s.phase == "prep":
+		return "準備好了就按「提前召喚」——倒數剩越多，這一波的掉落倍率越高。"
+	return "波次進行中：盯著頂端能量條，橙色那截就是餵不飽的部分。"
+
+
+func _towers() -> int:
+	var n := 0
+	for node: Dictionary in s.nodes:
+		if NodeDefs.of(String(node["type"])).get("tower", false):
+			n += 1
+	return n
+
+
+## 有沒有塔完全沒接上任何導管？（接了但電不夠是另一回事，那由三態徽章講。）
+func _unpowered_tower() -> bool:
+	for node: Dictionary in s.nodes:
+		if not NodeDefs.of(String(node["type"])).get("tower", false):
+			continue
+		var wired := false
+		for c: Dictionary in s.conduits:
+			if c["a"] == node["cell"] or c["b"] == node["cell"]:
+				wired = true
+				break
+		if not wired:
+			return true
+	return false
 
 
 # ── 截圖用的示範佈局（只在 TL_PANEL=battle 時建立）─────────────────────
