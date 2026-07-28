@@ -20,16 +20,27 @@ var sets: Dictionary = {}
 ## 帳上礦砂。**只有送達核心的礦砂才進得來**（`10_GDD.md` §7.3）。
 var ore: float = 0.0
 
-## `{id, type, cell, hp, charge}`。核心也是一個節點（type = "core"）。
+## `{id, type, cell, hp, charge, cd, buffer}`。核心也是一個節點（type = "core"）。
+## `cd` 是塔的射速累加器、`buffer` 是回收者尚未推進電網的回收能量——
+## 兩個都給所有節點免得到處判型別，一個 float 比一個分支便宜。
 var nodes: Array[Dictionary] = []
 ## `{id, a, b, level, hp}`。`a`→`b` 有向；儲槽那條線在解算時自動展開成雙向。
 var conduits: Array[Dictionary] = []
 
-## 依**節點類型**的優先權（`10_GDD.md` §3.1）。面板要到 B0.5 才拉得動。
+## 依**節點類型**的優先權（`10_GDD.md` §3.1）。B0.5 起玩家可在面板拉動。
 var priorities: Dictionary = {}
 
 var tick_count: int = 0
 var core_id: int = -1
+
+# ── 戰鬥累計（B0.5）──────────────────────────────────────────────────
+var kills: int = 0
+## 全域擊殺回收累計（礦砂）。已經算進 `ore`，這裡另記一份給頂欄與結算。
+var salvage_total: float = 0.0
+## 回收者回收的能量累計。**注入電網的量**，不是瞬間到帳的量。
+var reclaimed_total: float = 0.0
+## 本 tick 的開火線 `[{from, to}]`——純渲染用，每 tick 重寫。
+var shots: Array = []
 
 # ── 敵潮與時間流（B0.4）──────────────────────────────────────────────
 ## `prep` 準備期／`wave` 波次中／`lost` 核心已毀。**沒有 `paused`**：
@@ -59,6 +70,7 @@ var rates: Dictionary = {
 	"silo_capacity": 0.0,
 	"conduit_flow": {},   # {conduit 索引: 該線的最大資源流率}
 	"satisfaction": {},   # {node id: 0..1}
+	"engaged": 0,         # 本 tick 交戰中的塔座數（＝正在吃電的那些）
 }
 
 var _next_id: int = 1
@@ -99,6 +111,8 @@ func add_node(type: String, cell: Vector2i) -> int:
 		"cell": cell,
 		"hp": NodeDefs.hp(type),
 		"charge": 0.0,
+		"cd": 0.0,
+		"buffer": 0.0,
 	})
 	return id
 

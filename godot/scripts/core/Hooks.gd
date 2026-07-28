@@ -56,6 +56,18 @@ func _run_sim() -> void:
 			float((s.rates["conduit_flow"] as Dictionary).get(c["id"], 0.0)), 0.01
 		)
 
+	# 每座塔的能量滿足率＝它此刻的射速比例（§7.4）。**平衡調校主要看這一欄**：
+	# 「蓋滿塔會讓誰餓死」在這裡是一排數字，不是感覺。
+	var NodeDefs := preload("res://data/NodeDefs.gd")
+	var towers: Dictionary = {}
+	for n: Dictionary in s.nodes:
+		if not NodeDefs.of(String(n["type"])).get("tower", false):
+			continue
+		towers["%s%s" % [NodeDefs.label(String(n["type"])), n["cell"]]] = {
+			"sat": snappedf(float((s.rates["satisfaction"] as Dictionary).get(n["id"], 1.0)), 0.01),
+			"buffer": snappedf(float(n["buffer"]), 0.01),
+		}
+
 	print(JSON.stringify({
 		"version": GameState.VERSION,
 		"seed": Rng.seed_value,
@@ -73,6 +85,11 @@ func _run_sim() -> void:
 			"power_supply": snappedf(float(s.rates["power_supply"]), 0.01),
 			"power_demand": snappedf(float(s.rates["power_demand"]), 0.01),
 			"silo": "%.1f/%.0f" % [s.rates["silo_charge"], s.rates["silo_capacity"]],
+			"engaged": s.rates["engaged"],
+			"kills": s.kills,
+			"salvage_ore": snappedf(s.salvage_total, 0.01),
+			"reclaimed_power": snappedf(s.reclaimed_total, 0.01),
+			"towers": towers,
 			"nodes": s.nodes.size(),
 			"conduit_flow_per_sec": flows,
 		},

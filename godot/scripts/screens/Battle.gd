@@ -13,6 +13,7 @@ const MapsData := preload("res://data/Maps.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const Tide := preload("res://scripts/sim/Tide.gd")
+const Combat := preload("res://scripts/sim/Combat.gd")
 
 ## 地圖左上角。36×19 格 ×32px = 1152×608；左側 120px 留給建造欄，
 ## 浮層與地圖**不重疊**（RG-20 的先行實踐，正式驗收在 B0.6）。
@@ -37,6 +38,11 @@ var _hint: Label = null
 var _mode_buttons: Dictionary = {}
 var _ff_button: Button = null
 var _lost_panel: Control = null
+var _prio_panel: Control = null
+var _prio_labels: Dictionary = {}
+## 本幀交戰中的塔 `{id: Array}`。繪圖層自己算——它要畫的是「誰正在吃電」，
+## 而模擬只留了一個座數（`rates.engaged`）。
+var _engaged: Dictionary = {}
 
 
 func _ready() -> void:
@@ -135,11 +141,13 @@ func _draw() -> void:
 	Shapes.draw_grid(self, Rect2(Vector2.ZERO, Vector2(size) * Shapes.GRID))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
+	_engaged = Combat.engaged(s.nodes, Combat.enemy_cells(s.enemies, s.path))
 	_draw_path()
 	_draw_ore_cells()
 	_draw_conduits()
 	_draw_nodes()
 	_draw_enemies()
+	_draw_shots()
 	_draw_hover()
 
 
@@ -247,6 +255,46 @@ func _draw_nodes() -> void:
 				draw_arc(p, 12.0, 0.0, TAU, 32, Palette.ORDER_DIM, 2.0)
 				if frac > 0.0:
 					draw_arc(p, 12.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 32, Palette.ENERGY_AMBER, 4.0)
+				# 四隻塔各給一個一眼可辨的幾何體（`20_ART_DIRECTION.md` §1.6）。
+				# 全部嚴格對齊格中心——與敵潮的不規則凸包形成對比，那個對比就是主題。
+			"anchor":
+				draw_rect(Rect2(p - Vector2(8, 8), Vector2(16, 16)), Palette.ORDER_CYAN)
+			"prism":
+				# 三角形＝稜鏡。合金銀把「它是最貴的那一座」講出來。
+				draw_colored_polygon(PackedVector2Array([
+					p + Vector2(0, -12), p + Vector2(11, 7), p + Vector2(-11, 7)
+				]), Palette.ALLOY_STEEL)
+			"knell":
+				# 同心圓＝場。它不開火，畫成「發散」比畫成砲塔誠實。
+				draw_arc(p, 11.0, 0.0, TAU, 28, Palette.ORDER_CYAN, 2.0)
+				draw_arc(p, 5.0, 0.0, TAU, 20, Palette.ORDER_CYAN, 2.0)
+			"reclaimer":
+				draw_rect(Rect2(p - Vector2(10, 10), Vector2(20, 20)), Palette.ORDER_CYAN, false, 2.0)
+				draw_circle(p, 6.0, Palette.ORDER_BRIGHT)
+		_draw_engaged(n, p)
+
+
+## ★ 交戰指示：**琥珀＝能量**（配色紀律 2）。環的濃度＝這座塔的滿足率——
+## 電不夠時射速線性下降，而下降的第一個徵兆就是這個環變淡。
+## 這是 `TL_NAKED` 下「誰在吃電、誰餓著」唯一的資訊來源，不能只靠數字。
+func _draw_engaged(n: Dictionary, p: Vector2) -> void:
+	if not _engaged.get(int(n["id"]), false):
+		return
+	draw_arc(p, 15.0, 0.0, TAU, 32, Palette.ENERGY_AMBER, 2.0)
+	# 餓著的塔再加一段缺口弧，讓「差多少」在無數值下也讀得出來。
+	var k := clampf(float((s.rates["satisfaction"] as Dictionary).get(n["id"], 1.0)), 0.0, 1.0)
+	if k < 0.95:
+		draw_arc(p, 18.0, -PI / 2.0 + TAU * k, -PI / 2.0 + TAU, 28, Palette.WARN_ORANGE, 2.0)
+
+
+## 開火線。留 `SHOT_TTL` 個 tick 並隨之淡出——瞬間閃一下的線等於沒畫。
+func _draw_shots() -> void:
+	for sh: Dictionary in s.shots:
+		var fade := float(sh["ttl"]) / float(BattleController.SHOT_TTL)
+		draw_line(
+			_center(sh["from"]), _center(sh["to"]),
+			Palette.alpha(Palette.ORDER_BRIGHT, 0.25 + 0.6 * fade), 2.0
+		)
 
 
 ## 敵潮屬於**混沌**側（`20_ART_DIRECTION.md` §0）：不規則凸包、不對齊網格、
@@ -279,11 +327,6 @@ func _enemy_pos(e: Dictionary) -> Vector2:
 	return _center(s.path[i]).lerp(_center(s.path[j]), prog - float(i))
 
 
-## 受損顯示：**線被打斷之前要先看得出它在挨打**，否則產能中斷會來得莫名其妙。
-func _damage_tint(hp: float, full: float) -> Color:
-	return Palette.WARN_ORANGE if hp < full * 0.999 else Palette.TEXT_PRIMARY
-
-
 func _draw_hover() -> void:
 	if not _in_map(_hover):
 		return
@@ -294,6 +337,14 @@ func _draw_hover() -> void:
 		var col: Color = Palette.OK_GREEN if pv["ok"] else Palette.WARN_ORANGE
 		draw_rect(Rect2(p, g), Palette.alpha(col, 0.18))
 		draw_rect(Rect2(p, g), col, false, 2.0)
+		# 塔的射程要**在花錢之前**看得到——擺位是本作的主要決策，
+		# 讓玩家蓋完才發現打不到路徑等於逼他拆（§3.5 塔的擺位）。
+		var r := float(NodeDefs.of(_build_type).get("range", 0.0))
+		if r > 0.0:
+			draw_arc(
+				_center(_hover), r * Shapes.GRID, 0.0, TAU, 64,
+				Palette.alpha(col, 0.45), 1.5
+			)
 	else:
 		draw_rect(Rect2(p, g), Palette.BORDER_STRONG, false, 2.0)
 	if _connect_from.x >= 0:
@@ -312,11 +363,11 @@ func _center(c: Vector2i) -> Vector2:
 # ── 浮層 ──────────────────────────────────────────────────────────────
 
 func _build_ui() -> void:
-	_top = UiKit.hbox(20)
+	_top = UiKit.hbox(18)
 	_top.position = Vector2(120, 14)
 	add_child(_top)
-	for i in 6:
-		_top.add_child(UiKit.label("", 16, Palette.TEXT_PRIMARY, false))
+	for i in 7:
+		_top.add_child(UiKit.label("", 15, Palette.TEXT_PRIMARY, false))
 
 	var col := UiKit.vbox(4)
 	col.position = Vector2(8, 56)
@@ -341,21 +392,86 @@ func _build_ui() -> void:
 		_mode_buttons[int(pair[0])] = b
 		col.add_child(UiKit.touchable(b))
 
-	col.add_child(_spacer(12))
+	# 建造欄放不下八種節點再加動作鈕（8×44 已經吃掉 380px），
+	# 所以時間流與面板開關搬到地圖下緣那條 56px 的空帶——那裡本來就空著。
+	var bar := UiKit.hbox(8)
+	bar.position = Vector2(8, 668)
+	add_child(bar)
 	_ff_button = Button.new()
 	_ff_button.text = "快進 4×"
 	_ff_button.pressed.connect(_on_fast_forward)
-	col.add_child(UiKit.touchable(_ff_button))
+	bar.add_child(UiKit.touchable(_ff_button))
 	var summon := Button.new()
 	summon.text = "提前召喚"
 	summon.pressed.connect(_on_summon_now)
-	col.add_child(UiKit.touchable(summon))
+	bar.add_child(UiKit.touchable(summon))
+	var prio := Button.new()
+	prio.text = "優先權"
+	prio.pressed.connect(_on_toggle_priority)
+	bar.add_child(UiKit.touchable(prio))
+
+	_build_priority_panel()
 
 	_hint = UiKit.label("", 14, Palette.TEXT_SECONDARY, false)
-	_hint.position = Vector2(120, 672)
-	_hint.size = Vector2(1140, 40)
+	_hint.position = Vector2(320, 678)
+	_hint.size = Vector2(950, 36)
 	add_child(_hint)
 	_refresh_hint()
+
+
+## ★ 依**節點類型**的優先權面板（`10_GDD.md` §3.1）。
+##
+## 三件事是設計鎖死的，不要「順手」改掉：
+##   ① **列固定、順序固定**（`NodeDefs.PRIORITY_ROWS`）——不可暫停的戰術動作
+##      必須是一個手勢；滑桿會跑位就不是手勢了。
+##   ② **沒有「每一座」的選項**——操作負擔不得隨建築數量成長（風險 R-1）。
+##   ③ 預設收合。它是抽屜不是常駐欄（§6.2 全畫面地圖 ＋ 可收合浮層）。
+func _build_priority_panel() -> void:
+	var box := PanelContainer.new()
+	box.position = Vector2(930, 96)
+	box.visible = false
+	var col := UiKit.vbox(6)
+	box.add_child(col)
+	col.add_child(UiKit.label("能量／礦砂不足時，誰先餓死", 14, Palette.TEXT_SECONDARY, false))
+	for type: String in NodeDefs.PRIORITY_ROWS:
+		var row := UiKit.hbox(6)
+		var name_label := UiKit.label(NodeDefs.label(type), 15, Palette.TEXT_PRIMARY, false)
+		name_label.custom_minimum_size = Vector2(72, 0)
+		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		row.add_child(name_label)
+		var down := Button.new()
+		down.text = "◀"
+		down.pressed.connect(_on_priority.bind(type, -1))
+		row.add_child(UiKit.touchable(down))
+		var value := UiKit.label("", 17, Palette.ENERGY_AMBER)
+		value.custom_minimum_size = Vector2(30, 0)
+		value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		row.add_child(value)
+		_prio_labels[type] = value
+		var up := Button.new()
+		up.text = "▶"
+		up.pressed.connect(_on_priority.bind(type, 1))
+		row.add_child(UiKit.touchable(up))
+		col.add_child(row)
+	add_child(box)
+	_prio_panel = box
+	_refresh_priority()
+
+
+func _on_toggle_priority() -> void:
+	_prio_panel.visible = not _prio_panel.visible
+
+
+func _on_priority(type: String, delta: int) -> void:
+	s.priorities[type] = clampi(
+		int(s.priorities.get(type, 1)) + delta, NodeDefs.PRIORITY_MIN, NodeDefs.PRIORITY_MAX
+	)
+	_refresh_priority()
+
+
+func _refresh_priority() -> void:
+	for type: String in _prio_labels:
+		(_prio_labels[type] as Label).text = str(int(s.priorities.get(type, 1)))
 
 
 func _spacer(h: int) -> Control:
@@ -393,6 +509,8 @@ func _refresh_top() -> void:
 		["礦砂 %s　▲%.1f/秒" % [UiKit.commas(int(s.ore)), r["ore_in"]], Palette.ORDER_CYAN],
 		["能量 %.0f/%.0f" % [r["power_supply"], r["power_demand"]], Palette.ENERGY_AMBER],
 		["儲槽 %.0f/%.0f" % [r["silo_charge"], r["silo_capacity"]], Palette.ENERGY_AMBER],
+		# 「能量需求為什麼突然翻倍」這個問題的答案永遠是交戰座數（§7.4 峰值約束）。
+		["交戰 %d 座　擊殺 %d" % [int(r["engaged"]), s.kills], Palette.ENERGY_AMBER],
 		[_phase_text(), Palette.TIDE_MAGENTA if s.phase == "wave" else Palette.TEXT_SECONDARY],
 		["核心 %.0f/%.0f" % [maxf(0.0, s.core_hp()), core_full], core_col],
 		["節點 %d　導管 %d" % [s.nodes.size(), s.conduits.size()], Palette.TEXT_SECONDARY],
@@ -468,6 +586,8 @@ func _restart() -> void:
 	_top = null
 	_hint = null
 	_ff_button = null
+	_prio_panel = null
+	_prio_labels.clear()
 	s = SessionState.new()
 	s.setup(MapsData.SHOAL)
 	_accum = 0.0
@@ -507,3 +627,9 @@ func _demo_layout() -> void:
 		push_warning("示範佈局第 %d 步失敗：%s" % [f["index"], f["reason"]])
 	# 直接開打：準備期 60 秒，等它跑完的截圖只會拍到一張空曠的地圖。
 	BattleController.start_wave(s)
+	# 再快轉到敵潮進入塔的射程——**交戰耗能是 B0.5 唯一要看的東西**，
+	# 而它只在有敵人在射程內時存在。等真實時間跑 26 秒等於讓使用者的桌面
+	# 開著一個視窗發呆半分鐘，模擬本來就不吃 delta，直接推 tick 就好。
+	# 這 260 個 tick ＋ 60 秒準備期 ＝ `TL_SIM=860`：兩條驗證路徑仍看同一個局面。
+	for _i in 260:
+		BattleController.step(s)

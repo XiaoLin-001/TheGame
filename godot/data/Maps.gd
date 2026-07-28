@@ -20,9 +20,10 @@ const SHOAL := {
 	"name": "淺灘",
 	"size": Vector2i(36, 19),
 	"core": Vector2i(34, 14),
-	# 測試圖給得寬鬆：B0.3 要能一口氣蓋出「礦砂線 ＋ 發電機 ＋ 儲槽」整套來驗證。
+	# 測試圖給得寬鬆：示範佈局要能一口氣蓋出「礦砂線 ＋ 電網 ＋ 四隻塔 ＋ 加粗幹線」
+	# 整套，否則驗證不了核心取捨。B0.5 由 300 調高到 1400（示範佈局要 1291）。
 	# 真正吃緊的起始礦砂是關卡設計的事（B0.7 手作圖、B1.2 戰役五關）。
-	"start_ore": 300,
+	"start_ore": 1400,
 	"prep_time": 60.0,  # PREP_TIME_TUTORIAL（§7.1）
 	"crossings": [Vector2i(10, 4), Vector2i(22, 4), Vector2i(30, 9)],
 	"ore": [
@@ -35,12 +36,21 @@ const SHOAL := {
 ## 示範佈局：一組建造指令，`TL_PANEL=battle` 的截圖與 `TL_SIM` 的 headless
 ## 跑局共用同一份——**兩條驗證路徑看的必須是同一個局面**，否則截圖證明不了數字。
 ##
-## 它蓋出 B0.3 要證明的兩件事：
+## 它蓋出 B0.3–B0.5 要證明的三件事：
 ##   ① 礦砂線：採集器 →（45°）→ 中繼 →（過橋 30,9）→ 中繼 → 中繼 → 核心。
 ##      東岸的核心只能經跨越點抵達——這條線就是「產線往危險方向拉」的字面樣子。
 ##   ② 能量線：採集器 → 發電機 → 儲槽。**發電機輸出 20 塞不進 cap 10**，
 ##      那條線立刻滿載變亮（`10_GDD.md` §7.2）。
+##   ③ ★ 核心取捨（B0.5）：四隻塔全部掛在同一個電網上。**一台發電機 20/秒，
+##      四座塔交戰時要 40/秒**——波次一開打，儲槽開始放電、塔的射速掉到約
+##      七成五。這是「同一份能量，餵塔還是餵生產線」第一次真的成立。
+##
+##   塔的擺位本身就是三道題：
+##     稜鏡 (33,4) 與橫段路徑**同一列** → 一次貫穿整段（§7.4 的對齊謎題）
+##     回收者 (28,6) 蹲在稜鏡的擊殺點上，**不是它自己射得最爽的地方**（§3.3）
+##     潮鳴 (28,12) 與錨 (32,12) 守南段，全部退開路徑 2 格 → walk-by 打不到
 const SHOAL_DEMO := [
+	# ① 東岸礦線：採集器 →（45°）→ 中繼 →（過橋 30,9）→ 中繼 → 中繼 → 核心
 	["place", "relay", Vector2i(28, 9)],
 	["place", "relay", Vector2i(33, 9)],
 	["place", "relay", Vector2i(33, 13)],
@@ -49,11 +59,44 @@ const SHOAL_DEMO := [
 	["conduit", Vector2i(28, 9), Vector2i(33, 9)],
 	["conduit", Vector2i(33, 9), Vector2i(33, 13)],
 	["conduit", Vector2i(33, 13), Vector2i(34, 14)],
+
+	# ② 西岸電廠：採集器 → 發電機 →（加粗 ×2）→ 幹線中繼
+	#    基礎 cap 10 塞不下發電機的 20，所以這一段一定要加粗（§7.2）。
 	["place", "extractor", Vector2i(16, 8)],
 	["place", "generator", Vector2i(16, 11)],
 	["conduit", Vector2i(16, 8), Vector2i(16, 11)],
-	["place", "silo", Vector2i(20, 15)],
+	["place", "relay", Vector2i(20, 15)],
 	["conduit", Vector2i(16, 11), Vector2i(20, 15)],
+	["upgrade", Vector2i(16, 11), Vector2i(20, 15), 2],
+
+	# ③ 儲槽掛在幹線旁的**支線**上，不在幹線上。
+	#    它的充放電速率＝它自己那條線的 cap（§3.1），支線維持基礎 10：
+	#    所以波次期它只補得上 10/秒——這正是 §7.4 那張表裡「儲槽線需要加粗」
+	#    的情境，玩家在畫面上會看到這條支線滿載。
+	["place", "silo", Vector2i(20, 17)],
+	["conduit", Vector2i(20, 15), Vector2i(20, 17)],
+
+	# ④ 幹線東送，加粗到頂（28）：**瓶頸要落在發電量上，不是管子上**
+	["place", "relay", Vector2i(26, 9)],
+	["conduit", Vector2i(20, 15), Vector2i(26, 9)],
+	["upgrade", Vector2i(20, 15), Vector2i(26, 9), 3],
+	["conduit", Vector2i(26, 9), Vector2i(28, 9)],
+	["upgrade", Vector2i(26, 9), Vector2i(28, 9), 3],
+	["upgrade", Vector2i(28, 9), Vector2i(33, 9), 3],
+
+	# ⑤ 四隻塔。擺位本身就是三道題：
+	#    稜鏡 (33,4) 與橫段路徑**同一列** → 一次貫穿整段（§7.4 的對齊謎題）
+	#    回收者 (28,6) 蹲在稜鏡的擊殺點上，**不是它自己射得最爽的地方**（§3.3）
+	#    全部退開路徑 2 格 → walk-by 打不到（§3.5）
+	["place", "reclaimer", Vector2i(28, 6)],
+	["conduit", Vector2i(28, 6), Vector2i(28, 9)],
+	["place", "knell", Vector2i(28, 12)],
+	["conduit", Vector2i(28, 12), Vector2i(28, 9)],
+	["place", "anchor", Vector2i(32, 12)],
+	["conduit", Vector2i(32, 12), Vector2i(33, 13)],
+	["place", "prism", Vector2i(33, 4)],
+	["conduit", Vector2i(33, 4), Vector2i(33, 9)],
+	["upgrade", Vector2i(33, 4), Vector2i(33, 9), 3],  # 一座稜鏡就要 20/秒
 ]
 
 

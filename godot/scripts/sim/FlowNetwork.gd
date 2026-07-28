@@ -126,8 +126,6 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 
 	var step_budget: int = (ids.size() + edges.size()) * 4 + 64
 	for _iter in ITERATIONS:
-		var reach := _reach_all(ids, by_id, out_edges, edges, flow, demand_left, priorities)
-
 		var carry: Dictionary = {}
 		var queue: Array[int] = []
 		for nid: int in ids:
@@ -157,8 +155,23 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 			if amt <= EPS:
 				continue
 
-			# 其餘依「下游可送達需求 × 優先權」分配給出邊
+			# ★ 「順著這條線下去還有多少需求」是一個**對每個推送者各自成立**的量，
+			#   不是節點自帶的屬性：算的時候必須把推送者自己標成 visiting 排除掉。
+			#   否則在雙向邊上（一條實體管線＝兩條方向相反的邊）A 會看到「經 B
+			#   還有需求」，而那份需求其實要繞回 A 自己——資源就在兩點之間來回彈，
+			#   線寬灌水、流量對不上（B0.5 把導管改成雙向後當場現形）。
 			var outs: Array = out_edges.get(nid, [])
+			var memo: Dictionary = {}
+			var visiting: Dictionary = {nid: true}
+			var reach: Dictionary = {}
+			for ei: int in outs:
+				var tid: int = int((edges[ei] as Dictionary).get("to", -1))
+				if not reach.has(tid):
+					reach[tid] = _reach(
+						tid, by_id, out_edges, edges, flow, demand_left, priorities, memo, visiting
+					)
+
+			# 其餘依「下游可送達需求 × 優先權」分配給出邊
 			for _round in REDISTRIBUTE_ROUNDS:
 				if amt <= EPS:
 					break
@@ -240,25 +253,16 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 	}
 
 
-## 每條出邊的權重需要知道「順著這條線下去，還有多少需求送得到」。
-## 回傳 `{id: Vector2(可送達需求, 優先權加權後的同一份需求)}`。
+## 「順著 `nid` 這條線下去，還有多少需求送得到」。
+## 回傳 `Vector2(可送達需求, 優先權加權後的同一份需求)`。
 ## 加權值只用於分配比例，可送達量用於截斷——兩者分開才不會拿權重當量用。
-static func _reach_all(
-	ids: Array[int],
-	by_id: Dictionary,
-	out_edges: Dictionary,
-	edges: Array,
-	flow: Array[float],
-	demand_left: Dictionary,
-	priorities: Dictionary
-) -> Dictionary:
-	var memo: Dictionary = {}
-	var visiting: Dictionary = {}
-	for nid: int in ids:
-		_reach(nid, by_id, out_edges, edges, flow, demand_left, priorities, memo, visiting)
-	return memo
-
-
+##
+## **呼叫端必須把推送者自己放進 `visiting`**：這個量對每個推送者各自成立，
+## 不是節點自帶的屬性（見上面傳播段的說明）。`memo` 因此只在同一個推送者的
+## 那幾條出邊之間共用，跨推送者不重用。
+##
+## ponytail: 每個節點彈出時各算一次 ＝ O(V×(V+E))。M0 一屏地圖（≤ 40 節點）
+## 綽綽有餘；B2.1 的程序生成大圖若量到瓶頸，再換成不依賴路徑的 reach 估計。
 static func _reach(
 	nid: int,
 	by_id: Dictionary,

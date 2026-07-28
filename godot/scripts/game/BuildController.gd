@@ -107,11 +107,29 @@ static func apply_ops(s: RefCounted, ops: Array) -> Array:
 				code = place(s, String(op[1]), op[2])
 			"conduit":
 				code = lay_conduit(s, op[1], op[2])
+			"upgrade":
+				# 以兩端指定，不用索引：索引會隨前面的指令漂移，
+				# 一改示範佈局就會靜靜地加粗到別條線上。
+				var idx := _index_of(s, op[1], op[2])
+				for _lv in int(op[3]):
+					code = upgrade(s, idx)
+					if code != Build.OK:
+						break
 			_:
 				code = "unknown_op"
 		if code != Build.OK:
 			failures.append({"index": i, "op": op[0], "reason": code})
 	return failures
+
+
+## 兩端 → 導管索引。找不到回 −1（`upgrade()` 會擋下）。
+static func _index_of(s: RefCounted, a: Vector2i, b: Vector2i) -> int:
+	var key := Build.conduit_key(a, b)
+	for i in s.conduits.size():
+		var c: Dictionary = s.conduits[i]
+		if Build.conduit_key(c["a"], c["b"]) == key:
+			return i
+	return -1
 
 
 ## 放置前的預覽（DoD：`+X/秒` 與總耗能變化）。
@@ -130,6 +148,12 @@ static func preview_place(s: RefCounted, type: String, cell: Vector2i) -> Dictio
 		lines.append("＋%.0f 能量/秒" % float(def["power_out"]))
 	if def.has("capacity"):
 		lines.append("緩衝 %.0f 能量" % float(def["capacity"]))
+	# ★ 塔：**交戰耗能才是要買的東西**，待機 0 要一起講——
+	# 只寫「−20 能量/秒」會讓玩家以為蓋了就一直漏電（§7.4）。
+	# 射程／射速／傷害不寫進來：提示列是一行，塞進去只會把上面那些擠掉，
+	# 而且射程在滑鼠底下已經畫成一個圈了（`screens/Battle.gd` 的放置預覽）。
+	if def.has("engage_power"):
+		lines.append("交戰時 −%.0f 能量/秒（待機 0）" % float(def["engage_power"]))
 
 	# 總供需變化：本作最重要的資訊通道，**在花錢之前**就要看得到（§3.1）。
 	var supply_now := float(s.rates.get("power_supply", 0.0))
@@ -139,7 +163,8 @@ static func preview_place(s: RefCounted, type: String, cell: Vector2i) -> Dictio
 	if not is_zero_approx(d_supply):
 		lines.append("總能量供給 %.0f → %.0f /秒" % [supply_now, supply_now + d_supply])
 	if not is_zero_approx(d_demand):
-		lines.append("總能量需求 %.0f → %.0f /秒" % [demand_now, demand_now + d_demand])
+		var when := "（交戰時）" if def.has("engage_power") else ""
+		lines.append("總能量需求 %.0f → %.0f /秒%s" % [demand_now, demand_now + d_demand, when])
 
 	if code != Build.OK:
 		lines.append("✕ " + reason_text(code))
@@ -154,11 +179,12 @@ static func preview_place(s: RefCounted, type: String, cell: Vector2i) -> Dictio
 	}
 
 
-## 這個類型會替全網增加多少**持續**能量需求。
+## 這個類型會替全網增加多少能量需求。
 ## 儲槽的充能需求不是固定值——它受**自己那條導管的 cap** 約束（§3.1），
-## 線還沒拉之前只能以基礎 cap 估。塔的交戰耗能（待機 0）是 B0.5 才進來的。
+## 線還沒拉之前只能以基礎 cap 估。
+## 塔給的是**交戰時**的峰值：本作的約束是峰值電力，不是平均電力（§3.3）。
 static func _power_demand_of(type: String) -> float:
 	var def := NodeDefs.of(type)
 	if def.has("capacity"):
 		return Build.CAP_BASE
-	return float(def.get("power_in", 0.0))
+	return float(def.get("power_in", 0.0)) + float(def.get("engage_power", 0.0))

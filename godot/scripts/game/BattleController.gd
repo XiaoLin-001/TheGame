@@ -10,6 +10,7 @@ extends RefCounted
 const FlowNetwork := preload("res://scripts/sim/FlowNetwork.gd")
 const Build := preload("res://scripts/sim/Build.gd")
 const Tide := preload("res://scripts/sim/Tide.gd")
+const Combat := preload("res://scripts/sim/Combat.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const Maps := preload("res://data/Maps.gd")
@@ -18,35 +19,57 @@ const TICK := 0.1
 
 
 ## 推進一個 tick。就地變更 `s`。
+##
+## **順序是有意義的**：先判交戰、再解電網、最後才開火。
+## 交戰狀態是純幾何（射程內有沒有敵人），與電無關；電網解出來的滿足率才決定
+## 射速與光環強度。倒過來做的話塔會拿上一 tick 的電開這一 tick 的火，
+## 「電不夠射速就慢」這條規則會延遲一格才生效，玩家讀不出因果。
 static func step(s: RefCounted) -> void:
 	if s.phase == "lost":
 		return
 	s.tick_count += 1
 	s.phase_time += TICK
-	_tide(s)
+	_phase(s)
+
+	var cells := Combat.enemy_cells(s.enemies, s.path)
+	var engaged := Combat.engaged(s.nodes, cells)
+
 	# 邊只建一次：兩個資源網與回寫共用同一份，索引順序才對得起來。
 	var edges := _edges(s)
 	var ore_res := _solve_ore(s, edges)
-	var power_res := _solve_power(s, edges, ore_res)
-	_write_rates(s, edges, ore_res, power_res)
+	var power_res := _solve_power(s, edges, ore_res, engaged)
+	var sat: Dictionary = power_res["satisfaction"]
+
+	# 光環算一次就好，推進與開火共用：兩者相隔一個 tick 的移動量，
+	# 破甲比例不會因此改變，多算一次只是多跑一趟 塔×敵人。
+	var aura := Combat.auras(s.nodes, cells, sat)
+	_advance_and_damage(s, aura)
+	_fire(s, engaged, sat, aura)
+	_end_of_wave(s)
+	_write_rates(s, edges, ore_res, power_res, engaged)
 
 
 # ── 敵潮：時間流 ＋ walk-by 破壞 ──────────────────────────────────────
 
-static func _tide(s: RefCounted) -> void:
-	match s.phase:
-		"prep":
-			if s.phase_time >= s.prep_time():
-				start_wave(s)
-		"wave":
-			_spawn_due(s)
-			_advance_and_damage(s)
-			# 一波「結束」＝ 沒有還在路上的敵人，也沒有還沒出場的。
-			# 走到核心的會留下來繼續啃——**它們是駐足，不是消失**。
-			if s.spawn_queue.is_empty() and not _anyone_walking(s):
-				s.phase = "prep"
-				s.phase_time = 0.0
-				s.speed_mult = 1
+static func _phase(s: RefCounted) -> void:
+	if s.phase == "prep":
+		if s.phase_time >= s.prep_time():
+			start_wave(s)
+	elif s.phase == "wave":
+		_spawn_due(s)
+
+
+## 一波「結束」＝ 沒有還在路上的敵人，也沒有還沒出場的。
+## 走到核心的會留下來繼續啃——**它們是駐足，不是消失**，所以推進與開火
+## 每個 tick 都跑，不看階段。（B0.4 把它們關在 `wave` 分支裡，導致殘敵在
+## 準備期停手又停挨打，「只有核心會讓它們駐足」等於只成立半個階段。）
+static func _end_of_wave(s: RefCounted) -> void:
+	if s.phase != "wave":
+		return
+	if s.spawn_queue.is_empty() and not _anyone_walking(s):
+		s.phase = "prep"
+		s.phase_time = 0.0
+		s.speed_mult = 1
 
 
 ## 開打。準備期可以提前結束（提前召喚的獎勵倍率是 B0.6）。
@@ -75,9 +98,13 @@ static func _anyone_walking(s: RefCounted) -> bool:
 
 ## ★ walk-by：先打相鄰 1 格內的建築，然後**繼續走**。
 ## 推進與破壞完全不互相影響——沒有任何建築能改變一隻敵人的到達時間。
-static func _advance_and_damage(s: RefCounted) -> void:
+##
+## `aura` 與 `s.enemies` 同索引，`x` 是減速比例（潮鳴，§7.4）。
+## 減速只改速度，**不會改成 0**：光環強度上限 40%，永遠停不下來（RG-17）。
+static func _advance_and_damage(s: RefCounted, aura: Array = []) -> void:
 	var crossings: Dictionary = s.sets["crossings"]
-	for e: Dictionary in s.enemies:
+	for i in s.enemies.size():
+		var e: Dictionary = s.enemies[i]
 		var def := Enemies.of(String(e["type"]))
 		var cell := Tide.cell_of(s.path, float(e["progress"]))
 		var dmg := float(def.get("dmg", 0.0)) * TICK
@@ -89,11 +116,100 @@ static func _advance_and_damage(s: RefCounted) -> void:
 			if Tide.conduit_hit(c["cells"], crossings, cell):
 				c["hp"] = float(c["hp"]) - dmg
 
+		var slow := 0.0 if i >= aura.size() else (aura[i] as Vector2).x
 		e["progress"] = Tide.advance(
-			float(e["progress"]), float(def.get("speed", 1.0)), s.path.size()
+			float(e["progress"]), float(def.get("speed", 1.0)) * (1.0 - slow), s.path.size()
 		)
 
 	_clear_wreckage(s)
+
+
+# ── 開火與結算（`10_GDD.md` §3.3、§7.4）─────────────────────────────
+
+## 塔開火。**只有本 tick 付了交戰耗能的塔才會開火**——付錢與開火是同一件事，
+## 分開就會出現「待機的塔白打一發」的漏洞。
+## 開火線留幾個 tick 才看得見：稜鏡 0.5 發/秒，只留一個 tick 的話
+## 60Hz 下大約每 20 幀才閃一次，玩家看到的是一座沉默的塔。
+const SHOT_TTL := 3
+
+static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Array) -> void:
+	for i in range(s.shots.size() - 1, -1, -1):
+		var sh: Dictionary = s.shots[i]
+		sh["ttl"] = int(sh["ttl"]) - 1
+		if int(sh["ttl"]) <= 0:
+			s.shots.remove_at(i)
+	if s.enemies.is_empty():
+		return
+	# 敵人已經走過了，射擊看的是**現在**的位置。
+	var cells := Combat.enemy_cells(s.enemies, s.path)
+	var damage: Array[float] = []
+	damage.resize(s.enemies.size())
+	damage.fill(0.0)
+
+	for n: Dictionary in s.nodes:
+		var def := NodeDefs.of(String(n["type"]))
+		var rof := float(def.get("rof", 0.0))
+		if not def.get("tower", false) or rof <= 0.0:
+			continue
+		var busy: bool = engaged.get(int(n["id"]), false)
+		var k := clampf(float(sat.get(int(n["id"]), 1.0)), 0.0, 1.0) if busy else 0.0
+		# 滿足率直接乘進累加器 → 射速線性下降，不停火（§3.1）。
+		var step_res := Combat.shots(float(n["cd"]), rof, k)
+		n["cd"] = step_res["cd"]
+		var count := int(step_res["n"])
+		if count <= 0:
+			continue
+
+		var r := float(def.get("range", 0.0))
+		var targets: Array[int] = []
+		if def.get("pierce", false):
+			targets = Combat.pierce_indices(n["cell"], cells, r)
+		else:
+			var t := Combat.front_most(Combat.in_range_indices(n["cell"], cells, r), s.enemies)
+			if t >= 0:
+				targets = [t]
+		for i: int in targets:
+			var edef := Enemies.of(String((s.enemies[i] as Dictionary)["type"]))
+			damage[i] += Combat.hit_damage(
+				float(def.get("dmg", 0.0)) * float(count),
+				String(def.get("dmg_type", "physical")), edef, aura[i].y
+			)
+			s.shots.append({"from": n["cell"], "to": cells[i], "ttl": SHOT_TTL})
+
+	# **先把全部傷害算完再結算死亡**：邊打邊結算的話，同一 tick 內誰拿到擊殺
+	# 會由節點在陣列裡的順序決定——那是把 id 順序偷渡成遊戲規則。
+	for i in s.enemies.size():
+		var e: Dictionary = s.enemies[i]
+		e["hp"] = float(e["hp"]) - damage[i]
+	for i in range(s.enemies.size() - 1, -1, -1):
+		if float((s.enemies[i] as Dictionary)["hp"]) > 0.0:
+			continue
+		_on_kill(s, float(Enemies.of(String(s.enemies[i]["type"])).get("value", 0.0)), cells[i])
+		s.enemies.remove_at(i)
+
+
+## 一次擊殺的兩種回收，**並存**（§7.4）。
+static func _on_kill(s: RefCounted, value: float, at: Vector2i) -> void:
+	s.kills += 1
+	# ① 全域擊殺回收：任何塔擊殺 → 價值 25% 的礦砂，**直接入帳**。
+	#    它是擊殺處撿到的殘骸，不是採出來要運回核心的礦（§3.3）。
+	var salvage := Combat.salvage_ore(value)
+	s.ore += salvage
+	s.salvage_total += salvage
+	# ② 回收者：射程內**任何**死亡（不限自己擊殺）→ 價值 60% × 匯率 5 的能量。
+	#    進的是它自己的緩衝，之後受自己那條導管的 cap 限速注入（§7.4）。
+	for n: Dictionary in s.nodes:
+		var def := NodeDefs.of(String(n["type"]))
+		if not def.has("reclaim"):
+			continue
+		if not Combat.in_range(n["cell"], at, float(def.get("range", 0.0))):
+			continue
+		var gain := Combat.reclaim_power(value, float(def["reclaim"]))
+		var before := float(n["buffer"])
+		n["buffer"] = minf(before + gain, float(def.get("reclaim_buffer", 0.0)))
+		# 累計只記**真的進得了緩衝**的部分：溢流掉的電從來沒進過電網，
+		# 把它算進「已回收」會讓頂欄的數字比實際好看。
+		s.reclaimed_total += float(n["buffer"]) - before
 
 
 ## 打掉的東西要真的消失——**產能中斷是玩家該看到的後果**，
@@ -137,21 +253,36 @@ static func _solve_ore(s: RefCounted, edges: Array) -> Dictionary:
 
 # ── 能量網 ────────────────────────────────────────────────────────────
 
-static func _solve_power(s: RefCounted, edges: Array, ore_res: Dictionary) -> Dictionary:
+static func _solve_power(
+	s: RefCounted, edges: Array, ore_res: Dictionary, engaged: Dictionary
+) -> Dictionary:
 	var sat: Dictionary = ore_res.get("satisfaction", {})
 	var nodes: Array = []
+	# 回收者本 tick 自己用掉的緩衝，解算後要從緩衝裡扣掉。
+	var self_use: Dictionary = {}
 	for n: Dictionary in s.nodes:
 		var type := String(n["type"])
 		var def := NodeDefs.of(type)
 		# 發電機的產出 × 它自己的礦砂滿足率（按比例降速，不停機）。
 		var supply := float(def.get("power_out", 0.0)) * TICK * float(sat.get(n["id"], 1.0))
 		var demand := float(def.get("power_in", 0.0)) * TICK
+		# ★ 交戰耗能：**射程內有敵人才扣，待機 0**（§7.4）。全案的心臟就在這一行。
+		if engaged.get(int(n["id"]), false):
+			demand += float(def.get("engage_power", 0.0)) * TICK
 		var sn := _sim_node(n, supply, demand)
 		if type == "silo":
 			# 儲槽是能量專用緩衝（§7.3）。charge 是**絕對量**，不乘 TICK；
 			# 解算器拿它跟「每 tick 的 cap」比，兩邊都是同一 tick 的單位。
 			sn["charge"] = float(n["charge"])
 			sn["capacity"] = float(def.get("capacity", 0.0))
+		elif def.has("reclaim"):
+			# ★ 回收的能量經**自己那條導管**以 cap 限速注入（§7.4）——與儲槽同構。
+			#   沒有全域能量池，回收來的電也不例外，否則等於在回收者身上偷開第二個水池。
+			#   **不必先把它跟自己的交戰耗能相抵**：解算器讓每個節點先吸收自己手上的
+			#   供給再往外送，所以「先供自己」是它本來就會做的事，滿足率也因此自動正確。
+			var offer := minf(float(n["buffer"]), _out_cap(int(n["id"]), edges))
+			self_use[int(n["id"])] = minf(offer, demand)
+			sn["supply"] = float(sn["supply"]) + offer
 		nodes.append(sn)
 
 	var res := FlowNetwork.solve(nodes, edges, s.priorities)
@@ -163,7 +294,26 @@ static func _solve_power(s: RefCounted, edges: Array, ore_res: Dictionary) -> Di
 			continue
 		var cap := float(NodeDefs.of("silo").get("capacity", 0.0))
 		n["charge"] = clampf(float(n["charge"]) + float(deltas.get(n["id"], 0.0)), 0.0, cap)
+
+	# 回收者：扣掉「自用 ＋ 真的送出去的」。推不出去的留在緩衝裡下一 tick 再試——
+	# 這就是 cap 限速的具體長相。
+	var sent: Dictionary = res.get("sent", {})
+	for n: Dictionary in s.nodes:
+		var nid := int(n["id"])
+		if self_use.has(nid):
+			n["buffer"] = maxf(
+				0.0, float(n["buffer"]) - float(self_use[nid]) - float(sent.get(nid, 0.0))
+			)
 	return res
+
+
+## 一個節點所有出邊的 cap 總和（每 tick 單位）。回收者能推出去的上限。
+static func _out_cap(id: int, edges: Array) -> float:
+	var total := 0.0
+	for e: Dictionary in edges:
+		if int(e.get("from", -1)) == id:
+			total += float(e.get("cap", 0.0))
+	return total
 
 
 # ── 共用 ──────────────────────────────────────────────────────────────
@@ -179,9 +329,18 @@ static func _sim_node(n: Dictionary, supply: float, demand: float) -> Dictionary
 	}
 
 
-## 導管 → 有向邊。**儲槽那條線展開成雙向**（進去充能、出來放電），
-## 這正是 `sim/FlowNetwork.gd` 文件裡要求的表示法。
-## 所有量都換算成「每 tick」，包含 cap。
+## 導管 → 有向邊。**每一條導管都展開成雙向**（`sim/FlowNetwork.gd` 收的是
+## 有向邊，一條實體管線就是兩條方向相反的邊）。所有量換算成「每 tick」，含 cap。
+##
+## ── 為什麼不是有向（B0.5 修正）────────────────────────────────────
+## B0.3–B0.4 只給一條邊，方向是 `a`→`b`，也就是**玩家先點哪個節點**。
+## 那個方向在畫面上完全看不見，玩家也無從選擇，而 `Build.conduit_key()`
+## 早就把 A→B 與 B→A 當成同一條線在擋重複——「點的順序」從來就不是規則。
+##
+## B0.5 才讓它現形：塔是末端消費者，而「先點塔、再點幹線」是最自然的手勢，
+## 拉出來的線卻只能從塔往外送電。示範佈局裡有三座塔就這樣**永遠是 0 電**，
+## 而畫面上那條線看起來一切正常。看不見、控制不了、又會靜靜毀掉佈局的東西
+## 不是規則，是缺陷。
 static func _edges(s: RefCounted) -> Array:
 	var edges: Array = []
 	for c: Dictionary in s.conduits:
@@ -191,21 +350,26 @@ static func _edges(s: RefCounted) -> Array:
 			continue
 		var cap := Build.conduit_cap(int(c["level"])) * TICK
 		edges.append({"from": int(a["id"]), "to": int(b["id"]), "cap": cap, "conduit": c["id"]})
-		if a["type"] == "silo" or b["type"] == "silo":
-			edges.append({"from": int(b["id"]), "to": int(a["id"]), "cap": cap, "conduit": c["id"]})
+		edges.append({"from": int(b["id"]), "to": int(a["id"]), "cap": cap, "conduit": c["id"]})
 	return edges
 
 
 ## 把解算結果換算成**單位/秒**寫進 `rates`，供渲染與頂欄讀取。
 ## 渲染層不做單位換算——它只讀這裡。
 static func _write_rates(
-	s: RefCounted, edges: Array, ore_res: Dictionary, power_res: Dictionary
+	s: RefCounted, edges: Array, ore_res: Dictionary, power_res: Dictionary, engaged: Dictionary
 ) -> void:
 	var per_sec := 1.0 / TICK
 	var flows: Dictionary = {}
 	for i in edges.size():
 		var cid: int = int((edges[i] as Dictionary).get("conduit", -1))
-		var f := float((ore_res["flow"] as Array)[i]) + float((power_res["flow"] as Array)[i])
+		# **取最大值，不是相加**：礦砂與能量各跑一次解算、各自吃滿同一個 cap
+		# （每種資源獨立計容量）。相加會讓一條同時走礦與電的幹線報出超過 cap
+		# 的流量，於是渲染層把一條還有餘裕的線畫成滿載——瓶頸圖直接說謊（R-3）。
+		# 兩者共用同一個 cap 數值，所以「最大流率 ÷ cap」正好等於最大飽和度。
+		var f := maxf(
+			float((ore_res["flow"] as Array)[i]), float((power_res["flow"] as Array)[i])
+		)
 		flows[cid] = maxf(float(flows.get(cid, 0.0)), f * per_sec)
 
 	var charge := 0.0
@@ -232,6 +396,10 @@ static func _write_rates(
 	s.rates["silo_capacity"] = capacity
 	s.rates["conduit_flow"] = flows
 	s.rates["satisfaction"] = sat
+
+	# 交戰中的塔座數＝**本 tick 真的在吃電的那些**。頂欄要它，因為
+	# 「能量需求為什麼突然翻倍」這個問題的答案永遠是這個數字。
+	s.rates["engaged"] = engaged.values().count(true)
 
 	# 入帳：**只有送達核心的礦砂算數**（§7.3）。
 	s.ore += float((ore_res["received"] as Dictionary).get(s.core_id, 0.0))
