@@ -48,6 +48,8 @@ var _ff_button: Button = null
 var _summon_button: Button = null
 var _over_panel: Control = null
 var _prio_panel: Control = null
+var _help_panel: Control = null
+var _help_button: Button = null
 var _prio_labels: Dictionary = {}
 ## 本幀交戰中的塔 `{id: Array}`。繪圖層自己算——它要畫的是「誰正在吃電」，
 ## 而模擬只留了一個座數（`rates.engaged`）。
@@ -550,12 +552,19 @@ func _build_ui() -> void:
 	prio.toggle_mode = true
 	prio.toggled.connect(_on_toggle_priority)
 	bar.add_child(UiKit.touchable(prio))
+	_help_button = Button.new()
+	_help_button.text = "操作說明"
+	_help_button.toggle_mode = true
+	_help_button.toggled.connect(_on_toggle_help)
+	bar.add_child(UiKit.touchable(_help_button))
 
 	_build_priority_panel()
+	_build_help_panel()
 
-	_hint = UiKit.label("", 14, Palette.TEXT_SECONDARY, false)
-	_hint.position = Vector2(320, 678)
-	_hint.size = Vector2(950, 36)
+	# 兩行：上行「下一步」、下行當下動作的細節。x 從 350 起，避開底欄那三個鈕。
+	_hint = UiKit.label("", 13, Palette.TEXT_SECONDARY, false)
+	_hint.position = Vector2(350, 666)
+	_hint.size = Vector2(925, 50)
 	add_child(_hint)
 	_refresh_hint()
 
@@ -597,6 +606,56 @@ func _build_priority_panel() -> void:
 	add_child(box)
 	_prio_panel = box
 	_refresh_priority()
+
+
+## ★ 操作說明抽屜（`50_QA_PLAN.md` §4.4）。
+##
+## **它存在的理由是一句實測回饋**：使用者拿到 B0.7 的 build，第一句話是
+## 「你沒教我要怎麼操作」。當時提示列只講「下一步的目標」，從頭到尾沒有任何
+## 地方講過「蓋東西」＝左欄選一種、再左鍵點地圖——那是一條靠試錯才學得到的規則，
+## 而試錯要花掉的正是那 60 秒準備期。
+##
+## **預設開在空地圖上、有東西之後就不再擋路**：不用存檔旗標（那要跨局狀態），
+## 用「這一局蓋了東西沒有」判斷——玩家一放下第一個節點就代表他會操作了。
+func _build_help_panel() -> void:
+	var box := PanelContainer.new()
+	box.position = Vector2(150, 250)
+	var col := UiKit.vbox(3)
+	box.add_child(col)
+	for line: String in [
+		"操作　全部只用滑鼠左鍵，沒有鍵盤、沒有右鍵",
+		"　蓋節點：左欄選一種 → 左鍵點地圖上的一格",
+		"　拉導管：「連線」→ 點起點節點 → 點終點節點",
+		"　加　粗：「加粗」→ 點導管的中間（不是兩端的節點）",
+		"　拆　除：「拆除」→ 點節點或導管，返還 75%",
+		"",
+		"規則",
+		"　導管只能走 水平／垂直／45°，要轉彎先放一個「中繼」",
+		"　導管要過敵人路徑（紫帶）只能走「橋」——路徑上那三段架高結構",
+		"　節點不能蓋在敵人路徑上",
+		"　敵人走過時會打壞相鄰 1 格的東西 → 塔與導管退開 2 格就安全",
+		"　塔只有交戰時吃電，待機 0：約束是「峰值電力」，不是平均",
+		"",
+		"底欄　快進 4×（只有準備期）｜提前召喚（提早開波換掉落倍率）｜優先權（缺料時誰先餓死）",
+	]:
+		if line == "":
+			col.add_child(_spacer(6))
+			continue
+		var head := not line.begins_with("　")
+		col.add_child(UiKit.label(
+			line, 15 if head else 14,
+			Palette.ORDER_BRIGHT if head else Palette.TEXT_PRIMARY, false
+		))
+	add_child(box)
+	_help_panel = box
+	# 空地圖＝這局還沒開始，正是需要它的時刻。TL_NAKED 下不開（它整片都是文字）。
+	var fresh: bool = s.nodes.size() <= 1 and not Hooks.naked
+	box.visible = fresh
+	_help_button.set_pressed_no_signal(fresh)
+
+
+func _on_toggle_help(open: bool) -> void:
+	_help_panel.visible = open
 
 
 func _on_toggle_priority(open: bool) -> void:
@@ -777,6 +836,8 @@ func _restart() -> void:
 	_ff_button = null
 	_summon_button = null
 	_prio_panel = null
+	_help_panel = null
+	_help_button = null
 	_prio_labels.clear()
 	_mode_buttons.clear()
 	_build_buttons.clear()
@@ -793,22 +854,25 @@ func _refresh_hint() -> void:
 	if Hooks.naked:
 		_hint.visible = false
 		return
+	# ★ 兩行：**上行永遠是「下一步」，下行才是當下這個動作的細節。**
+	# B0.7 原本讓預覽「取代」下一步，於是玩家把滑鼠移到地圖上——正是最需要
+	# 指引的那一刻——指引就消失了。使用者實玩後的第一句話是「你沒教我怎麼操作」。
 	var parts: Array[String] = []
 	match _mode:
 		Mode.BUILD:
 			if _in_map(_hover):
 				parts.append_array(BuildController.preview_place(s, _build_type, _hover)["lines"])
 			else:
-				parts.append("▶ " + _next_step())
+				parts.append("建造 %s：把滑鼠移到地圖上，左鍵點一格放下。" % NodeDefs.label(_build_type))
 		Mode.CONNECT:
-			parts.append("連線：點兩個節點。導管只能走水平／垂直／45°，過路徑只能走橋。")
+			parts.append("連線：左鍵點「起點節點」，再點「終點節點」。只能走水平／垂直／45°，轉彎要先放中繼；過敵人路徑只能走橋。")
 		Mode.UPGRADE:
-			parts.append("加粗：點一段導管。每級 +6 吞吐，造價 20×級數，上限 3 級（→28）。")
+			parts.append("加粗：左鍵點一段導管的「中間」（不是兩端的節點）。每級 +6 吞吐，造價 20×級數，上限 3 級（→28）。")
 		Mode.DEMOLISH:
-			parts.append("拆除：點節點或導管，返還 75%%。")
+			parts.append("拆除：左鍵點節點或導管，返還 75%%。")
 	if _message != "":
 		parts.append(_message)
-	_hint.text = "　".join(parts)
+	_hint.text = "▶ %s\n%s" % [_next_step(), "　".join(parts)]
 
 
 ## ★ 下一步（`50_QA_PLAN.md` §4.4「新玩家開局後 15 秒內知道要做什麼嗎」）。
@@ -817,21 +881,26 @@ func _refresh_hint() -> void:
 ## 不持久化，玩家拆光重蓋它就跟著退回去。做成教學系統的話它會變成第二套要維護的
 ## 狀態，而且擋在玩家和遊戲之間；一行提示不會。
 ##
-## 順序＝這張圖真正的依賴鏈：礦→入帳→電→塔→接電。**每一條都指向一個具體動作。**
+## 順序＝這張圖真正的依賴鏈：礦→入帳→電→塔→接電。
+##
+## **每一條都要講出「按哪裡、點哪裡」，不能只講目標。** 使用者實玩 B0.7 的第一句
+## 回饋是「你沒教我要怎麼操作」——那時這些字串寫的是「先蓋一台採集器」，
+## 而畫面上沒有任何地方說過「蓋」＝左欄選一種、再左鍵點地圖。
+## 一句只說目標不說動作的提示，對已經會玩的人是提醒，對新玩家是零。
 func _next_step() -> String:
 	if s.count_of("extractor") == 0:
-		return "先在礦點（青色空心圓）上蓋一台採集器——這是所有東西的源頭。"
+		return "左欄點「採集器」→ 左鍵點地圖上任一個青色空心圓（礦點）。這是所有東西的源頭。"
 	if float(s.rates["ore_in"]) <= 0.0:
-		return "採到的礦砂要**送達核心**才入帳：切「連線」，把採集器一路接到核心。"
+		return "礦砂要「送達核心」才入帳：左欄點「連線」→ 點採集器 → 點下一個節點，一路接到右下角的核心。"
 	if s.count_of("generator") == 0:
-		return "有礦砂了。蓋一台發電機（吃 4 礦砂/秒，產 20 能量/秒），並接上礦砂線餵它。"
+		return "有礦砂了（看頂欄 ▲/秒）。左欄點「發電機」蓋一台，再用「連線」把礦砂線接給它：4 礦砂/秒 → 20 能量/秒。"
 	if _towers() == 0:
-		return "電有了。蓋一座塔擋住路徑，再把它接進電網——**塔只有交戰時吃電，待機 0**。"
+		return "電有了。左欄點「錨」（最便宜的塔）蓋在「離紫色路徑 2 格以上」的地方——貼太近會被走過的敵人打壞。"
 	if _unpowered_tower():
-		return "有塔沒接進電網：它交戰時一發都打不出。切「連線」把它接到發電機那一側。"
+		return "那座塔還沒接進電網，交戰時一發都打不出：左欄點「連線」，把它接到發電機那一側。"
 	if s.phase == "prep":
-		return "準備好了就按「提前召喚」——倒數剩越多，這一波的掉落倍率越高。"
-	return "波次進行中：盯著頂端能量條，橙色那截就是餵不飽的部分。"
+		return "都齊了。等倒數跑完自動開波，或按「提前召喚」提早開——倒數剩越多，這一波掉落倍率越高。"
+	return "波次進行中：盯著頂端能量條，橙色那截就是餵不飽的部分；節點上的橙色倒三角＝這個缺料。"
 
 
 func _towers() -> int:
