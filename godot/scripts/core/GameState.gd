@@ -7,7 +7,7 @@ extends Node
 ##
 ## 局內狀態不放這裡 —— 那是 SessionState 的事（§2.3），局結束即銷毀。
 
-const VERSION := "0.6.0"
+const VERSION := "0.6.1"
 const BATCH := "B0.5 塔與取捨"
 
 const GAME_NAME := "潮與線"

@@ -75,7 +75,8 @@ var rates: Dictionary = {
 	"power_demand": 0.0,
 	"silo_charge": 0.0,
 	"silo_capacity": 0.0,
-	"conduit_flow": {},   # {conduit 索引: 該線的最大資源流率}
+	"conduit_flow": {},   # {conduit id: 該線的最大資源流率}（線寬與顏色用）
+	"conduit_net": {},    # {conduit id: Vector2(礦砂, 能量) 淨流率，沿 a→b 為正}（流動珠用）
 	"satisfaction": {},   # {node id: 0..1}
 	"engaged": 0,         # 本 tick 交戰中的塔座數（＝正在吃電的那些）
 	"node_state": {},     # {node id: NORMAL/STARVED/OVERFLOW}（三態徽章，GDD §3.1）

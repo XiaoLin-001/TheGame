@@ -23,6 +23,12 @@ const ORIGIN := Vector2(120.0, 56.0)
 ## `10_GDD.md` §7.1。**只在準備期可用。**
 const FAST_FORWARD_RATE := 4
 
+## 流動珠（`20_ART_DIRECTION.md` §1.4a）：珠距、每單位流率的行進速度（px/秒）、
+## 低於此流率就完全不畫。20/秒的幹線 ＝ 120 px/秒，一格 32px 約走四分之一秒。
+const BEAD_GAP := 20.0
+const BEAD_SPEED := 6.0
+const BEAD_MIN_RATE := 0.05
+
 enum Mode { BUILD, CONNECT, UPGRADE, DEMOLISH }
 
 var s: RefCounted = null
@@ -227,9 +233,64 @@ func _draw_conduits() -> void:
 			)
 		draw_line(_center(c["a"]), _center(c["b"]), Palette.conduit(flow, cap, starving), w)
 		# 升級過的幹線在端點加刻度，讓「我升過這條」在無數值下也看得見。
+		# **垂直短刻線，不是圓點**：圓點會和流動珠混成同一個東西，而兩者語意相反
+		# （固定的線材等級 vs 變動的流量）——`20_ART_DIRECTION.md` §1.4a。
+		var pa := _center(c["a"])
+		var pb := _center(c["b"])
+		var perp := (pb - pa).normalized().orthogonal()
 		for i in range(int(c["level"])):
-			var t := 0.12 + 0.06 * float(i)
-			draw_circle(_center(c["a"]).lerp(_center(c["b"]), t), 2.5, Palette.ORDER_BRIGHT)
+			var at := pa.lerp(pb, 0.12 + 0.05 * float(i))
+			draw_line(at - perp * 5.0, at + perp * 5.0, Palette.ORDER_BRIGHT, 2.0)
+		# ★ 流動珠：礦砂一列、能量一列，各自往自己的淨流向跑（§1.4a）。
+		var net: Vector2 = (s.rates["conduit_net"] as Dictionary).get(c["id"], Vector2.ZERO)
+		# 只有一種資源在跑時**走線的正中央**：多數導管都是這種，
+		# 硬要分兩排會讓珠子懸在細線外面，看起來像掉出來的東西。
+		var both := absf(net.x) >= BEAD_MIN_RATE and absf(net.y) >= BEAD_MIN_RATE
+		var off := (w * 0.45 + 1.0) if both else 0.0
+		# 礦砂珠用 `text.primary`（近白）而不是 `order.bright`：導管本身就是亮青，
+		# 亮青珠子在亮青線上只讀得出「這裡有個洞」，讀不出「有東西在跑」。
+		# 能量珠的琥珀本來就與線色分屬兩個色相，維持配色紀律 2。
+		_draw_beads(pa, pb, net.x, Palette.TEXT_PRIMARY, -off, w)
+		_draw_beads(pa, pb, net.y, Palette.ENERGY_AMBER, off, w)
+
+
+## ★ 流動珠（`20_ART_DIRECTION.md` §1.4a）。線寬與顏色說的是「這條線有多滿」，
+## 沒有任何元素在說「東西正在動」——一張靜態的粗線看起來是接線圖，不是產線。
+##
+## **這不是實體物品搬運。** 珠子的位置由已解出的流率 ＋ 經過的模擬秒數推算，
+## 模擬層一無所知，珠子不參與任何判定（`10_GDD.md` §3.1 鎖定：流量網路）。
+## 一旦它變成有位置有狀態的實體，`O(物品數)` 的效能與確定性負債就回來了。
+##
+## `amount` 帶號：正＝沿 a→b、負＝反向。速度 ∝ 流率，間距固定。
+##
+## ponytail: 每顆珠子兩個 `draw_circle` ＝ 每幀約 `導管數 × 線長/20 × 2` 次繪製。
+## M0 一屏（13 條導管）約 500 次，無感；`30_TECH_DESIGN.md` §5 的壓力情境
+## （2000 條導管）會爆到六位數。到那時改成單一 `draw_multiline` 批繪或
+## 用 shader 把相位推進 GPU——**在量到之前不要先做**。
+func _draw_beads(
+	a: Vector2, b: Vector2, amount: float, col: Color, offset: float, width: float
+) -> void:
+	if absf(amount) < BEAD_MIN_RATE:
+		return  # 沒在流動的線必須是靜止的——這是「哪裡斷了」最快的讀法
+	var span := a.distance_to(b)
+	if span < 1.0:
+		return
+	var u := (b - a) / span
+	var side := u.orthogonal() * offset
+	# 相位用模擬秒數推（tick 數 ＋ 幀內插值），不用系統時間：
+	# 渲染可以不確定，但別引入新的亂數源。`TL_SHOT` 下模擬凍結 → 珠子也凍結。
+	var t := (float(s.tick_count) + _accum / BattleController.TICK) * BattleController.TICK
+	# 珠子大小跟著線寬走：這樣它**強化**「線寬＝流量」而不是把線戳成虛線。
+	# 固定大小的珠子在 2px 的細線上會蓋掉整條線，粗細那條資訊就沒了（R-3）。
+	var r := clampf(width * 0.32, 1.4, 3.0)
+	var x := fposmod(t * amount * BEAD_SPEED, BEAD_GAP)
+	while x < span:
+		var p := a + u * x + side
+		# **深色底是這個元素能被看見的唯一原因**：導管本身就是亮青，
+		# 亮青珠子畫在亮青線上等於沒畫（使用者實看 B0.6 時反映的正是這件事）。
+		draw_circle(p, r + 1.2, Palette.BG_DEEP)
+		draw_circle(p, r, col)
+		x += BEAD_GAP
 
 
 func _draw_nodes() -> void:

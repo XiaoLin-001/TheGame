@@ -370,8 +370,14 @@ static func _edges(s: RefCounted) -> Array:
 		if a.is_empty() or b.is_empty():
 			continue
 		var cap := Build.conduit_cap(int(c["level"])) * TICK
-		edges.append({"from": int(a["id"]), "to": int(b["id"]), "cap": cap, "conduit": c["id"]})
-		edges.append({"from": int(b["id"]), "to": int(a["id"]), "cap": cap, "conduit": c["id"]})
+		# `dir` 只給回寫用：讓 `_write_rates()` 算得出**淨流向**（渲染層的流動珠
+		# 要靠它決定珠子往哪邊跑）。解算器本身不看這個欄位。
+		edges.append({
+			"from": int(a["id"]), "to": int(b["id"]), "cap": cap, "conduit": c["id"], "dir": 1.0
+		})
+		edges.append({
+			"from": int(b["id"]), "to": int(a["id"]), "cap": cap, "conduit": c["id"], "dir": -1.0
+		})
 	return edges
 
 
@@ -382,16 +388,21 @@ static func _write_rates(
 ) -> void:
 	var per_sec := 1.0 / TICK
 	var flows: Dictionary = {}
+	# 每條導管的**淨流率**（`Vector2(礦砂, 能量)`，沿 a→b 為正）。線寬只要大小，
+	# 流動珠還要方向與資源別——一條同時走礦與電的幹線上，兩者常常反向。
+	var nets: Dictionary = {}
 	for i in edges.size():
-		var cid: int = int((edges[i] as Dictionary).get("conduit", -1))
+		var e: Dictionary = edges[i]
+		var cid: int = int(e.get("conduit", -1))
+		var ore_f := float((ore_res["flow"] as Array)[i])
+		var pow_f := float((power_res["flow"] as Array)[i])
+		var net: Vector2 = nets.get(cid, Vector2.ZERO)
+		nets[cid] = net + Vector2(ore_f, pow_f) * float(e.get("dir", 1.0)) * per_sec
 		# **取最大值，不是相加**：礦砂與能量各跑一次解算、各自吃滿同一個 cap
 		# （每種資源獨立計容量）。相加會讓一條同時走礦與電的幹線報出超過 cap
 		# 的流量，於是渲染層把一條還有餘裕的線畫成滿載——瓶頸圖直接說謊（R-3）。
 		# 兩者共用同一個 cap 數值，所以「最大流率 ÷ cap」正好等於最大飽和度。
-		var f := maxf(
-			float((ore_res["flow"] as Array)[i]), float((power_res["flow"] as Array)[i])
-		)
-		flows[cid] = maxf(float(flows.get(cid, 0.0)), f * per_sec)
+		flows[cid] = maxf(float(flows.get(cid, 0.0)), maxf(ore_f, pow_f) * per_sec)
 
 	var charge := 0.0
 	var capacity := 0.0
@@ -416,6 +427,7 @@ static func _write_rates(
 	s.rates["silo_charge"] = charge
 	s.rates["silo_capacity"] = capacity
 	s.rates["conduit_flow"] = flows
+	s.rates["conduit_net"] = nets
 	s.rates["satisfaction"] = sat
 	s.rates["node_state"] = _node_states(s, sat, ore_res, power_res)
 

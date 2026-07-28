@@ -30,7 +30,40 @@ func _initialize() -> void:
 	_node_states(t)
 	_core_and_silo_never_starve(t)
 	_clearing_the_table_wins(t)
+	_conduit_net_direction(t)
 	quit(t.report())
+
+
+## ★ 流動珠的方向來源（`20_ART_DIRECTION.md` §1.4a）。`conduit_net` 帶號，
+## **沿建造時的 a→b 為正**。導管本身無方向（§7.2），方向是每 tick 解出來的
+## 結果——所以同一條線用相反的順序蓋，淨流率必須恰好反號。
+##
+## 這條斷言在守 B0.5 那個缺陷的同一個家族：珠子往錯的方向跑，玩家會照著
+## 一張反過來的流向圖去診斷瓶頸。
+func _conduit_net_direction(t: T) -> void:
+	var fwd := _session()
+	BuildController.place(fwd, "extractor", Vector2i(16, 8))
+	BuildController.place(fwd, "generator", Vector2i(16, 11))
+	BuildController.lay_conduit(fwd, Vector2i(16, 8), Vector2i(16, 11))  # a=採集器
+	BattleController.step(fwd)
+	var a := _net(fwd, Vector2i(16, 8), Vector2i(16, 11))
+	t.ok(a.x > 0.0, "★ 礦砂由採集器流向發電機：沿 a→b 為正")
+	t.near(a.y, 0.0, "這條線上沒有能量在跑（發電機的電沒地方去）")
+
+	var rev := _session()
+	BuildController.place(rev, "extractor", Vector2i(16, 8))
+	BuildController.place(rev, "generator", Vector2i(16, 11))
+	BuildController.lay_conduit(rev, Vector2i(16, 11), Vector2i(16, 8))  # a=發電機
+	BattleController.step(rev)
+	var b := _net(rev, Vector2i(16, 11), Vector2i(16, 8))
+	t.near(b.x, -a.x, "★ 反過來蓋同一條線 → 淨流率恰好反號（導管無方向）")
+
+
+func _net(s: RefCounted, a: Vector2i, b: Vector2i) -> Vector2:
+	for c: Dictionary in s.conduits:
+		if (c["a"] == a and c["b"] == b) or (c["a"] == b and c["b"] == a):
+			return (s.rates["conduit_net"] as Dictionary).get(int(c["id"]), Vector2.ZERO)
+	return Vector2.ZERO
 
 
 # ── 提前召喚的下注數學（§7.6）──────────────────────────────────────────
