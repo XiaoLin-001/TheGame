@@ -13,6 +13,10 @@ var shot_delay: float = 3.0
 var panel: String = ""
 var naked: bool = false
 var sim_ticks: int = 0
+## `TL_PANEL=battle` 的示範佈局要先推幾個 tick 再交給畫面。
+## 預設 860 ＝ 60 秒準備期 ＋ 26 秒戰鬥，正好是敵潮進入塔射程的時刻；
+## 給小一點就拍得到準備期（提前召喚倍率、階段色調要兩張圖才比得出來）。
+var demo_ticks: int = 860
 
 
 func _ready() -> void:
@@ -21,6 +25,7 @@ func _ready() -> void:
 	panel = Env.str_of("TL_PANEL")
 	naked = Env.flag("TL_NAKED")
 	sim_ticks = Env.int_of("TL_SIM", 0)
+	demo_ticks = Env.int_of("TL_DEMO_TICKS", 860)
 
 	if Env.any_hook():
 		print("[TL] hooks: %s" % Env.active_summary())
@@ -68,6 +73,18 @@ func _run_sim() -> void:
 			"buffer": snappedf(float(n["buffer"]), 0.01),
 		}
 
+	# 三態徽章只印**不正常的那些**（`10_GDD.md` §3.1：`正常` 不畫任何東西）。
+	# 全部印出來的話這一欄會跟畫面一樣，把要找的那一個埋進 14 行雜訊裡。
+	var Score := preload("res://scripts/sim/Score.gd")
+	var badges: Dictionary = {}
+	for n: Dictionary in s.nodes:
+		var st: int = int((s.rates["node_state"] as Dictionary).get(int(n["id"]), 0))
+		if st != 0:
+			badges["%s%s" % [NodeDefs.label(String(n["type"])), n["cell"]]] = (
+				"缺料" if st == 1 else "滿溢"
+			)
+
+	var throughput: float = Score.throughput(s.delivered_total, s.tick_count, 0.1)
 	print(JSON.stringify({
 		"version": GameState.VERSION,
 		"seed": Rng.seed_value,
@@ -89,6 +106,13 @@ func _run_sim() -> void:
 			"kills": s.kills,
 			"salvage_ore": snappedf(s.salvage_total, 0.01),
 			"reclaimed_power": snappedf(s.reclaimed_total, 0.01),
+			"badges": badges,
+			"wave_bonus": s.wave_bonus,
+			"delivered_total": snappedf(s.delivered_total, 0.01),
+			"throughput_score": snappedf(throughput, 0.01),
+			"research_data": snappedf(
+				Score.research_data(s.wave_index, throughput, s.bonus_data), 0.01
+			),
 			"towers": towers,
 			"nodes": s.nodes.size(),
 			"conduit_flow_per_sec": flows,

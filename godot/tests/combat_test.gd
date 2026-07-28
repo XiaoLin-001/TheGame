@@ -432,7 +432,10 @@ func _kill_beside_reclaimer(cell: Vector2i) -> RefCounted:
 
 
 ## 開打並把一隻敵人放在指定路徑進度上。
+## **先把準備期跑完再開波**：否則提前召喚倍率（B0.6）會是 1.5，
+## 這支測試的掉落數字全部乘 1.5——那是另一支測試（`hud_test`）的事。
 func _spawn_at(s: RefCounted, type: String, progress: float) -> void:
+	s.phase_time = s.prep_time()
 	BattleController.start_wave(s)
 	s.spawn_queue.clear()          # 只留手放的這一隻，波次表不要插進來
 	s.add_enemy(type)

@@ -14,6 +14,7 @@ const NodeDefs := preload("res://data/NodeDefs.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const Tide := preload("res://scripts/sim/Tide.gd")
 const Combat := preload("res://scripts/sim/Combat.gd")
+const Score := preload("res://scripts/sim/Score.gd")
 
 ## 地圖左上角。36×19 格 ×32px = 1152×608；左側 120px 留給建造欄，
 ## 浮層與地圖**不重疊**（RG-20 的先行實踐，正式驗收在 B0.6）。
@@ -37,7 +38,8 @@ var _top: HBoxContainer = null
 var _hint: Label = null
 var _mode_buttons: Dictionary = {}
 var _ff_button: Button = null
-var _lost_panel: Control = null
+var _summon_button: Button = null
+var _over_panel: Control = null
 var _prio_panel: Control = null
 var _prio_labels: Dictionary = {}
 ## 本幀交戰中的塔 `{id: Array}`。繪圖層自己算——它要畫的是「誰正在吃電」，
@@ -57,18 +59,22 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	_accum += delta
-	# 快進＝**多跑幾個 tick**，不是把 tick 拉長。固定時間步不能動，
-	# 否則同一組操作在不同倍率下會跑出不同結果（§2.4 確定性）。
-	var mult: int = s.speed_mult if s.phase == "prep" else 1
-	var guard := 0
-	while _accum >= BattleController.TICK and guard < 8 * mult:
-		for _i in mult:
-			BattleController.step(s)
-		_accum -= BattleController.TICK
-		guard += mult
+	# ★ `TL_SHOT` 下模擬凍結在 `_demo_layout()` 推完的那一格。否則截圖落在第幾
+	# tick 取決於這台機器 3 秒內跑了幾幀——同一份佈局在不同機器上會拍出不同
+	# 數字，截圖就不能拿來做回歸比對，也對不上 `TL_SIM=<同一個 N>` 的輸出。
+	if Hooks.shot_path == "":
+		_accum += delta
+		# 快進＝**多跑幾個 tick**，不是把 tick 拉長。固定時間步不能動，
+		# 否則同一組操作在不同倍率下會跑出不同結果（§2.4 確定性）。
+		var mult: int = s.speed_mult if s.phase == "prep" else 1
+		var guard := 0
+		while _accum >= BattleController.TICK and guard < 8 * mult:
+			for _i in mult:
+				BattleController.step(s)
+			_accum -= BattleController.TICK
+			guard += mult
 	_refresh_top()
-	_refresh_lost()
+	_refresh_over()
 	queue_redraw()
 
 
@@ -149,6 +155,13 @@ func _draw() -> void:
 	_draw_enemies()
 	_draw_shots()
 	_draw_hover()
+	# 階段色調（`10_GDD.md` §6.2 硬性要求 4）：**不看計時器也知道自己在哪個階段**。
+	# 蓋在最上層而不是墊在底下——墊底的話節點與敵人會把它整片蓋掉。
+	draw_rect(rect, Palette.alpha(
+		Palette.WARN_ORANGE if s.phase == "wave" else Palette.ORDER_CYAN,
+		0.10 if s.phase == "wave" else 0.03
+	))
+	_draw_energy_bar()
 
 
 func _draw_path() -> void:
@@ -272,19 +285,54 @@ func _draw_nodes() -> void:
 				draw_rect(Rect2(p - Vector2(10, 10), Vector2(20, 20)), Palette.ORDER_CYAN, false, 2.0)
 				draw_circle(p, 6.0, Palette.ORDER_BRIGHT)
 		_draw_engaged(n, p)
+		_draw_badge(n, p)
 
 
-## ★ 交戰指示：**琥珀＝能量**（配色紀律 2）。環的濃度＝這座塔的滿足率——
-## 電不夠時射速線性下降，而下降的第一個徵兆就是這個環變淡。
-## 這是 `TL_NAKED` 下「誰在吃電、誰餓著」唯一的資訊來源，不能只靠數字。
+## ★ 交戰指示：**琥珀＝能量**（配色紀律 2）。有環＝這座塔本 tick 正在吃電。
+## 它只講「在不在吃電」；「吃不吃得飽」由三態徽章講（B0.6 前這裡還多畫一段
+## 橙色缺口弧，那和 `缺料` 徽章編碼的是同一件事，留一個就好）。
 func _draw_engaged(n: Dictionary, p: Vector2) -> void:
-	if not _engaged.get(int(n["id"]), false):
-		return
-	draw_arc(p, 15.0, 0.0, TAU, 32, Palette.ENERGY_AMBER, 2.0)
-	# 餓著的塔再加一段缺口弧，讓「差多少」在無數值下也讀得出來。
-	var k := clampf(float((s.rates["satisfaction"] as Dictionary).get(n["id"], 1.0)), 0.0, 1.0)
-	if k < 0.95:
-		draw_arc(p, 18.0, -PI / 2.0 + TAU * k, -PI / 2.0 + TAU, 28, Palette.WARN_ORANGE, 2.0)
+	if _engaged.get(int(n["id"]), false):
+		draw_arc(p, 15.0, 0.0, TAU, 32, Palette.ENERGY_AMBER, 2.0)
+
+
+## ★ 節點三態徽章（`10_GDD.md` §3.1）。**`正常` 不畫任何東西**——徽章是例外
+## 標記，一屏 14 個節點全掛上「我很好」等於把要找的那兩個埋進雜訊裡。
+## 靠**形狀**分辨而不只是顏色：倒三角＝空的（缺料）、正三角＝滿的（滿溢）。
+func _draw_badge(n: Dictionary, p: Vector2) -> void:
+	match int((s.rates["node_state"] as Dictionary).get(int(n["id"]), SessionState.NORMAL)):
+		SessionState.STARVED:
+			draw_colored_polygon(PackedVector2Array([
+				p + Vector2(-7, -25), p + Vector2(7, -25), p + Vector2(0, -16)
+			]), Palette.WARN_ORANGE)
+		SessionState.OVERFLOW:
+			draw_colored_polygon(PackedVector2Array([
+				p + Vector2(0, -25), p + Vector2(7, -16), p + Vector2(-7, -16)
+			]), Palette.ORDER_BRIGHT)
+
+
+## ★ 能量列（`10_GDD.md` §6.2 硬性要求 1）：**全畫面最醒目的元件，而且是一條
+## 圖形不是一串數字**——長度即資訊，所以它在 `TL_NAKED` 下要留著。
+## 琥珀＝供給、右側橙色＝短少的部分（脈動）、細刻度＝需求落在哪裡。
+func _draw_energy_bar() -> void:
+	var r: Dictionary = s.rates
+	var supply := float(r["power_supply"])
+	var demand := float(r["power_demand"])
+	var span := maxf(1.0, maxf(supply, demand))
+	var w := float(s.map["size"].x) * Shapes.GRID
+	var at := Vector2(ORIGIN.x, ORIGIN.y - 12.0)
+	draw_rect(Rect2(at, Vector2(w, 8.0)), Palette.BG_RAISED)
+	draw_rect(Rect2(at, Vector2(w * supply / span, 8.0)), Palette.ENERGY_AMBER)
+	if demand > supply:
+		# 脈動用 tick 數推，不用系統時間——渲染可以不確定，但別引入新的亂數源。
+		var pulse := 0.55 + 0.45 * sin(float(s.tick_count) * 0.4)
+		var x := w * supply / span
+		draw_rect(
+			Rect2(at + Vector2(x, 0.0), Vector2(w * demand / span - x, 8.0)),
+			Palette.alpha(Palette.WARN_ORANGE, pulse)
+		)
+	draw_rect(Rect2(at + Vector2(w * demand / span - 1.0, -3.0), Vector2(2.0, 14.0)),
+		Palette.TEXT_PRIMARY)
 
 
 ## 開火線。留 `SHOT_TTL` 個 tick 並隨之淡出——瞬間閃一下的線等於沒畫。
@@ -401,10 +449,9 @@ func _build_ui() -> void:
 	_ff_button.text = "快進 4×"
 	_ff_button.pressed.connect(_on_fast_forward)
 	bar.add_child(UiKit.touchable(_ff_button))
-	var summon := Button.new()
-	summon.text = "提前召喚"
-	summon.pressed.connect(_on_summon_now)
-	bar.add_child(UiKit.touchable(summon))
+	_summon_button = Button.new()
+	_summon_button.pressed.connect(_on_summon_now)
+	bar.add_child(UiKit.touchable(_summon_button))
 	var prio := Button.new()
 	prio.text = "優先權"
 	prio.pressed.connect(_on_toggle_priority)
@@ -469,9 +516,12 @@ func _on_priority(type: String, delta: int) -> void:
 	_refresh_priority()
 
 
+## TL_NAKED 明文包含「優先權面板刻度」（`30_TECH_DESIGN.md` §4.1）：
+## 刻度是數值標籤，改用琥珀小方塊表示同一個 1–5，形狀仍讀得出高低。
 func _refresh_priority() -> void:
 	for type: String in _prio_labels:
-		(_prio_labels[type] as Label).text = str(int(s.priorities.get(type, 1)))
+		var v := int(s.priorities.get(type, 1))
+		(_prio_labels[type] as Label).text = "▪".repeat(v) if Hooks.naked else str(v)
 
 
 func _spacer(h: int) -> Control:
@@ -496,7 +546,9 @@ func _on_mode(mode: int) -> void:
 
 
 func _refresh_top() -> void:
+	_refresh_summon()
 	# TL_NAKED：隱藏所有數值標籤，只留線寬／顏色（`30_TECH_DESIGN.md` §4.1）。
+	# **能量條不在此列**——它是圖形，長度即資訊（§6.2 硬性要求 1），畫在 `_draw()`。
 	if Hooks.naked:
 		_top.visible = false
 		return
@@ -533,6 +585,8 @@ func _phase_text() -> String:
 			return "準備期 %0.1fs　下一波 %d%s%s" % [left, s.wave_index + 1, ff, left_over]
 		"wave":
 			return "第 %d 波　敵人 %d" % [s.wave_index, s.enemies.size()]
+		"won":
+			return "通關"
 		_:
 			return "核心已毀"
 
@@ -545,47 +599,79 @@ func _on_fast_forward() -> void:
 	_refresh_top()
 
 
+## ★ 提前召喚：**按鈕常駐顯示當前獎勵倍率**（`10_GDD.md` §6.2 硬性要求 3）——
+## 下注的誘惑要一直在眼前，而不是按下去才知道賭到多少。
+## 倍率隨倒數每 tick 縮水，所以這個字串每幀重算。
+func _refresh_summon() -> void:
+	if _summon_button == null:
+		return
+	var can: bool = s.phase == "prep"
+	_summon_button.disabled = not can
+	if Hooks.naked or not can:
+		_summon_button.text = "提前召喚"
+		return
+	var bonus := Score.summon_bonus(maxf(0.0, s.prep_time() - s.phase_time), s.prep_time())
+	_summon_button.text = "提前召喚 +%d%%" % roundi((bonus - 1.0) * 100.0)
+
+
 func _on_summon_now() -> void:
-	# 提前召喚的**獎勵倍率**是 B0.6；這裡先給「跳過等待」這個動作本身。
 	BattleController.start_wave(s)
 	_refresh_top()
 
 
-## 失敗：核心歸零。**重來按鈕必須在 1 次點擊之內**（`50_QA_PLAN.md` §4.4），
+## 局末結算（通關或核心歸零）。三個數字照 `10_GDD.md` §7.6 逐項攤開——
+## **玩家要看得出研究數據是怎麼算出來的**，一個總分教不會他下一局該改什麼。
+## **重來按鈕必須在 1 次點擊之內**（`50_QA_PLAN.md` §4.4），
 ## 而且失敗不扣任何東西（紅線 R1）——局內狀態本來就不持久化。
-func _refresh_lost() -> void:
+func _refresh_over() -> void:
 	if _ff_button != null:
 		_ff_button.disabled = s.phase != "prep"
-	if s.phase != "lost":
-		if _lost_panel != null:
-			_lost_panel.queue_free()
-			_lost_panel = null
+	if s.phase != "lost" and s.phase != "won":
+		if _over_panel != null:
+			_over_panel.queue_free()
+			_over_panel = null
 		return
-	if _lost_panel != null:
+	if _over_panel != null:
 		return
+	var won: bool = s.phase == "won"
+	var waves: int = s.wave_index if won else maxi(0, s.wave_index - 1)
+	var score := Score.throughput(s.delivered_total, s.tick_count, BattleController.TICK)
 	var box := PanelContainer.new()
-	box.set_anchors_preset(Control.PRESET_CENTER)
-	box.position = Vector2(480, 300)
-	var col := UiKit.vbox(12)
+	box.position = Vector2(440, 250)
+	var col := UiKit.vbox(10)
 	box.add_child(col)
-	col.add_child(UiKit.label("核心已毀", 32, Palette.TIDE_MAGENTA))
-	col.add_child(UiKit.label("撐過 %d 波　失敗不扣任何東西" % maxi(0, s.wave_index - 1),
-		14, Palette.TEXT_SECONDARY))
+	col.add_child(UiKit.label(
+		"通關" if won else "核心已毀", 32, Palette.OK_GREEN if won else Palette.TIDE_MAGENTA
+	))
+	for line: String in [
+		"撐過 %d 波　　＋%.0f 研究數據" % [waves, Score.DATA_PER_WAVE * float(waves)],
+		"產能積分 %.1f（送達核心 %s 礦砂）　＋%.0f" % [
+			score, UiKit.commas(int(s.delivered_total)), Score.DATA_PER_SCORE * score
+		],
+		"提前召喚累計加成　　＋%.0f" % s.bonus_data,
+		"研究數據合計 %.0f　　擊殺 %d" % [
+			Score.research_data(waves, score, s.bonus_data), s.kills
+		],
+		"失敗不扣任何東西" if not won else "",
+	]:
+		if line != "":
+			col.add_child(UiKit.label(line, 15, Palette.TEXT_SECONDARY, false))
 	var again := Button.new()
 	again.text = "立刻重來"
 	again.pressed.connect(_restart)
 	col.add_child(UiKit.touchable(again))
 	add_child(box)
-	_lost_panel = box
+	_over_panel = box
 
 
 func _restart() -> void:
 	for c: Node in get_children():
 		c.queue_free()
-	_lost_panel = null
+	_over_panel = null
 	_top = null
 	_hint = null
 	_ff_button = null
+	_summon_button = null
 	_prio_panel = null
 	_prio_labels.clear()
 	s = SessionState.new()
@@ -625,11 +711,12 @@ func _demo_layout() -> void:
 	var failures := BuildController.apply_ops(s, MapsData.SHOAL_DEMO)
 	for f: Dictionary in failures:
 		push_warning("示範佈局第 %d 步失敗：%s" % [f["index"], f["reason"]])
-	# 直接開打：準備期 60 秒，等它跑完的截圖只會拍到一張空曠的地圖。
-	BattleController.start_wave(s)
-	# 再快轉到敵潮進入塔的射程——**交戰耗能是 B0.5 唯一要看的東西**，
-	# 而它只在有敵人在射程內時存在。等真實時間跑 26 秒等於讓使用者的桌面
-	# 開著一個視窗發呆半分鐘，模擬本來就不吃 delta，直接推 tick 就好。
-	# 這 260 個 tick ＋ 60 秒準備期 ＝ `TL_SIM=860`：兩條驗證路徑仍看同一個局面。
-	for _i in 260:
+	# 快轉到敵潮進入塔的射程。等真實時間跑 86 秒等於讓使用者的桌面開著一個
+	# 視窗發呆一分半，模擬本來就不吃 delta，直接推 tick 就好。
+	#
+	# ★ **推的是 tick，不是階段**（B0.6 改）：讓準備期自己倒數完、波次自己開。
+	# 舊寫法直接呼叫 `start_wave()` 把倒數跳過去，B0.5 還沒差別，B0.6 之後
+	# 那等於一次滿額的提前召喚（倍率 1.5），截圖的掉落數字會和 `TL_SIM`
+	# （自然開波）對不起來。現在 `TL_DEMO_TICKS=N` 與 `TL_SIM=N` 是同一個局面。
+	for _i in Hooks.demo_ticks:
 		BattleController.step(s)

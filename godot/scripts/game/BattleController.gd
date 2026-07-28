@@ -11,11 +11,18 @@ const FlowNetwork := preload("res://scripts/sim/FlowNetwork.gd")
 const Build := preload("res://scripts/sim/Build.gd")
 const Tide := preload("res://scripts/sim/Tide.gd")
 const Combat := preload("res://scripts/sim/Combat.gd")
+const Score := preload("res://scripts/sim/Score.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const Maps := preload("res://data/Maps.gd")
+const SessionState := preload("res://scripts/game/SessionState.gd")
 
 const TICK := 0.1
+## 低於這個滿足率就掛 `缺料` 徽章。與導管的飢餓變色同一個門檻，
+## 兩個編碼講的是同一件事，用不同門檻只會讓玩家以為它們無關。
+const STARVED_BELOW := 0.95
+## 高於這個量（每 tick）才算 `滿溢`。浮點尾數不是塞車。
+const OVERFLOW_ABOVE := 0.001
 
 
 ## 推進一個 tick。就地變更 `s`。
@@ -25,7 +32,7 @@ const TICK := 0.1
 ## 射速與光環強度。倒過來做的話塔會拿上一 tick 的電開這一 tick 的火，
 ## 「電不夠射速就慢」這條規則會延遲一格才生效，玩家讀不出因果。
 static func step(s: RefCounted) -> void:
-	if s.phase == "lost":
+	if s.phase == "lost" or s.phase == "won":
 		return
 	s.tick_count += 1
 	s.phase_time += TICK
@@ -66,16 +73,29 @@ static func _phase(s: RefCounted) -> void:
 static func _end_of_wave(s: RefCounted) -> void:
 	if s.phase != "wave":
 		return
-	if s.spawn_queue.is_empty() and not _anyone_walking(s):
-		s.phase = "prep"
-		s.phase_time = 0.0
-		s.speed_mult = 1
+	if not s.spawn_queue.is_empty() or _anyone_walking(s):
+		return
+	# 波次表跑完＝這一關通關。沒有這個分支的話 `start_wave` 會一直排出空波次，
+	# 局面永遠停在「準備期倒數→瞬間結束」的空轉，局末結算永遠等不到。
+	if s.wave_index >= Maps.waves_of(s.map).size():
+		# 但駐足在核心的殘敵還在啃就還沒結束——不是它們死，就是核心死。
+		if s.enemies.is_empty():
+			s.phase = "won"
+		return
+	s.phase = "prep"
+	s.phase_time = 0.0
+	s.speed_mult = 1
 
 
-## 開打。準備期可以提前結束（提前召喚的獎勵倍率是 B0.6）。
+## 開打。準備期可以提前按（`10_GDD.md` §3.4 提前召喚）。
+##
+## ★ 倍率**在這裡算一次就鎖給這一波**：開打後準備期倒數就停了，
+## 事後再算一律拿到 1.0。鎖住的另一個好處是玩家按下去當場就知道賭到多少。
 static func start_wave(s: RefCounted) -> void:
 	if s.phase != "prep":
 		return
+	s.wave_bonus = Score.summon_bonus(maxf(0.0, s.prep_time() - s.phase_time), s.prep_time())
+	s.bonus_data += Score.summon_data_bonus(s.wave_bonus)
 	s.spawn_queue = Enemies.schedule(Maps.waves_of(s.map), s.wave_index)
 	s.wave_index += 1
 	s.phase = "wave"
@@ -193,7 +213,8 @@ static func _on_kill(s: RefCounted, value: float, at: Vector2i) -> void:
 	s.kills += 1
 	# ① 全域擊殺回收：任何塔擊殺 → 價值 25% 的礦砂，**直接入帳**。
 	#    它是擊殺處撿到的殘骸，不是採出來要運回核心的礦（§3.3）。
-	var salvage := Combat.salvage_ore(value)
+	# 提前召喚的倍率乘在**掉落**上（§3.4「該波掉落的礦砂與研究數據按倍率增加」）。
+	var salvage: float = Combat.salvage_ore(value) * s.wave_bonus
 	s.ore += salvage
 	s.salvage_total += salvage
 	# ② 回收者：射程內**任何**死亡（不限自己擊殺）→ 價值 60% × 匯率 5 的能量。
@@ -396,10 +417,48 @@ static func _write_rates(
 	s.rates["silo_capacity"] = capacity
 	s.rates["conduit_flow"] = flows
 	s.rates["satisfaction"] = sat
+	s.rates["node_state"] = _node_states(s, sat, ore_res, power_res)
 
 	# 交戰中的塔座數＝**本 tick 真的在吃電的那些**。頂欄要它，因為
 	# 「能量需求為什麼突然翻倍」這個問題的答案永遠是這個數字。
 	s.rates["engaged"] = engaged.values().count(true)
 
 	# 入帳：**只有送達核心的礦砂算數**（§7.3）。
-	s.ore += float((ore_res["received"] as Dictionary).get(s.core_id, 0.0))
+	var delivered := float((ore_res["received"] as Dictionary).get(s.core_id, 0.0))
+	s.ore += delivered
+	s.delivered_total += delivered
+
+
+## 節點三態（`10_GDD.md` §3.1）。**兩種資源合看**：一座塔缺電、一台採集器
+## 送不掉礦砂，玩家要的都是同一句「這裡有問題」，分兩套徽章只會逼他學兩套。
+##
+## `缺料` 排在 `滿溢` 前面：兩者同時成立時（中繼被兩邊夾住），
+## 玩家該先處理的是「有東西沒送到」，那是產能真的在流失的那一半。
+static func _node_states(
+	s: RefCounted, sat: Dictionary, ore_res: Dictionary, power_res: Dictionary
+) -> Dictionary:
+	var ore_stuck: Dictionary = ore_res.get("stuck", {})
+	var power_stuck: Dictionary = power_res.get("stuck", {})
+	var out: Dictionary = {}
+	for n: Dictionary in s.nodes:
+		var nid := int(n["id"])
+		var def := NodeDefs.of(String(n["type"]))
+		# ★ 只有**自己宣告過需求**的節點才會 `缺料`。核心的礦砂需求與儲槽的充能
+		#   需求都是解算器合成出來的機會性需求（核心收剩下的、儲槽有多少收多少），
+		#   照滿足率掛徽章的話這兩個會幾乎全程亮著——把例外標記變成背景雜訊。
+		var declares_demand: bool = (
+			def.has("ore_in") or def.has("power_in") or def.has("engage_power")
+		)
+		# 對稱的另一半：只有**自己產得出東西**的節點才會 `滿溢`。中繼手上塞著
+		# 推不掉的餘量是「全網有盈餘」的路由後果，不是一件玩家能在那一格處理的事
+		# ——電網滿載又儲槽充飽時它會恆亮，例外標記照樣退化成背景雜訊。
+		var produces: bool = def.has("ore_out") or def.has("power_out")
+		if declares_demand and float(sat.get(nid, 1.0)) < STARVED_BELOW:
+			out[nid] = SessionState.STARVED
+		elif produces and maxf(
+			float(ore_stuck.get(nid, 0.0)), float(power_stuck.get(nid, 0.0))
+		) > OVERFLOW_ABOVE:
+			out[nid] = SessionState.OVERFLOW
+		else:
+			out[nid] = SessionState.NORMAL
+	return out

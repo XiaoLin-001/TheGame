@@ -39,13 +39,20 @@ var kills: int = 0
 var salvage_total: float = 0.0
 ## 回收者回收的能量累計。**注入電網的量**，不是瞬間到帳的量。
 var reclaimed_total: float = 0.0
+## 送達核心的礦砂累計。局末的**產能積分**分子（`10_GDD.md` §7.6）——
+## 與頂欄 `▲/秒` 同一個口徑：採得出來但運不回去的不算產能。
+var delivered_total: float = 0.0
 ## 本 tick 的開火線 `[{from, to}]`——純渲染用，每 tick 重寫。
 var shots: Array = []
 
 # ── 敵潮與時間流（B0.4）──────────────────────────────────────────────
-## `prep` 準備期／`wave` 波次中／`lost` 核心已毀。**沒有 `paused`**：
-## 純即時不可暫停是鎖定的設計（`10_GDD.md` B5）。
+## `prep` 準備期／`wave` 波次中／`lost` 核心已毀／`won` 波次表跑完。
+## **沒有 `paused`**：純即時不可暫停是鎖定的設計（`10_GDD.md` B5）。
 var phase: String = "prep"
+## 當前這一波的提前召喚倍率（按下當下鎖定，§7.6）。自然開波為 1.0。
+var wave_bonus: float = 1.0
+## 提前召喚折算成研究數據的累計加成（`Σ 10 × (倍率 − 1)`，§7.6）。
+var bonus_data: float = 0.0
 ## 已完成的波次數。`wave_index` 同時是「下一波」的索引（0-based）。
 var wave_index: int = 0
 ## 本階段已經過的秒數。
@@ -71,7 +78,11 @@ var rates: Dictionary = {
 	"conduit_flow": {},   # {conduit 索引: 該線的最大資源流率}
 	"satisfaction": {},   # {node id: 0..1}
 	"engaged": 0,         # 本 tick 交戰中的塔座數（＝正在吃電的那些）
+	"node_state": {},     # {node id: NORMAL/STARVED/OVERFLOW}（三態徽章，GDD §3.1）
 }
+
+## 節點三態（`10_GDD.md` §3.1）。`NORMAL` 不畫任何東西——徽章是例外標記。
+enum { NORMAL, STARVED, OVERFLOW }
 
 var _next_id: int = 1
 

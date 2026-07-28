@@ -24,6 +24,7 @@ extends RefCounted
 ##   `satisfaction` {id: float}   ── 實得/需求；無需求者為 1.0
 ##   `received` / `sent` {id: float}
 ##   `charge_delta` {id: float}   ── 儲槽：正=充能、負=放電。呼叫端據此更新 charge
+##   `stuck`        {id: float}   ── 推不出去的餘量（`滿溢` 徽章，GDD §3.1）
 ##   `supply_total` / `demand_total` float ── 頂欄「本 tick 供給／需求」用
 ##
 ## ── 已知近似（30_TECH_DESIGN.md §2.5 明文允許）────────────────────────
@@ -244,6 +245,9 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 		"received": received,
 		"sent": sent,
 		"charge_delta": charge_delta,
+		# ★ 迭代結束後還留在手上、推不出去的量（`滿溢` 徽章的唯一資料來源，
+		# `10_GDD.md` §3.1）。它一直都在迴圈裡（`avail` 的殘值），只是以前沒回傳。
+		"stuck": avail,
 		# 頂欄顯示的是「本 tick 供給／需求」，不是存量／容量（GDD §3.1）。
 		# 儲槽的充能需求另外給一個數字，讓呼叫端自己決定要不要算進頂欄的「需求」。
 		"supply_total": base_supply + silo_discharge,
