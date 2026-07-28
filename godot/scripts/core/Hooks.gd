@@ -18,6 +18,9 @@ var sim_ticks: int = 0
 ## 給小一點就拍得到準備期（提前召喚倍率、階段色調要兩張圖才比得出來）。
 ## **`0` ＝ 完全不要示範佈局**，用來拍玩家真正的第一眼（`50_QA_PLAN.md` §4.4）。
 var demo_ticks: int = 860
+## `TL_CLICKTEST=1`：開局內畫面，**用合成的滑鼠事件真的點地圖**，驗證輸入層通了。
+## 由 `screens/Battle.gd` 執行（它才知道格子在螢幕上的哪裡）。
+var click_test: bool = false
 
 
 func _ready() -> void:
@@ -27,6 +30,10 @@ func _ready() -> void:
 	naked = Env.flag("TL_NAKED")
 	sim_ticks = Env.int_of("TL_SIM", 0)
 	demo_ticks = Env.int_of("TL_DEMO_TICKS", 860)
+	click_test = Env.flag("TL_CLICKTEST")
+	if click_test:
+		panel = "battle"
+		demo_ticks = 0  # 空地圖才驗得到「點一下有沒有蓋出東西」
 
 	if Env.any_hook():
 		print("[TL] hooks: %s" % Env.active_summary())

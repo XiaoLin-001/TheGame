@@ -58,7 +58,12 @@ var _engaged: Dictionary = {}
 
 func _ready() -> void:
 	theme = UiKit.theme()
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# ★ **`set_anchors_and_offsets_preset`，不是 `set_anchors_preset`。**
+	# 後者只設錨點不動 offset，本節點的 `size` 一直是 **(0, 0)**——而
+	# `_draw()` 用的是絕對座標、`CanvasItem` 的繪圖不受 Control 尺寸裁切，
+	# 所以**畫面完全正常，但滑鼠命中區是空的**：整張地圖點不動（B0.7.2）。
+	# 這是「看起來對」與「真的對」差最遠的一種缺陷。
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	s = SessionState.new()
 	s.setup(MapsData.SHOAL)
 	_build_ui()
@@ -67,6 +72,64 @@ func _ready() -> void:
 	# 所以 `TL_DEMO_TICKS=0` 的語意是「不要示範佈局」。
 	if Hooks.panel == "battle" and Hooks.demo_ticks > 0:
 		_demo_layout()
+	if Hooks.click_test:
+		_click_selftest.call_deferred()
+
+
+## ★ 輸入層自檢（`TL_CLICKTEST=1`）。**用合成的滑鼠事件真的走一次 Godot 的
+## 輸入路由**——不是直接呼叫 `_act()`，那樣測不到 `mouse_filter` 這一層，
+## 而 B0.7.2 的缺陷正好就在那一層（滿版 `Control` 預設 `STOP`，把事件吃掉，
+## `_unhandled_input` 從來沒被呼叫過，地圖五批都點不動）。
+##
+## 這支自檢存在的意義就是「那個缺陷不會再發生一次而沒人知道」。
+##
+## ⚠ **必須開真視窗跑，`--headless` 過不了**：dummy display server 不做 GUI
+## 滑鼠命中測試，`_gui_input` 完全不會被呼叫。它是唯一一個不能 headless 的
+## 檢查——這也正是它抓得到的東西別的檢查都抓不到的原因。
+##   `TL_CLICKTEST=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3`
+## 約 1 秒後自己退出（0 ＝ PASS）。
+func _click_selftest() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var ore: Vector2i = (s.map["ore"] as Array)[0]
+	var on_path: Vector2i = s.path[10]
+	var before: int = s.nodes.size()
+
+	_click(ore)
+	for _i in 3:
+		await get_tree().process_frame
+	var placed: bool = s.nodes.size() == before + 1
+
+	_click(on_path)          # 路徑格禁節點 → 要被擋下且**說明原因**
+	for _i in 3:
+		await get_tree().process_frame
+	var rejected: bool = s.nodes.size() == before + 1 and _message.begins_with("✕")
+
+	var ok: bool = placed and rejected
+	print("[TL_CLICKTEST] place=%s reject_on_path=%s message=%s → %s" % [
+		placed, rejected, _message, "PASS" if ok else "FAIL"
+	])
+	get_tree().quit(0 if ok else 1)
+
+
+## GUI 的滑鼠路由要先有「游標在這裡」才認得出按下的是誰，所以**先送一個移動事件**。
+## 走 `Input.parse_input_event()`（完整輸入管線）而不是 `Viewport.push_input()`：
+## 後者繞過了一部分 GUI 狀態的建立，測不到真實玩家會走的那條路。
+func _click(cell: Vector2i) -> void:
+	Input.use_accumulated_input = false
+	var at := _center(cell)
+	var mm := InputEventMouseMotion.new()
+	mm.position = at
+	mm.global_position = at
+	Input.parse_input_event(mm)
+	for pressed: bool in [true, false]:
+		var ev := InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_LEFT
+		ev.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
+		ev.pressed = pressed
+		ev.position = at
+		ev.global_position = at
+		Input.parse_input_event(ev)
 
 
 func _process(delta: float) -> void:
@@ -95,7 +158,18 @@ func _process(delta: float) -> void:
 
 # ── 輸入 ──────────────────────────────────────────────────────────────
 
-func _unhandled_input(event: InputEvent) -> void:
+## ★ **必須是 `_gui_input`，不能是 `_unhandled_input`。**
+##
+## 本畫面是一個滿版的 `Control`，而 `Control.mouse_filter` 預設是 `STOP`：
+## 它在 `_gui_input` 那一層就把滑鼠事件吃掉並標記為已處理，`_unhandled_input`
+## **永遠不會被呼叫**。B0.3 到 B0.7.1 這條路徑一次都沒通過——
+## 左欄的按鈕能按（它們是各自獨立的子 Control），但**地圖完全點不動**。
+##
+## 為什麼拖了五批才發現：所有自動化驗證走的都是 `TL_SIM`（不開視窗）與
+## `TL_PANEL`＋示範佈局（用程式呼叫 `BuildController`，不經過輸入層），
+## 而「絕不在沒有鉤子的情況下開視窗」這條紀律讓我也沒有手動點過。
+## **整個輸入層在這之前是零覆蓋。** 對策：`TL_CLICKTEST=1`（見 `_click_selftest()`）。
+func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var c := _cell_at((event as InputEventMouseMotion).position)
 		if c != _hover:

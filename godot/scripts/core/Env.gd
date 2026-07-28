@@ -20,6 +20,7 @@ const HOOKS := [
 	"TL_SIM",         # =<ticks>　headless 模擬，輸出 JSON 後退出
 	"TL_NAKED",       # =1　隱藏所有數值標籤（R-3 可讀性驗收專用）
 	"TL_DEMO_TICKS",  # =<ticks>　示範佈局先推幾個 tick 再截圖（預設 860）
+	"TL_CLICKTEST",   # =1　用合成滑鼠事件點地圖，驗證輸入層（B0.7.2 的教訓）
 ]
 
 
