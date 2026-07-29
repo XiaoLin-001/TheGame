@@ -200,14 +200,43 @@ func conduit_keys() -> Dictionary:
 	return d
 
 
-## 點到哪條導管上？（拆除／升級要用；命中判定放寬到半格）
-func conduit_at(cell: Vector2i) -> int:
+## ★ 點到哪條導管上？（拆除／升級要用）
+##
+## **距離判定，不是格子成員判定**（B1.2.1，使用者回報「45 度的線沒辦法加粗」）。
+## 舊版比對「點到的格是不是這條線的中間格」，於是：
+##   ① 兩個**對角相鄰**的節點之間那條 45° 線**一個中間格都沒有** → 永遠點不到。
+##      而 45° 線在實戰佈局裡多半就是這種一格長的（稜鏡菱形的四條邊全是）。
+##   ② 就算有中間格，45° 的線只從那些格的**正中央**穿過去，滑鼠往垂直方向
+##      偏半格就掉進一個不屬於這條線的格；水平線則整排格子都算命中。
+##      同一條線，畫得斜一點就變難點——那不是規則，是實作漏出來的。
+##
+## `p` 用**格為單位的浮點座標**（整數＝格中心），`sim/` 不碰像素。
+## 呼叫端給得越精確，多條線擠在同一個節點時就越不會選錯。
+func conduit_near(p: Vector2, radius: float = 0.5) -> int:
+	var best := -1
+	var best_d := radius
 	for i in conduits.size():
 		var c: Dictionary = conduits[i]
-		for cc: Vector2i in Build.line_cells(c["a"], c["b"]):
-			if cc == cell and cc != c["a"] and cc != c["b"]:
-				return i
-	return -1
+		var d := _point_to_segment(p, Vector2(c["a"]), Vector2(c["b"]))
+		if d <= best_d:
+			best_d = d
+			best = i
+	return best
+
+
+## 格為單位的點到線段距離。
+static func _point_to_segment(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var len2 := ab.length_squared()
+	if len2 <= 0.0:
+		return p.distance_to(a)
+	var t := clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
+
+
+## 格解析度的版本（測試與非互動呼叫端用）。
+func conduit_at(cell: Vector2i) -> int:
+	return conduit_near(Vector2(cell))
 
 
 ## ★ 局狀態雜湊（`30_TECH_DESIGN.md` §2.4）。**同一組 `(seed, ops)` 跑兩次必得同一個字串。**

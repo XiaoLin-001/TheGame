@@ -172,6 +172,27 @@ func _click_selftest() -> void:
 		await get_tree().process_frame
 	var wired: bool = s.conduits.size() == 1
 
+	# ★ 使用者回報：「45 度的線似乎沒辦法加粗」（B1.2.1）。一格長的 45°——
+	#   兩個對角相鄰的節點之間——連一個中間格都沒有，舊的格子命中判定必然落空。
+	#   這裡走完整輸入路徑：切「加粗」→ 點兩節點之間那個像素點 → 級數要真的變。
+	_press(_build_buttons["relay"])
+	_click(Vector2i(6, 12))
+	_click(Vector2i(7, 13))
+	for _i in 3:
+		await get_tree().process_frame
+	_press(_mode_buttons[Mode.CONNECT])
+	_click(Vector2i(6, 12))
+	_click(Vector2i(7, 13))
+	for _i in 3:
+		await get_tree().process_frame
+	_press(_mode_buttons[Mode.UPGRADE])
+	_click_at((_center(Vector2i(6, 12)) + _center(Vector2i(7, 13))) * 0.5)
+	for _i in 3:
+		await get_tree().process_frame
+	var short_diag: int = s.conduit_near(Vector2(6.5, 12.5))
+	var upgraded: bool = short_diag >= 0 and int((s.conduits[short_diag])["level"]) == 1
+	_press(_mode_buttons[Mode.CONNECT])
+
 	# 留一個懸而未決的起點，讓八條方向導引與「連不成」的橙色預覽線入鏡。
 	_click(from)
 	_hover = from + Vector2i(4, 3)     # 橫 4 直 3：正好不是 45°
@@ -208,11 +229,11 @@ func _click_selftest() -> void:
 	)
 
 	var ok: bool = (
-		placed and rejected and diag_placed and wired
+		placed and rejected and diag_placed and wired and upgraded
 		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
 	)
-	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s → %s" % [
-		placed, rejected, diag_placed, wired, reachable, alloy_gated,
+	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s → %s" % [
+		placed, rejected, diag_placed, wired, upgraded, reachable, alloy_gated,
 		energy_ok, codex_ok, prio_ok, "PASS" if ok else "FAIL"
 	])
 	# 同時給 `TL_SHOT` 時不退出，把畫面交給截圖鉤子——**有些狀態只有互動才到得了**
@@ -230,8 +251,12 @@ func _press(b: Button) -> void:
 ## 走 `Input.parse_input_event()`（完整輸入管線）而不是 `Viewport.push_input()`：
 ## 後者繞過了一部分 GUI 狀態的建立，測不到真實玩家會走的那條路。
 func _click(cell: Vector2i) -> void:
+	_click_at(_center(cell))
+
+
+## 像素座標版。**加粗要點的是兩個節點「之間」**，那不是任何一格的中心。
+func _click_at(at: Vector2) -> void:
 	Input.use_accumulated_input = false
-	var at := _center(cell)
 	var mm := InputEventMouseMotion.new()
 	mm.position = at
 	mm.global_position = at
@@ -297,11 +322,15 @@ func _gui_input(event: InputEvent) -> void:
 	var mb := event as InputEventMouseButton
 	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
 		return
-	_act(_cell_at(mb.position))
+	_act(_cell_at(mb.position), _point_at(mb.position))
 	_refresh_hint()
 
 
-func _act(cell: Vector2i) -> void:
+## `point` 是**格為單位的浮點座標**（整數＝格中心）。加粗與拆除要用它才點得準：
+## 好幾條線擠在同一個節點上時，格解析度分不出玩家指的是哪一條（B1.2.1）。
+## 省略時退回格中心，`_click()` 那條合成輸入的路徑走這個預設。
+func _act(cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> void:
+	var p := Vector2(cell) if point.x < -900.0 else point
 	match _mode:
 		Mode.BUILD:
 			_message = _text_of(BuildController.place(s, _build_type, cell))
@@ -315,13 +344,13 @@ func _act(cell: Vector2i) -> void:
 				_message = _text_of(BuildController.lay_conduit(s, _connect_from, cell))
 				_connect_from = Vector2i(-1, -1)
 		Mode.UPGRADE:
-			var ci: int = s.conduit_at(cell)
+			var ci: int = s.conduit_near(p)
 			if ci < 0:
-				_message = "升級模式：請點一段導管（不是節點）"
+				_message = "加粗模式：請點一段導管（不是節點）"
 			else:
 				_message = _text_of(BuildController.upgrade(s, ci))
 		Mode.DEMOLISH:
-			_message = _text_of(BuildController.demolish(s, cell))
+			_message = _text_of(BuildController.demolish(s, cell, p))
 
 
 func _text_of(code: String) -> String:
@@ -335,6 +364,11 @@ func _label_at(cell: Vector2i) -> String:
 
 func _cell_at(pos: Vector2) -> Vector2i:
 	return Shapes.to_grid(pos - ORIGIN)
+
+
+## 螢幕像素 → **格為單位的浮點座標**（整數＝格中心）。
+func _point_at(pos: Vector2) -> Vector2:
+	return (pos - ORIGIN) / Shapes.GRID - Vector2(0.5, 0.5)
 
 
 func _in_map(c: Vector2i) -> bool:

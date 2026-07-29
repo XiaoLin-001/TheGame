@@ -86,7 +86,9 @@ static func upgrade(s: RefCounted, index: int) -> String:
 
 
 ## 拆除：節點或導管都走這裡，返還 75%。
-static func demolish(s: RefCounted, cell: Vector2i) -> String:
+## `point`（格為單位的浮點座標）只在「這一格沒有節點」時才用得上——
+## 它讓拆導管和加粗一樣點得準（B1.2.1）。省略時退回格中心。
+static func demolish(s: RefCounted, cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> String:
 	var n: Dictionary = s.node_at(cell)
 	if not n.is_empty():
 		if n["type"] == "core":
@@ -96,7 +98,7 @@ static func demolish(s: RefCounted, cell: Vector2i) -> String:
 		s.alloy += floorf(float(NodeDefs.alloy_cost(type)) * REFUND)
 		s.remove_node_at(cell)
 		return Build.OK
-	var ci: int = s.conduit_at(cell)
+	var ci: int = s.conduit_near(Vector2(cell) if point.x < -900.0 else point)
 	if ci >= 0:
 		var c: Dictionary = s.conduits[ci]
 		var spent := Build.conduit_cost(c["a"], c["b"])

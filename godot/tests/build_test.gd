@@ -25,6 +25,7 @@ func _initialize() -> void:
 	_ore_banks_at_core(t)
 	_generator_saturates_base_trunk(t)
 	_preview_before_paying(t)
+	_short_diagonal_is_clickable(t)
 	quit(t.report())
 
 
@@ -242,6 +243,40 @@ func _generator_saturates_base_trunk(t: T) -> void:
 
 
 # ── 小工具 ────────────────────────────────────────────────────────────
+
+## ★ 使用者回報：「45 度的線似乎沒辦法加粗」（B1.2.1）。**他是對的。**
+##
+## 舊的命中判定比對「點到的格是不是這條線的**中間格**」，於是兩個對角相鄰的
+## 節點之間那條線一個中間格都沒有 → 加粗與拆除都永遠點不到。而 45° 線在實戰
+## 佈局裡多半就是這種一格長的（稜鏡菱形的四條邊全是）。
+##
+## 這一條鎖的是：**短線也點得到，斜線和直線一樣好點。**
+func _short_diagonal_is_clickable(t: T) -> void:
+	var s := _session()
+	# 一格長的 45°：(10,10) 與 (11,11) 對角相鄰，中間沒有任何格。
+	BuildController.place(s, "relay", Vector2i(10, 10))
+	BuildController.place(s, "relay", Vector2i(11, 11))
+	t.eq(BuildController.lay_conduit(s, Vector2i(10, 10), Vector2i(11, 11)), Build.OK, "拉一格長的 45°")
+	t.ok(s.conduit_near(Vector2(10.5, 10.5)) >= 0, "★ 點在一格長 45° 線的正中間找得到它")
+	t.eq(BuildController.upgrade(s, s.conduit_near(Vector2(10.5, 10.5))), Build.OK, "★ 而且加粗得起來")
+	t.eq(int((s.conduits[0] as Dictionary)["level"]), 1, "真的升了一級")
+
+	# 同樣長度的水平線：兩者要一樣好點，不能「畫得斜一點就變難點」。
+	BuildController.place(s, "relay", Vector2i(14, 10))
+	BuildController.place(s, "relay", Vector2i(15, 10))
+	BuildController.lay_conduit(s, Vector2i(14, 10), Vector2i(15, 10))
+	t.ok(s.conduit_near(Vector2(14.5, 10.0)) >= 0, "一格長的水平線同樣點得到")
+
+	# 垂直方向偏半格以上就不算命中——放寬是為了好點，不是為了到處誤觸。
+	t.eq(s.conduit_near(Vector2(14.5, 11.2)), -1, "偏離一格多就不算點到（不誤觸）")
+
+	# 兩條線共用一個節點時，靠哪邊近就選哪邊：格解析度分不出來，浮點座標可以。
+	BuildController.place(s, "relay", Vector2i(13, 9))
+	BuildController.lay_conduit(s, Vector2i(14, 10), Vector2i(13, 9))
+	var pick_a: int = s.conduit_near(Vector2(14.5, 10.0))
+	var pick_b: int = s.conduit_near(Vector2(13.5, 9.5))
+	t.ok(pick_a != pick_b, "★ 同一個節點上的兩條線分得開（靠哪條近選哪條）")
+
 
 func _session() -> RefCounted:
 	var s := SessionState.new()
