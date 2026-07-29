@@ -10,15 +10,22 @@ extends RefCounted
 const GRID := 32.0
 
 
-## 導管線寬 = 2 + 6 × (flow / cap)，範圍 2–8px。
+## 導管線寬 = 2 + 6 × (flow / scale)，範圍 2–8px。
 ##
-## **這是遊戲最重要的資訊視覺化：線的粗細就是流量。** R-3 的可讀性驗收
-## （`TL_NAKED=1` 遮掉所有數字後仍要能指出瓶頸）完全踩在這條公式上，
-## 所以它寫成純函式、可被測試斷言，而不是散在繪圖程式碼裡的魔術數字。
-static func conduit_width(flow: float, cap: float) -> float:
-	if cap <= 0.0:
+## **這是遊戲最重要的資訊視覺化：線的粗細就是流量。**
+##
+## ★ `scale` 是**全遊戲的最大 cap**（滿級導管），不是這條線自己的 cap。
+## B1.1 之前的分母是自己的 cap，也就是「飽和度」——那讓**加粗一條線會讓它變細**
+## （分母變大），而按鈕就叫「加粗」。使用者實看後的原話：「有時候升級的管道
+## 卻比沒升級的還小」「應該要是越大的流量管道越粗」。
+##
+## 分母改成固定的最大 cap 之後：粗細在全圖上可以互相比較（同樣的粗代表同樣的
+## 流量，不管那條線升到幾級），而**飽和度整個交給顏色**（`Palette.conduit()`）。
+## 兩個視覺通道從此各講一件事，不再重複。
+static func conduit_width(flow: float, scale: float) -> float:
+	if scale <= 0.0:
 		return 2.0
-	return 2.0 + 6.0 * clampf(flow / cap, 0.0, 1.0)
+	return 2.0 + 6.0 * clampf(flow / scale, 0.0, 1.0)
 
 
 ## 座標 ↔ 網格互換。

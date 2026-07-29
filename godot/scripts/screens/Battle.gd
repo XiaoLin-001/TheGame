@@ -419,7 +419,9 @@ func _draw_conduits() -> void:
 		var starving := (
 			not to_node.is_empty() and float(sat.get(to_node["id"], 1.0)) < 0.95 and flow > 0.0
 		)
-		var w := Shapes.conduit_width(flow, cap)
+		# 線寬的分母是**全遊戲的最大 cap**，不是這條線自己的——粗細因此在
+		# 全圖上可以互相比較，而且加粗一條線之後它會真的變粗（B1.1 使用者回報）。
+		var w := Shapes.conduit_width(flow, Build.conduit_cap(Build.CAP_MAX_LEVEL))
 		# 受損：先鋪一圈 warn.orange 光暈。**線被打斷之前要先看得出它在挨打**，
 		# 否則產能中斷對玩家來說會是憑空發生的。
 		if float(c["hp"]) < 40.0:

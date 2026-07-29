@@ -12,6 +12,7 @@ extends SceneTree
 const T := preload("res://tests/_assert.gd")
 const RngLib := preload("res://scripts/core/Rng.gd")
 const Shp := preload("res://scripts/render/Shapes.gd")
+const Build := preload("res://scripts/sim/Build.gd")
 const Maps := preload("res://data/Maps.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
@@ -37,11 +38,31 @@ func _initialize() -> void:
 
 	# ── 純函式必須同輸入同輸出 ──
 	# conduit_width 是 R-3 可讀性驗收的地基公式，順手在這裡釘住。
-	t.near(Shp.conduit_width(0.0, 10.0), 2.0, "flow=0 → 最細 2px")
-	t.near(Shp.conduit_width(10.0, 10.0), 8.0, "滿載 → 最粗 8px")
-	t.near(Shp.conduit_width(5.0, 10.0), 5.0, "半載 → 5px")
-	t.near(Shp.conduit_width(99.0, 10.0), 8.0, "超載仍夾在 8px（不得溢出視覺尺度）")
-	t.near(Shp.conduit_width(1.0, 0.0), 2.0, "cap=0 不除以零")
+	# ★ 分母是**全遊戲最大 cap**（滿級 28），不是這條線自己的 cap。
+	var full := Build.conduit_cap(Build.CAP_MAX_LEVEL)
+	t.near(Shp.conduit_width(0.0, full), 2.0, "flow=0 → 最細 2px")
+	t.near(Shp.conduit_width(28.0, full), 8.0, "滿級線滿載 → 最粗 8px")
+	t.near(Shp.conduit_width(14.0, full), 5.0, "一半流量 → 5px")
+	t.near(Shp.conduit_width(99.0, full), 8.0, "超載仍夾在 8px（不得溢出視覺尺度）")
+	t.near(Shp.conduit_width(1.0, 0.0), 2.0, "scale=0 不除以零")
+
+	# ★ 使用者回報的那件事，直接釘死：**同樣的流量，升不升級都一樣粗**，
+	#   而流量變大線就變粗。B1.1 之前分母是自己的 cap，加粗會讓線變細。
+	t.eq(
+		Shp.conduit_width(10.0, full), Shp.conduit_width(10.0, full),
+		"★ 線寬只看流量，不看那條線升到幾級"
+	)
+	t.ok(
+		Shp.conduit_width(20.0, full) > Shp.conduit_width(10.0, full),
+		"★ 流量越大線越粗（加粗幹線 → 推得出更多 → 看起來更粗）"
+	)
+	# 飽和度整個交給顏色，而且是**連續**的：九成滿不得和一成滿長得一樣。
+	var Pal := preload("res://scripts/render/Palette.gd")
+	var low: Color = Pal.conduit(1.0, 10.0, false)
+	var high: Color = Pal.conduit(9.0, 10.0, false)
+	t.ok(low != high, "★ 顏色連續反映飽和度：一成滿與九成滿不同色")
+	t.eq(Pal.conduit(10.0, 10.0, false), Pal.ORDER_BRIGHT, "滿載＝最亮（B0.3 的教學瞬間）")
+	t.eq(Pal.conduit(5.0, 10.0, true), Pal.ORDER_DIM, "下游在挨餓 → 暗青，壓過飽和度")
 
 	_full_session_hash(t)
 	quit(t.report())

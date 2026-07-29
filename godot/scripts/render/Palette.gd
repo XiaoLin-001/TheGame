@@ -48,12 +48,20 @@ const TEXT_SECONDARY := Color("#8ba3b0")
 const TEXT_DISABLED := Color("#4a5f6b")
 
 
-## 導管顏色：正常（青）→ 滿載（亮青）→ 飢餓（暗青）。
+## 導管顏色：青 →（連續）→ 亮青，飢餓為暗青。
 ## 這是「線的顏色＝飽和度」這條資訊視覺化規則的唯一實作（§1.4、R-3）。
+##
+## ★ B1.1 起是**連續**的，不是「滿了才亮」的兩段跳。線寬改成表達絕對流量之後
+## （`Shapes.conduit_width()`），飽和度只剩顏色這一個通道，兩段跳會讓「九成滿」
+## 和「一成滿」長得一模一樣——瓶頸在真的塞爆之前完全看不出來。
+##
+## 用平方而不是線性：低飽和度時幾乎維持青色，接近滿載才快速提亮，
+## 保住「第一台發電機讓那條線當場亮起來」那個 B0.3 的教學瞬間。
 static func conduit(flow: float, cap: float, starving: bool) -> Color:
 	if starving or cap <= 0.0:
 		return ORDER_DIM
-	return ORDER_BRIGHT if flow >= cap - 0.001 else ORDER_CYAN
+	var sat := clampf(flow / cap, 0.0, 1.0)
+	return ORDER_CYAN.lerp(ORDER_BRIGHT, sat * sat)
 
 
 ## 依透明度取色。避免各處自己寫 `var c := X; c.a = 0.2`。
