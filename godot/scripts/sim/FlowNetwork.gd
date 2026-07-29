@@ -54,6 +54,10 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 
 	var out_edges: Dictionary = {}  # node id -> Array[int]（edge 索引，依索引遞增）
 	var in_edges: Dictionary = {}
+	# ★ 同一條實體導管的兩個方向互為孿生（`twin`）。**它們共用一份 cap**——
+	#   見下方 `_residual()`。
+	var twin: Dictionary = {}
+	var seen: Dictionary = {}
 	for i in edges.size():
 		var e: Dictionary = edges[i]
 		var f: int = int(e.get("from", -1))
@@ -64,6 +68,11 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 		if not in_edges.has(t):
 			in_edges[t] = [] as Array[int]
 		in_edges[t].append(i)
+		var back := "%d>%d" % [t, f]
+		if seen.has(back):
+			twin[i] = int(seen[back])
+			twin[int(seen[back])] = i
+		seen["%d>%d" % [f, t]] = i
 
 	# ── 1. 收集：先算不含儲槽的供需，才知道全網是盈餘還是赤字 ──────────
 	var supply: Dictionary = {}
@@ -169,7 +178,8 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 				var tid: int = int((edges[ei] as Dictionary).get("to", -1))
 				if not reach.has(tid):
 					reach[tid] = _reach(
-						tid, by_id, out_edges, edges, flow, demand_left, priorities, memo, visiting
+						tid, by_id, out_edges, edges, flow, demand_left, priorities,
+						memo, visiting, twin
 					)
 
 			# 其餘依「下游可送達需求 × 優先權」分配給出邊
@@ -180,7 +190,7 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 				var total_w := 0.0
 				for ei: int in outs:
 					var e: Dictionary = edges[ei]
-					var residual := float(e.get("cap", 0.0)) - flow[ei]
+					var residual := _residual(ei, edges, flow, twin)
 					if residual <= EPS:
 						continue
 					var down: Vector2 = reach.get(int(e.get("to", -1)), Vector2.ZERO)
@@ -276,7 +286,8 @@ static func _reach(
 	demand_left: Dictionary,
 	priorities: Dictionary,
 	memo: Dictionary,
-	visiting: Dictionary
+	visiting: Dictionary,
+	twin: Dictionary
 ) -> Vector2:
 	if visiting.has(nid):
 		return Vector2.ZERO  # 環：這一圈不再往回算，交給迭代收斂
@@ -292,12 +303,12 @@ static func _reach(
 
 	for ei: int in out_edges.get(nid, []):
 		var e: Dictionary = edges[ei]
-		var residual := float(e.get("cap", 0.0)) - flow[ei]
+		var residual := _residual(ei, edges, flow, twin)
 		if residual <= EPS:
 			continue
 		var down := _reach(
 			int(e.get("to", -1)), by_id, out_edges, edges, flow, demand_left,
-			priorities, memo, visiting
+			priorities, memo, visiting, twin
 		)
 		if down.x <= EPS:
 			continue
@@ -309,6 +320,21 @@ static func _reach(
 	var r := Vector2(amt, weighted)
 	memo[nid] = r
 	return r
+
+
+## ★ 一條實體導管的**兩個方向共用一份 cap**（B1.2）。
+##
+## 沒有這一條時，A→B 已經滿載的管子在 B→A 方向還有整份 cap 可用，於是
+## 「兩條線一起餵一個大消費者」這種再自然不過的佈局會**只送到四分之一**：
+## 資源從幹線推到中繼，中繼看到「經幹線的另一條分支還有需求」，就把一半
+## 原路推回去，來回彈掉三次迭代（`10_GDD.md` §7.9 第 2 關的正解正是這種
+## 佈局，B1.2 校準時當場現形）。**管子是一根，容量就該是一份。**
+static func _residual(ei: int, edges: Array, flow: Array[float], twin: Dictionary) -> float:
+	var cap := float((edges[ei] as Dictionary).get("cap", 0.0))
+	var used := flow[ei]
+	if twin.has(ei):
+		used += flow[int(twin[ei])]
+	return cap - used
 
 
 static func _cap_sum(edge_ids: Array, edges: Array) -> float:

@@ -9,6 +9,8 @@ extends Node
 ## 純邏輯（defaults／migrate／normalize）一律寫成 **static**，因為 `tests/*.gd`
 ## 以 `--script` 執行時不載入 autoload，只能 preload 這個檔案呼叫靜態函式（§4.2）。
 
+const Score := preload("res://scripts/sim/Score.gd")
+
 const SAVE_VERSION := 1
 
 const PATH := "user://save.json"
@@ -59,6 +61,27 @@ static func migrate(d: Dictionary) -> Dictionary:
 	# 尚無 sv2，故無迴圈；沒有 sv 的舊檔也一樣，交給 _fill_defaults 補完。
 	# 加入第一個遷移時把上面註解的形狀展開。
 	return d
+
+
+## ★ 把一局戰役的結果寫進存檔（B1.2、`10_GDD.md` §7.9）。**只增不減**：
+## 星數取歷史最高、研究數據只補發差額、已通關的關卡不會因為重玩失敗而消失
+## （紅線 R1「失敗只花時間」在存檔層的樣子）。
+##
+## 回傳實得的研究數據，讓局末結算面板有東西可講——
+## 靜靜地寫進存檔而不告訴玩家，等於沒有獎勵。
+static func apply_result(d: Dictionary, level_id: String, stars: int, reward: int) -> float:
+	var campaign: Dictionary = d.get("campaign", {})
+	var best: Dictionary = campaign.get("stars", {})
+	var cleared: Array = campaign.get("cleared", [])
+	if stars <= 0:
+		return 0.0
+	var gain := Score.reward_delta(reward, stars, int(best.get(level_id, 0)))
+	best[level_id] = maxi(stars, int(best.get(level_id, 0)))
+	if not cleared.has(level_id):
+		cleared.append(level_id)
+	var tech: Dictionary = d.get("tech", {})
+	tech["data"] = float(tech.get("data", 0)) + gain
+	return gain
 
 
 ## 遞迴補預設值：defaults 有而 target 沒有的鍵才補；兩邊都是 Dictionary 就往下走。

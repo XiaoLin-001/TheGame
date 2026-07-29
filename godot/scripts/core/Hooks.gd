@@ -21,6 +21,9 @@ var demo_ticks: int = 860
 ## `TL_CLICKTEST=1`：開局內畫面，**用合成的滑鼠事件真的點地圖**，驗證輸入層通了。
 ## 由 `screens/Battle.gd` 執行（它才知道格子在螢幕上的哪裡）。
 var click_test: bool = false
+## `TL_LEVEL=1..5`：`TL_PANEL=campaign` 時直接進那一關（1-based，0 ＝ 停在關卡選擇）。
+## 截圖與 `TL_SIM` 要指定關卡都走這裡。
+var level: int = 0
 
 
 func _ready() -> void:
@@ -31,8 +34,12 @@ func _ready() -> void:
 	sim_ticks = Env.int_of("TL_SIM", 0)
 	demo_ticks = Env.int_of("TL_DEMO_TICKS", 860)
 	click_test = Env.flag("TL_CLICKTEST")
-	if click_test:
+	level = Env.int_of("TL_LEVEL", 0)
+	# 預設驗局內畫面；明寫 `TL_PANEL` 時尊重它（B1.2 起關卡選擇也要驗一次
+	# ——那個畫面的全部價值就是「一顆鈕點得到」）。
+	if click_test and panel == "":
 		panel = "battle"
+	if click_test:
 		# 空地圖才驗得到「點一下有沒有蓋出東西」。但明寫 `TL_DEMO_TICKS` 時尊重它——
 		# 那是「我要的是示範佈局跑到第 N tick 的畫面，只是需要有人幫我開浮層」。
 		if Env.str_of("TL_DEMO_TICKS") == "":

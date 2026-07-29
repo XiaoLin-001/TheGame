@@ -20,6 +20,9 @@ const SHOAL := {
 	"name": "淺灘",
 	"size": Vector2i(36, 19),
 	"core": Vector2i(34, 14),
+	# 轉折點，最後一點必為核心。展開規則見 `path_of()`。
+	"waypoints": [Vector2i(0, 4), Vector2i(30, 4), Vector2i(30, 14), Vector2i(34, 14)],
+	"waves": Enemies.SHOAL_WAVES,
 	# 測試圖給得寬鬆：示範佈局要能一口氣蓋出「礦砂線 ＋ 電網 ＋ 四隻塔 ＋ 加粗幹線」
 	# 整套，否則驗證不了核心取捨。B0.5 由 300 調高到 1400（示範佈局要 1291）。
 	# 真正吃緊的起始礦砂是關卡設計的事（B0.7 手作圖、B1.2 戰役五關）。
@@ -154,24 +157,33 @@ const SANDBOX_DEMO := [
 
 
 ## 敵人路徑（有序，供 B0.4 的推進使用；B0.3 只用它做建造合法性）。
+##
+## ★ B1.2：路徑改由地圖自己宣告 `waypoints`（轉折點，最後一點必為核心），
+## 這裡只負責展開。原本是一支寫死 `shoal` 的 `if`——五關戰役再照抄四次，
+## 就是五份會各自過期的地圖知識。**轉折一律 90°**（斜著走的敵人沒有意義：
+## 「路徑格不可蓋節點」在對角線上會變成一條漏得到處都是的柵欄）。
 static func path_of(map: Dictionary) -> Array:
-	if String(map.get("id", "")) != "shoal":
-		return []
+	var pts: Array = map.get("waypoints", [])
 	var cells: Array[Vector2i] = []
-	for x in range(0, 31):
-		cells.append(Vector2i(x, 4))
-	for y in range(5, 15):
-		cells.append(Vector2i(30, y))
-	for x in range(31, 35):
-		cells.append(Vector2i(x, 14))
+	for i in pts.size():
+		var to: Vector2i = pts[i]
+		if i == 0:
+			cells.append(to)
+			continue
+		var from: Vector2i = pts[i - 1]
+		var step := Vector2i(signi(to.x - from.x), signi(to.y - from.y))
+		# 起點已經在上一段的尾巴上了，從第二格開始接。
+		var c := from + step
+		while c != to:
+			cells.append(c)
+			c += step
+		cells.append(to)
 	return cells
 
 
-## 這張圖的波次表（`data/Enemies.gd`）。B1.2 的五關各自一張。
+## 這張圖的波次表（`data/Enemies.gd`）。戰役五關各自一張，都寫在資料層。
 static func waves_of(map: Dictionary) -> Array:
-	if String(map.get("id", "")) != "shoal":
-		return []
-	return Enemies.SHOAL_WAVES
+	return map.get("waves", [])
 
 
 ## 地圖 → 解算與建造要用的集合形式（`Dictionary` 當 set，查詢 O(1)）。

@@ -5,11 +5,14 @@ extends Control
 ## 主選單與各面板排在 M1（B1.4）；`TL_PANEL` 的路由表也在那時才長出來。
 
 const BattleScreen := preload("res://scripts/screens/Battle.gd")
+const CampaignScreen := preload("res://scripts/screens/Campaign.gd")
+const CampaignData := preload("res://data/Campaign.gd")
 
 ## TL_PANEL 目前認得的畫面。其餘由後續批次補進來。
 ## `sandbox` ＝ 局內畫面但換成沙盤「靜水」（`data/Maps.gd`）：
 ## 沒有敵人，只有三種資源在跑，用來驗合金那一列流動珠（B1.1）。
-const KNOWN_PANELS := ["title", "battle", "sandbox"]
+## `campaign` ＝ 戰役關卡選擇；配 `TL_LEVEL=1..5` 直接進那一關（B1.2）。
+const KNOWN_PANELS := ["title", "battle", "sandbox", "campaign"]
 
 
 func _ready() -> void:
@@ -17,16 +20,38 @@ func _ready() -> void:
 	if Hooks.panel in ["battle", "sandbox"]:
 		_enter_battle()
 		return
+	if Hooks.panel == "campaign":
+		_enter_campaign()
+		return
 	_build()
 	_route_panel()
 
 
-## 切到局內。B1.4 會有真正的主選單與關卡選擇；現在只有一張測試圖。
+## 切到局內測試圖。戰役走 `_enter_campaign()`。
 func _enter_battle() -> void:
 	for c: Node in get_children():
 		c.queue_free()
 	var battle := BattleScreen.new()
 	add_child(battle)
+
+
+## 切到戰役。`TL_LEVEL=N` 直接進第 N 關——**有些畫面只有進去才到得了**
+## （局末星等要打完才有），截圖鉤子需要一條不用手點的路。
+func _enter_campaign() -> void:
+	for c: Node in get_children():
+		c.queue_free()
+	var screen := CampaignScreen.new()
+	screen.on_exit = _back_to_title
+	add_child(screen)
+	if Hooks.level >= 1 and Hooks.level <= CampaignData.count():
+		screen._enter.call_deferred(Hooks.level - 1)
+
+
+func _back_to_title() -> void:
+	for c: Node in get_children():
+		remove_child(c)
+		c.queue_free()
+	_build()
 
 
 func _build() -> void:
@@ -48,6 +73,11 @@ func _build() -> void:
 	col.add_child(UiKit.label(GameState.TAGLINE, 16, Palette.TEXT_SECONDARY))
 
 	# 可玩 build 的入口（工作室鐵律 2）。真正的主選單在 B1.4。
+	var campaign := Button.new()
+	campaign.text = "戰役　五關"
+	campaign.pressed.connect(_enter_campaign)
+	col.add_child(UiKit.touchable(campaign))
+
 	var start := Button.new()
 	start.text = "進入測試圖　淺灘"
 	start.pressed.connect(_enter_battle)

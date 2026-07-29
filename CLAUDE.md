@@ -87,8 +87,11 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試
+# 自動化測試（8 支：flow / build / combat / tide / save / determinism / hud / campaign）
 <godot> --headless --path godot --script res://tests/flow_test.gd
+
+# ★ 戰役五關的參考解實跑（最慢的一支，約 3 分鐘）——「這一關過得了」的唯一證據
+<godot> --headless --path godot --script res://tests/campaign_test.gd
 
 # 截圖驗證（自動靜音、約 3 秒後存圖並退出）
 # TL_SHOT 存在時模擬凍結在 TL_DEMO_TICKS 那一格 → 同參數在任何機器上拍出同一張圖
@@ -97,9 +100,15 @@ TL_SHOT="C:/tmp/shot.png" TL_PANEL=battle TL_SEED=42 <godot> --path godot --rend
 # 拍玩家真正的第一眼（TL_DEMO_TICKS=0 ＝ 不要示範佈局）
 TL_SHOT="C:/tmp/first.png" TL_DEMO_TICKS=0 TL_PANEL=battle <godot> --path godot --rendering-driver opengl3
 
+# ★ 戰役（B1.2）：TL_PANEL=campaign 是關卡選擇，加 TL_LEVEL=1..5 直接進那一關。
+# 關卡的示範佈局＝該關的參考解，與 campaign_test 跑的是同一份腳本。
+TL_SHOT="C:/tmp/lv.png" TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> --path godot --rendering-driver opengl3
+
 # ★ 輸入層自檢：用合成滑鼠事件真的點地圖（約 1 秒後自己退出，0 ＝ PASS）
 # ⚠ 唯一不能 --headless 的檢查：dummy display server 不做 GUI 命中測試
 TL_CLICKTEST=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
+# 關卡選擇畫面的同一件事（那個畫面的全部價值就是「一顆鈕點得到」）
+TL_CLICKTEST=1 TL_PANEL=campaign TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 
 # 拍「只有互動才到得了」的狀態：驅動完 UI 之後不退出，交給 TL_SHOT
 TL_CLICKTEST=1 TL_SHOT="C:/tmp/panels.png" TL_MUTE=1 <godot> --path godot --rendering-driver opengl3

@@ -25,6 +25,7 @@ const DUPLICATE := "duplicate"
 const MAX_LEVEL := "max_level"
 const NO_ORE := "no_ore"
 const NO_ALLOY := "no_alloy"
+const LOCKED := "locked"            # 這一關還沒解鎖這種節點（`10_GDD.md` §7.9）
 
 
 ## 導管吞吐上限。局內升級每級 +6，上限 3 級 → 28（§7.2）。
@@ -80,6 +81,12 @@ static func conduit_cost(a: Vector2i, b: Vector2i) -> int:
 ## 節點放置合法性。
 ## `occupied`：`{Vector2i: true}`，已有節點的格。
 static func can_place(sets: Dictionary, occupied: Dictionary, type: String, cell: Vector2i) -> String:
+	# ★ 關卡解鎖（B1.2）。**空陣列＝不限制**（測試圖與沙盤走這條）。
+	# 規則放在這裡而不是 UI：畫面上不畫那顆鈕只是一半，藍圖展開（B2.3）與
+	# 重播都會繞過 UI 直接呼叫建造——鎖不在規則層，它就不是規則。
+	var unlocked: Array = sets.get("unlocked", [])
+	if not unlocked.is_empty() and not unlocked.has(type):
+		return LOCKED
 	var size: Vector2i = sets.get("size", Vector2i.ZERO)
 	if cell.x < 0 or cell.y < 0 or cell.x >= size.x or cell.y >= size.y:
 		return OUT_OF_BOUNDS

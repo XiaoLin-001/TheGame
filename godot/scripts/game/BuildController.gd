@@ -23,6 +23,7 @@ const REASONS := {
 	Build.MAX_LEVEL: "這條導管已經是最高級（cap 28）",
 	Build.NO_ORE: "礦砂不夠",
 	Build.NO_ALLOY: "合金不夠——合金要蓋熔爐、而且熔爐要接到核心才入帳",
+	Build.LOCKED: "這一關還沒解鎖這種節點",
 }
 
 
@@ -134,6 +135,29 @@ static func apply_ops(s: RefCounted, ops: Array) -> Array:
 				code = "unknown_op"
 		if code != Build.OK:
 			failures.append({"index": i, "op": op[0], "reason": code})
+	return failures
+
+
+## ★ 帶時間軸的建造腳本（B1.2）：`["wait", ticks]` 之間的指令一次套用，
+## 然後推 N 個 tick 讓產線自己賺錢，再蓋下一段。
+##
+## **分段建造才是玩家真正的樣子。** 一口氣全蓋起來會逼得關卡的起始礦砂虛高，
+## 而起始礦砂是玩家看得見的關卡參數（§7.7）——虛高等於偷偷把難度調低。
+##
+## `step` 是 `Callable(s)`：這支檔案不 preload `BattleController`（它 preload
+## 回這裡，繞成一圈）。回傳的失敗索引是**該段之內**的索引。
+static func apply_timeline(s: RefCounted, ops: Array, step: Callable) -> Array:
+	var failures: Array = []
+	var batch: Array = []
+	for op: Array in ops:
+		if String(op[0]) != "wait":
+			batch.append(op)
+			continue
+		failures.append_array(apply_ops(s, batch))
+		batch = []
+		for _i in int(op[1]):
+			step.call(s)
+	failures.append_array(apply_ops(s, batch))
 	return failures
 
 

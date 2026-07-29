@@ -44,6 +44,94 @@ const SHOAL_WAVES := [
 ]
 
 
+## ★ 戰役五關的波次表（B1.2，`10_GDD.md` §7.9）。**手作，不是公式。**
+##
+## 難度階梯只用玩家看得見的東西（§7.7）：**波數**與**組成**。
+##   第 1 關 3 波、只有漂蟲——「前兩關只出漂蟲，數量少」的字面實作。
+##   甲殼（護甲 8）在第 2 關末尾首次出現，正好是稜鏡解鎖的那一關：
+##     錨的 18 物理傷害被護甲砍成 10，稜鏡的 30 能量傷害不受影響。
+##   熾泳（能量抗性 40%）在第 3 關首次出現，把「稜鏡打什麼都行」擋回去。
+## 三種敵人各有一關是它的登場考，之後才混編。
+const L1_WAVES := [
+	{"groups": [{"type": "drifter", "count": 4, "gap": 1.5}]},
+	{"groups": [{"type": "drifter", "count": 5, "gap": 1.4}]},
+	{"groups": [{"type": "drifter", "count": 6, "gap": 1.2}]},
+]
+
+const L2_WAVES := [
+	{"groups": [{"type": "drifter", "count": 5, "gap": 1.4}]},
+	{"groups": [{"type": "drifter", "count": 7, "gap": 1.2}]},
+	{"groups": [{"type": "drifter", "count": 8, "gap": 1.0}]},
+	{"groups": [
+		{"type": "drifter", "count": 6, "gap": 1.0},
+		{"type": "carapace", "count": 2, "gap": 2.0},
+	]},
+]
+
+const L3_WAVES := [
+	{"groups": [{"type": "drifter", "count": 6, "gap": 1.2}]},
+	{"groups": [
+		{"type": "drifter", "count": 6, "gap": 1.0},
+		{"type": "carapace", "count": 2, "gap": 2.0},
+	]},
+	{"groups": [
+		{"type": "ember", "count": 4, "gap": 0.9},
+		{"type": "drifter", "count": 4, "gap": 1.2},
+	]},
+	{"groups": [
+		{"type": "carapace", "count": 3, "gap": 1.8},
+		{"type": "ember", "count": 4, "gap": 0.8},
+	]},
+	{"groups": [
+		{"type": "drifter", "count": 8, "gap": 0.7},
+		{"type": "carapace", "count": 3, "gap": 1.6},
+		{"type": "ember", "count": 4, "gap": 0.8},
+	]},
+]
+
+const L4_WAVES := [
+	{"groups": [{"type": "drifter", "count": 8, "gap": 1.0}]},
+	{"groups": [
+		{"type": "carapace", "count": 3, "gap": 1.8},
+		{"type": "drifter", "count": 6, "gap": 1.0},
+	]},
+	{"groups": [
+		{"type": "ember", "count": 6, "gap": 0.8},
+		{"type": "carapace", "count": 2, "gap": 2.0},
+	]},
+	{"groups": [
+		{"type": "carapace", "count": 5, "gap": 1.4},
+		{"type": "ember", "count": 5, "gap": 0.8},
+	]},
+	{"groups": [
+		{"type": "drifter", "count": 12, "gap": 0.6},
+		{"type": "carapace", "count": 4, "gap": 1.4},
+		{"type": "ember", "count": 6, "gap": 0.7},
+	]},
+]
+
+const L5_WAVES := [
+	{"groups": [{"type": "drifter", "count": 10, "gap": 0.9}]},
+	{"groups": [
+		{"type": "carapace", "count": 4, "gap": 1.5},
+		{"type": "ember", "count": 4, "gap": 0.9},
+	]},
+	{"groups": [
+		{"type": "ember", "count": 8, "gap": 0.7},
+		{"type": "carapace", "count": 3, "gap": 1.6},
+	]},
+	{"groups": [
+		{"type": "carapace", "count": 6, "gap": 1.3},
+		{"type": "drifter", "count": 10, "gap": 0.7},
+	]},
+	{"groups": [
+		{"type": "drifter", "count": 14, "gap": 0.5},
+		{"type": "carapace", "count": 5, "gap": 1.2},
+		{"type": "ember", "count": 8, "gap": 0.6},
+	]},
+]
+
+
 static func of(type: String) -> Dictionary:
 	return DEFS.get(type, {})
 

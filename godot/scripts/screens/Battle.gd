@@ -15,6 +15,7 @@ const Enemies := preload("res://data/Enemies.gd")
 const Tide := preload("res://scripts/sim/Tide.gd")
 const Combat := preload("res://scripts/sim/Combat.gd")
 const Score := preload("res://scripts/sim/Score.gd")
+const CampaignData := preload("res://data/Campaign.gd")
 
 ## 地圖左上角。36×19 格 ×32px = 1152×608；左側 120px 留給建造欄，
 ## 浮層與地圖**不重疊**（RG-20 的先行實踐，正式驗收在 B0.6）。
@@ -41,6 +42,13 @@ const SHORT_ROWS := 3
 enum Mode { BUILD, CONNECT, UPGRADE, DEMOLISH }
 
 var s: RefCounted = null
+
+## ★ 這一局打的是哪一關（`data/Campaign.gd` 的一筆）。**空字典＝測試圖／沙盤**，
+## 那條路徑沒有星等、沒有解鎖限制、也不寫存檔。
+## 由呼叫端在 `add_child()` **之前**指派——`_ready()` 一進來就要用它。
+var level: Dictionary = {}
+## 回關卡選擇。測試圖沒有上一層，所以是 Callable 而不是寫死的場景切換。
+var on_exit: Callable = Callable()
 
 var _mode: int = Mode.BUILD
 var _build_type: String = "extractor"
@@ -87,15 +95,29 @@ func _ready() -> void:
 	# `TL_PANEL=sandbox`：沙盤「靜水」（`data/Maps.gd`）。**合金那一列流動珠
 	# 只有這張圖上有**——淺灘的示範佈局沒有熔爐，所以第三種資源的視覺編碼
 	# 在任何既有截圖裡都不會出現，而沒被看過的編碼不算通過 R-3。
-	s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL)
+	_setup_session()
 	_build_ui()
 	# 截圖驗證要看得到「流動中的網路」，空地圖證明不了任何事——
 	# **除了首次體驗**（`50_QA_PLAN.md` §4.4），那正好要看玩家真正的第一眼，
 	# 所以 `TL_DEMO_TICKS=0` 的語意是「不要示範佈局」。
-	if Hooks.panel in ["battle", "sandbox"] and Hooks.demo_ticks > 0:
+	if Hooks.panel in ["battle", "sandbox", "campaign"] and Hooks.demo_ticks > 0:
 		_demo_layout()
 	if Hooks.click_test:
 		_click_selftest.call_deferred()
+
+
+## 一局的起手。戰役關卡帶著自己的地圖與解鎖清單；沒有關卡就是測試圖／沙盤。
+func _setup_session() -> void:
+	if not level.is_empty():
+		s.setup(level["map"], level["unlocked"])
+		return
+	s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL)
+
+
+## 這一局蓋得出哪些節點。**空的 `unlocked` ＝ 全部**（測試圖與沙盤）。
+func _buildable() -> Array:
+	var unlocked: Array = s.sets.get("unlocked", [])
+	return NodeDefs.BUILDABLE if unlocked.is_empty() else unlocked
 
 
 ## ★ 輸入層自檢（`TL_CLICKTEST=1`）。**用合成的滑鼠事件真的走一次 Godot 的
@@ -738,7 +760,10 @@ func _build_ui() -> void:
 	#   用 Godot 內建的 toggle 群組，不自己維護一套「哪個被選中」的高亮。
 	#   B0.6 之前完全沒有選中指示——玩家只能從提示列的文字推自己在哪個模式。
 	var group := ButtonGroup.new()
-	for type: String in NodeDefs.BUILDABLE:
+	# ★ 只列**這一關解鎖的**（`10_GDD.md` §7.9）。第 1 關給四顆鈕不是十顆——
+	#   十顆對一個還不知道「電是流率」的人來說不是自由，是雜訊。
+	#   一局之內這份清單不會變，所以鈕的位置仍然是固定的（R-15 的同一條理由）。
+	for type: String in _buildable():
 		# TL_NAKED 連造價都遮：它的語意是「隱藏所有數值標籤」，不是「隱藏狀態數值」。
 		var b := _tool_button(group, (
 			NodeDefs.label(type) if Hooks.naked
@@ -839,8 +864,20 @@ func _build_priority_panel() -> void:
 	var lanes := [UiKit.vbox(4), UiKit.vbox(4)]
 	cols.add_child(lanes[0])
 	cols.add_child(lanes[1])
-	for i in NodeDefs.PRIORITY_ROWS.size():
-		var type := String(NodeDefs.PRIORITY_ROWS[i])
+	# ★ 只列這一關蓋得出來的（核心永遠在，它不是玩家蓋的）。B1.2 起前幾關
+	#   只解鎖四到六種節點，把另外五條永遠用不到的滑桿也列出來，就是把
+	#   「這一格是我的戰術決定」稀釋成「這一排我看不懂」。**一局之內清單不變**，
+	#   所以滑桿仍然恆在同一位置（R-1／R-15 要保的是那一件事）。
+	var rows: Array = []
+	for type: String in NodeDefs.PRIORITY_ROWS:
+		if type == "core" or _buildable().has(type):
+			rows.append(type)
+	var split := 0
+	for type: String in rows:
+		if NodeDefs.PRIORITY_ROWS.find(type) < NodeDefs.PRIORITY_SPLIT:
+			split += 1
+	for i in rows.size():
+		var type := String(rows[i])
 		var row := UiKit.hbox(4)
 		var name_label := UiKit.label(NodeDefs.label(type), 15, Palette.TEXT_PRIMARY, false)
 		name_label.custom_minimum_size = Vector2(52, 0)
@@ -859,7 +896,7 @@ func _build_priority_panel() -> void:
 		up.text = "▶"
 		up.pressed.connect(_on_priority.bind(type, 1))
 		row.add_child(UiKit.touchable(up))
-		(lanes[0] if i < NodeDefs.PRIORITY_SPLIT else lanes[1]).add_child(row)
+		(lanes[0] if i < split else lanes[1]).add_child(row)
 	add_child(box)
 	_prio_panel = box
 	_refresh_priority()
@@ -874,6 +911,15 @@ func _build_priority_panel() -> void:
 ##
 ## **預設開在空地圖上、有東西之後就不再擋路**：不用存檔旗標（那要跨局狀態），
 ## 用「這一局蓋了東西沒有」判斷——玩家一放下第一個節點就代表他會操作了。
+## 這張圖有幾座橋，說明就講幾座。零座也是一句有用的話——
+## 「這一關不用擔心過路徑」本身就是關卡設計要傳達的訊息（§7.9 第 1 關）。
+func _bridge_line() -> String:
+	var n: int = (s.sets["crossings"] as Dictionary).size()
+	if n <= 0:
+		return "　導管不能跨過敵人路徑（紫帶）——這張圖沒有橋，所有東西都在同一側"
+	return "　導管要過敵人路徑（紫帶）只能走「橋」——路徑上那 %d 段架高結構" % n
+
+
 func _build_help_panel() -> void:
 	var box := UiKit.panel(0.94)
 	box.position = Vector2(150, 250)
@@ -888,7 +934,9 @@ func _build_help_panel() -> void:
 		"",
 		"規則",
 		"　導管只能走 水平／垂直／45°，要轉彎先放一個「中繼」",
-		"　導管要過敵人路徑（紫帶）只能走「橋」——路徑上那三段架高結構",
+		# ★ 座數讀地圖，不寫死（B1.2）：第 1 關一座橋都沒有，跟新手講
+		#   「路徑上那三段架高結構」只會讓他去找一個畫面上不存在的東西。
+		_bridge_line(),
 		"　節點不能蓋在敵人路徑上",
 		"　敵人走過時會打壞相鄰 1 格的東西 → 塔與導管退開 2 格就安全",
 		"　塔只有交戰時吃電，待機 0：約束是「峰值電力」，不是平均",
@@ -1247,12 +1295,31 @@ func _refresh_over() -> void:
 	var waves: int = s.wave_index if won else maxi(0, s.wave_index - 1)
 	var score := Score.throughput(s.delivered_total, s.tick_count, BattleController.TICK)
 	var box := UiKit.panel()
-	box.position = Vector2(440, 250)
+	box.position = Vector2(440, 230)
 	var col := UiKit.vbox(10)
 	box.add_child(col)
 	col.add_child(UiKit.label(
 		"通關" if won else "核心已毀", 32, Palette.OK_GREEN if won else Palette.TIDE_MAGENTA
 	))
+	# ★ 星等與獎勵只在戰役關卡有（測試圖與沙盤沒有進度可寫）。
+	if not level.is_empty():
+		var stars := Score.stars(
+			won, s.core_hp(), NodeDefs.hp("core"), score, float(level["star_throughput"])
+		)
+		var gain := SaveService.apply_result(
+			GameState.data, String((level["map"] as Dictionary)["id"]),
+			stars, int(level["reward"])
+		)
+		SaveService.save_from(GameState.data)
+		col.add_child(UiKit.label(
+			"★★★".substr(0, stars) + "☆☆☆".substr(0, 3 - stars), 28, Palette.ENERGY_AMBER
+		))
+		for line: String in _star_lines(stars, score):
+			col.add_child(UiKit.label(line, 14, Palette.TEXT_SECONDARY, false))
+		if gain > 0.0:
+			col.add_child(UiKit.label(
+				"關卡獎勵　＋%.0f 研究數據" % gain, 15, Palette.OK_GREEN, false
+			))
 	for line: String in [
 		"撐過 %d 波　　＋%.0f 研究數據" % [waves, Score.DATA_PER_WAVE * float(waves)],
 		"產能積分 %.1f（送達核心 %s 礦砂）　＋%.0f" % [
@@ -1266,12 +1333,35 @@ func _refresh_over() -> void:
 	]:
 		if line != "":
 			col.add_child(UiKit.label(line, 15, Palette.TEXT_SECONDARY, false))
+	var buttons := UiKit.hbox(8)
+	col.add_child(buttons)
 	var again := Button.new()
 	again.text = "立刻重來"
 	again.pressed.connect(_restart)
-	col.add_child(UiKit.touchable(again))
+	buttons.add_child(UiKit.touchable(again))
+	if on_exit.is_valid():
+		var back := Button.new()
+		back.text = "回關卡選擇"
+		back.pressed.connect(on_exit)
+		buttons.add_child(UiKit.touchable(back))
+	# 面板本身不吃滑鼠（`UiKit.panel` 的 RG-39），但**這兩顆鈕要點得到**。
+	box.mouse_filter = Control.MOUSE_FILTER_PASS
 	add_child(box)
 	_over_panel = box
+
+
+## 三顆星各自的達成與否，逐條講清楚——**沒拿到的那顆要說出差在哪**，
+## 不然「兩顆星」只是一個沒有下一步的評分。
+func _star_lines(stars: int, score: float) -> Array[String]:
+	var threshold := float(level["star_throughput"])
+	var out: Array[String] = [
+		"%s 通關" % ("★" if stars >= 1 else "☆"),
+		"%s 核心無損（%.0f/%.0f）" % [
+			"★" if stars >= 2 else "☆", s.core_hp(), NodeDefs.hp("core")
+		],
+		"%s 產能積分 %.2f ／ 門檻 %.2f" % ["★" if stars >= 3 else "☆", score, threshold],
+	]
+	return out
 
 
 func _restart() -> void:
@@ -1297,7 +1387,7 @@ func _restart() -> void:
 	_mode = Mode.BUILD
 	_build_type = "extractor"
 	s = SessionState.new()
-	s.setup(MapsData.SHOAL)
+	_setup_session()
 	_accum = 0.0
 	_message = ""
 	_build_ui()
@@ -1358,8 +1448,13 @@ func _next_step() -> String:
 		return "那座塔還沒接進電網，交戰時一發都打不出：左欄點「連線」，把它接到發電機那一側。"
 	# 合金是第三資源，但它排在「防線先站得住」之後才提——B0.7 的教訓是
 	# 提示列一次只能給一件事做，塞第二條路線只會讓玩家兩件都不做。
-	if s.count_of("smelter") == 0 and s.alloy <= 0.0:
-		return "防線站住了。想加粗幹線到 2 級以上、或蓋「碎浪」，都要合金：左欄點「熔爐」，它吃 8 礦砂/秒 ＋ 10 能量/秒，產 2 合金/秒。"
+	#
+	# ★ **這一關沒解鎖熔爐就不准提它**（B1.2）：叫人去點一顆畫面上不存在的鈕，
+	#   比不給提示更糟——玩家會以為是自己看漏了，然後花掉整個準備期在找。
+	if _buildable().has("smelter") and s.count_of("smelter") == 0 and s.alloy <= 0.0:
+		return "防線站住了。想加粗幹線到 2 級以上%s，都要合金：左欄點「熔爐」，它吃 8 礦砂/秒 ＋ 10 能量/秒，產 2 合金/秒。" % (
+			"、或蓋「碎浪」" if _buildable().has("breaker") else ""
+		)
 	if s.count_of("smelter") > 0 and float(s.rates["alloy_in"]) <= 0.0:
 		return "熔爐產的合金也要「送達核心」才入帳：用「連線」把熔爐一路接到核心，同時它的礦砂與電也都要接得到。"
 	if s.phase == "prep":
@@ -1415,6 +1510,17 @@ func _unpowered_tower() -> bool:
 # 指令表在 `data/Maps.gd`，與 `TL_SIM` 的 headless 跑局共用同一份——
 # 截圖與數字看的必須是同一個局面。
 func _demo_layout() -> void:
+	# ★ 戰役關卡用它自己的參考解（`data/Campaign.gd`），與 `campaign_test`
+	#   跑的是同一份腳本——**截圖與那支測試印出來的數字保證是同一個局面**。
+	#   `TL_DEMO_TICKS` 給得夠大就會跑到局末，星等面板才拍得到。
+	if not level.is_empty():
+		var step := func(st: RefCounted) -> void: BattleController.step(st)
+		for f: Dictionary in BuildController.apply_timeline(s, level["demo"], step):
+			push_warning("參考解第 %d 步失敗：%s" % [f["index"], f["reason"]])
+		for _i in Hooks.demo_ticks:
+			BattleController.step(s)
+		return
+
 	var sandbox: bool = Hooks.panel == "sandbox"
 	# 沙盤的佈局全部是純礦砂造價（沒有加粗），所以那邊不發合金——
 	# **合金要從畫面上那座熔爐煉出來，那正是那張圖要證明的事。**

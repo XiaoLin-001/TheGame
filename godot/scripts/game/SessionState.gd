@@ -95,9 +95,12 @@ enum { NORMAL, STARVED, OVERFLOW }
 var _next_id: int = 1
 
 
-func setup(map_def: Dictionary) -> void:
+## `unlocked` ＝ 這一關可蓋的節點類型（`10_GDD.md` §7.9）。
+## **空陣列＝不限制**——測試圖「淺灘」與沙盤「靜水」走的是這條。
+func setup(map_def: Dictionary, unlocked: Array = []) -> void:
 	map = map_def
 	sets = Maps.to_sets(map_def)
+	sets["unlocked"] = unlocked
 	path = Maps.path_of(map_def)
 	ore = float(map_def.get("start_ore", 0))
 	priorities = NodeDefs.DEFAULT_PRIORITY.duplicate()

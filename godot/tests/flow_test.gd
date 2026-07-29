@@ -27,7 +27,38 @@ func _initialize() -> void:
 	_no_global_pool(t)
 	_harvester_never_deadlocks(t)
 	_three_resource_networks(t)
+	_two_lines_feed_one_consumer(t)
 	quit(t.report())
+
+
+## ★ 「兩條線一起餵一個大消費者」（B1.2、`10_GDD.md` §7.9 第 2 關的正解）。
+##
+## 稜鏡交戰吃 20 能量/秒而導管基礎 cap 是 10——**一條線本來就餵不飽它**，
+## 正解是繞成菱形讓兩條線同時進。這件事以前是壞的：一條實體導管的兩個方向
+## 各自有一份完整的 cap，於是中繼會把一半的量沿著來路推回去（它「看到」經由
+## 另一條分支還有需求），三次迭代彈完只送到 25%。
+##
+## 修法是 `FlowNetwork._residual()`：**管子是一根，容量就是一份。**
+## 這裡直接鎖住那個數字——25% 那個版本會讓這一條變紅。
+func _two_lines_feed_one_consumer(t: T) -> void:
+	var nodes := [
+		{"id": 1, "type": "generator", "supply": 2.0},
+		{"id": 2, "type": "relay"},
+		{"id": 3, "type": "relay"},
+		{"id": 4, "type": "prism", "demand": 2.0},
+	]
+	var edges: Array = []
+	for pair: Array in [[1, 2], [1, 3], [2, 4], [3, 4]]:
+		edges.append({"from": pair[0], "to": pair[1], "cap": 1.0})
+		edges.append({"from": pair[1], "to": pair[0], "cap": 1.0})
+	var res := FN.solve(nodes, edges, {"generator": 4, "prism": 3, "relay": 1})
+	t.near(
+		float((res["satisfaction"] as Dictionary)[4]), 1.0,
+		"★ 兩條 cap 10 的線並聯 → 20 能量/秒的稜鏡餵得飽"
+	)
+	# 反向邊上不該有任何流量：來回彈是上面那個缺陷的指紋。
+	var back := float(res["flow"][1]) + float(res["flow"][3])
+	t.near(back, 0.0, "★ 沒有任何量沿著來路推回去（同一根管子共用一份 cap）")
 
 
 # ── ★ 第三資源：合金網（B1.1、GDD §3.1／§7.3）─────────────────────────
