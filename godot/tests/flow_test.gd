@@ -10,6 +10,10 @@ extends SceneTree
 
 const T := preload("res://tests/_assert.gd")
 const FN := preload("res://scripts/sim/FlowNetwork.gd")
+const Maps := preload("res://data/Maps.gd")
+const SessionState := preload("res://scripts/game/SessionState.gd")
+const BuildController := preload("res://scripts/game/BuildController.gd")
+const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
@@ -22,7 +26,83 @@ func _initialize() -> void:
 	_silo_rate_limited_by_cap(t)
 	_no_global_pool(t)
 	_harvester_never_deadlocks(t)
+	_three_resource_networks(t)
 	quit(t.report())
+
+
+# ── ★ 第三資源：合金網（B1.1、GDD §3.1／§7.3）─────────────────────────
+#
+# 這一段是**端到端**的（`SessionState` ＋ `BattleController`），不是解算器層：
+# 「三種資源網互不干擾」這句話的實作不在 `FlowNetwork`（它一次只解一種），
+# 而在解算順序與滿足率的串接。要驗的是那個串接。
+#
+# 用一張**沒有敵人路徑的極簡測試圖**：`Maps.path_of()` 只認得 "shoal"，
+# 其他 id 一律回空路徑 → 沒有敵人、沒有跨越點限制，剩下的就只有物流本身。
+
+func _three_resource_networks(t: T) -> void:
+	var s := _fed_smelter()
+	for _i in 20:
+		BattleController.step(s)
+
+	# ① 熔爐吃飽 → 產得出合金，而且**要送達核心才入帳**（§7.3 與礦砂同規則）。
+	t.near(_sat(s, Vector2i(2, 6)), 1.0, "★ 熔爐礦砂與電都餵飽 → 滿足率 1.0")
+	t.near(float(s.rates["alloy_in"]), 2.0, "★ 合金 2/秒送達核心（熔爐標稱值）")
+	t.ok(float(s.alloy) > 0.0, "★ 合金真的進了帳上（核心＝合金銀行）")
+	t.near(float(s.alloy), float(s.alloy_total), "起始合金 0：帳上 ＝ 累計送達")
+
+	# ② 三種資源各自獨立解算：合金網跑起來不會動到礦砂網的結論。
+	#    發電機 4 ＋ 熔爐 8 ＝ 12 ＝ 兩台採集器的全部產量 → 核心的礦砂入帳恰好 0
+	#    （§7.3「核心只收剩下的」）。合金入帳同時 > 0——兩張網互不干擾。
+	t.near(float(s.rates["ore_in"]), 0.0, "★ 礦砂全被發電機與熔爐吃掉 → 礦砂入帳 0")
+	t.ok(float(s.rates["alloy_in"]) > 0.0, "★ 而合金照樣入帳：兩種資源各解各的")
+
+	# ③ 缺電 → 合金按比例降速，**不停機**（§3.1）。
+	#    拆掉供電那條線之後，熔爐的能量滿足率掉到 0，於是產出乘 0。
+	var dark := _fed_smelter()
+	for _i in 20:
+		BattleController.step(dark)
+	var before := float(dark.rates["alloy_in"])
+	# 拆的是**發電機本身**，不是那條電線——導管不分資源（§7.2），拆掉
+	# (6,2)→(2,6) 之後電照樣繞道 (6,2)→(2,2)→(2,6) 走礦砂線過去。
+	# 這件事本身就是這張網的設計：一條管子什麼都送。
+	BuildController.demolish(dark, Vector2i(6, 2))
+	for _i in 20:
+		BattleController.step(dark)
+	t.ok(before > 1.9, "前置：斷線前合金確實在流")
+	t.near(float(dark.rates["alloy_in"]), 0.0, "★ 沒電 → 合金產出歸零（取兩個滿足率的較低者）")
+	t.eq(
+		_state(dark, Vector2i(2, 6)), SessionState.STARVED,
+		"★ 斷電的熔爐掛「缺料」——它宣告過需求，這是玩家該去看的那一格"
+	)
+
+	# ④ 產得出來但送不掉 → `滿溢`，而且帳上一毛都不會多。
+	var orphan := _fed_smelter()
+	BuildController.demolish(orphan, Vector2i(4, 6))  # 出海口 (2,6)→(6,6) 的中段
+	for _i in 20:
+		BattleController.step(orphan)
+	t.near(float(orphan.alloy), 0.0, "★ 熔爐沒接到核心 → 合金一塊都不入帳")
+	t.eq(
+		_state(orphan, Vector2i(2, 6)), SessionState.OVERFLOW,
+		"★ 而它掛「滿溢」：位置資訊就是「這條線斷在哪」"
+	)
+
+
+## 沙盤「靜水」上的三路熔爐（`data/Maps.gd` 的 `SANDBOX_DEMO`）。
+## **測試與截圖共用同一份佈局**——`TL_PANEL=sandbox` 拍的就是這個局面，
+## 所以圖上看到的珠子和這裡斷言的數字保證是同一件事。
+func _fed_smelter() -> RefCounted:
+	var s: RefCounted = SessionState.new()
+	s.setup(Maps.SANDBOX)
+	BuildController.apply_ops(s, Maps.SANDBOX_DEMO)
+	return s
+
+
+func _sat(s: RefCounted, cell: Vector2i) -> float:
+	return float((s.rates["satisfaction"] as Dictionary).get(int(s.node_at(cell)["id"]), 1.0))
+
+
+func _state(s: RefCounted, cell: Vector2i) -> int:
+	return int((s.rates["node_state"] as Dictionary).get(int(s.node_at(cell)["id"]), -1))
 
 
 # ── 測項 ──────────────────────────────────────────────────────────────

@@ -24,6 +24,7 @@ const CROSSES_PATH := "crosses_path"  # 導管過路徑只能走跨越點
 const DUPLICATE := "duplicate"
 const MAX_LEVEL := "max_level"
 const NO_ORE := "no_ore"
+const NO_ALLOY := "no_alloy"
 
 
 ## 導管吞吐上限。局內升級每級 +6，上限 3 級 → 28（§7.2）。
@@ -34,6 +35,16 @@ static func conduit_cap(level: int) -> float:
 ## 升到「下一級」的造價：20 × 級數（1→20、2→40、3→60）。
 static func upgrade_cost(level: int) -> int:
 	return 20 * (level + 1)
+
+
+## 升到「下一級」的**合金**造價（§7.2）：1 級 0、2 級 20、3 級 50。
+##
+## ★ 1 級刻意不要合金：加粗到 2 級才是「送滿一台發電機」的門檻，但 1 級是
+## B0.3 用來教玩家讀瓶頸的那一步——把它鎖在熔爐後面等於把教學鎖掉。
+const UPGRADE_ALLOY := [0, 20, 50]
+
+static func upgrade_alloy(level: int) -> int:
+	return 0 if level < 0 or level >= UPGRADE_ALLOY.size() else int(UPGRADE_ALLOY[level])
 
 
 ## 導管走向合法嗎？只有水平、垂直、正 45°（§7.2）。

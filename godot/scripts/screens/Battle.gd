@@ -32,7 +32,7 @@ const BEAD_MIN_RATE := 0.05
 ## 能量收支面板的**固定列序**。列數與順序恆定，沒有值的列留在原位變暗，
 ## 面板才不會每個 tick 抖一次（B0.7.4）。`short0..2` 是餵不飽的節點清單。
 const ENERGY_ROWS := [
-	"gen", "silo_out", "reclaim", "sep1", "tower", "silo_in", "sep2", "net",
+	"gen", "silo_out", "reclaim", "sep1", "tower", "smelt", "silo_in", "sep2", "net",
 	"short0", "short1", "short2", "tip", "tip2",
 ]
 ## 「餵不飽」最多列幾座，其餘收成一行「…還有 N 座」。
@@ -84,12 +84,15 @@ func _ready() -> void:
 	# 這是「看起來對」與「真的對」差最遠的一種缺陷。
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	s = SessionState.new()
-	s.setup(MapsData.SHOAL)
+	# `TL_PANEL=sandbox`：沙盤「靜水」（`data/Maps.gd`）。**合金那一列流動珠
+	# 只有這張圖上有**——淺灘的示範佈局沒有熔爐，所以第三種資源的視覺編碼
+	# 在任何既有截圖裡都不會出現，而沒被看過的編碼不算通過 R-3。
+	s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL)
 	_build_ui()
 	# 截圖驗證要看得到「流動中的網路」，空地圖證明不了任何事——
 	# **除了首次體驗**（`50_QA_PLAN.md` §4.4），那正好要看玩家真正的第一眼，
 	# 所以 `TL_DEMO_TICKS=0` 的語意是「不要示範佈局」。
-	if Hooks.panel == "battle" and Hooks.demo_ticks > 0:
+	if Hooks.panel in ["battle", "sandbox"] and Hooks.demo_ticks > 0:
 		_demo_layout()
 	if Hooks.click_test:
 		_click_selftest.call_deferred()
@@ -152,16 +155,43 @@ func _click_selftest() -> void:
 	_hover = from + Vector2i(4, 3)     # 橫 4 直 3：正好不是 45°
 	_refresh_hint()
 
-	# 兩個新浮層也走同一條真實路徑：按鈕 → 面板出現且有內容。
-	_energy_button.button_pressed = true
-	_on_codex_show("prism", _build_buttons["prism"])
-	await get_tree().process_frame
-	var energy_ok: bool = _energy_panel.visible and (_energy_rows["net"] as Label).text != ""
-	var codex_ok: bool = _codex_panel.visible and _codex_label.text.contains("稜鏡")
+	# ★ B1.1：建造欄從 8 顆長到 10 顆（＋熔爐＋碎浪），高度逼近底欄。
+	#   **最後一顆鈕還點不點得到**是這件事唯一該問的問題——鈕被擠出畫面時
+	#   `_draw()` 完全不會抱怨，就跟 B0.7.2 那個 size (0,0) 的 bug 一樣。
+	#   碎浪要合金（帳上 0）→ 會被擋下，但**擋下的理由必須是「合金不夠」**，
+	#   不能是「這顆鈕根本沒被按到」。
+	var last_button: Button = _build_buttons[NodeDefs.BUILDABLE[NodeDefs.BUILDABLE.size() - 1]]
+	var reachable: bool = last_button.global_position.y + 44.0 <= 668.0
+	_press(last_button)
+	_click(Vector2i(12, 12))
+	for _i in 3:
+		await get_tree().process_frame
+	var alloy_gated: bool = _build_type == "breaker" and _message.contains("合金")
 
-	var ok: bool = placed and rejected and diag_placed and wired and energy_ok and codex_ok
-	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s energy=%s codex=%s → %s" % [
-		placed, rejected, diag_placed, wired, energy_ok, codex_ok, "PASS" if ok else "FAIL"
+	# 三個浮層也走同一條真實路徑：按鈕 → 面板出現且有內容。
+	_energy_button.button_pressed = true
+	_on_codex_show("smelter", _build_buttons["smelter"])
+	_prio_panel.visible = true
+	await get_tree().process_frame
+	var energy_ok: bool = (
+		_energy_panel.visible and (_energy_rows["net"] as Label).text != ""
+		and _energy_rows.has("smelt")
+	)
+	var codex_ok: bool = _codex_panel.visible and _codex_label.text.contains("熔爐")
+	# 優先權面板 9 列雙欄：整張表要留在畫面內，且不得蓋掉能量面板。
+	var prio_ok: bool = (
+		_prio_panel.size.y > 0.0
+		and _prio_panel.position.y + _prio_panel.size.y <= 668.0
+		and _prio_panel.position.x + _prio_panel.size.x <= _energy_panel.position.x
+	)
+
+	var ok: bool = (
+		placed and rejected and diag_placed and wired
+		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
+	)
+	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s → %s" % [
+		placed, rejected, diag_placed, wired, reachable, alloy_gated,
+		energy_ok, codex_ok, prio_ok, "PASS" if ok else "FAIL"
 	])
 	# 同時給 `TL_SHOT` 時不退出，把畫面交給截圖鉤子——**有些狀態只有互動才到得了**
 	# （浮層要按鈕才會開、簡介要 hover 才會浮），沒有這條就永遠拍不到它們。
@@ -408,17 +438,22 @@ func _draw_conduits() -> void:
 		for i in range(int(c["level"])):
 			var at := pa.lerp(pb, 0.12 + 0.05 * float(i))
 			draw_line(at - perp * 5.0, at + perp * 5.0, Palette.ORDER_BRIGHT, 2.0)
-		# ★ 流動珠：礦砂一列、能量一列，各自往自己的淨流向跑（§1.4a）。
-		var net: Vector2 = (s.rates["conduit_net"] as Dictionary).get(c["id"], Vector2.ZERO)
+		# ★ 流動珠：礦砂／能量／合金各一列，各自往自己的淨流向跑（§1.4a）。
+		var net: Vector3 = (s.rates["conduit_net"] as Dictionary).get(c["id"], Vector3.ZERO)
 		# 只有一種資源在跑時**走線的正中央**：多數導管都是這種，
-		# 硬要分兩排會讓珠子懸在細線外面，看起來像掉出來的東西。
-		var both := absf(net.x) >= BEAD_MIN_RATE and absf(net.y) >= BEAD_MIN_RATE
-		var off := (w * 0.45 + 1.0) if both else 0.0
+		# 硬要分排會讓珠子懸在細線外面，看起來像掉出來的東西。
+		# 三種同時跑的線（熔爐那條）中間讓給合金，礦砂與能量各退一邊。
+		var lanes := 0
+		for v: float in [net.x, net.y, net.z]:
+			if absf(v) >= BEAD_MIN_RATE:
+				lanes += 1
+		var off := (w * 0.45 + 1.0) if lanes > 1 else 0.0
 		# 礦砂珠用 `text.primary`（近白）而不是 `order.bright`：導管本身就是亮青，
 		# 亮青珠子在亮青線上只讀得出「這裡有個洞」，讀不出「有東西在跑」。
-		# 能量珠的琥珀本來就與線色分屬兩個色相，維持配色紀律 2。
+		# 能量珠的琥珀、合金珠的鋼銀本來就與線色分屬不同色相，維持配色紀律 2。
 		_draw_beads(pa, pb, net.x, Palette.TEXT_PRIMARY, -off, w)
 		_draw_beads(pa, pb, net.y, Palette.ENERGY_AMBER, off, w)
+		_draw_beads(pa, pb, net.z, Palette.ALLOY_VIOLET, 0.0, w)  # 合金恆走中線
 
 
 ## ★ 流動珠（`20_ART_DIRECTION.md` §1.4a）。線寬與顏色說的是「這條線有多滿」，
@@ -486,6 +521,14 @@ func _draw_nodes() -> void:
 			"generator":
 				# 琥珀專屬於能量（§1.1 配色紀律 2）。
 				draw_rect(Rect2(p - Vector2(11, 11), Vector2(22, 22)), Palette.ENERGY_AMBER)
+			"smelter":
+				# 六邊形＝加工。合金銀是它的產物色，內圈琥珀講「它一直在吃電」
+				# ——熔爐是全圖唯一待機也耗能的建築，那件事要看得出來。
+				var hex := PackedVector2Array()
+				for k in 6:
+					hex.append(p + Vector2(12, 0).rotated(TAU * float(k) / 6.0))
+				draw_colored_polygon(hex, Palette.ALLOY_STEEL)
+				draw_circle(p, 5.0, Palette.ENERGY_AMBER)
 			"relay":
 				var d := PackedVector2Array([
 					p + Vector2(0, -8), p + Vector2(8, 0), p + Vector2(0, 8), p + Vector2(-8, 0)
@@ -512,6 +555,11 @@ func _draw_nodes() -> void:
 			"reclaimer":
 				draw_rect(Rect2(p - Vector2(10, 10), Vector2(20, 20)), Palette.ORDER_CYAN, false, 2.0)
 				draw_circle(p, 6.0, Palette.ORDER_BRIGHT)
+			"breaker":
+				# 合金銀＝要合金才蓋得起（與稜鏡同一族），但形狀是**厚實方塊 ＋
+				# 外框**：稜鏡是三角、碎浪是方——不靠顏色分辨（§1.6）。
+				draw_rect(Rect2(p - Vector2(9, 9), Vector2(18, 18)), Palette.ALLOY_STEEL)
+				draw_rect(Rect2(p - Vector2(13, 13), Vector2(26, 26)), Palette.ALLOY_STEEL, false, 1.5)
 		_draw_engaged(n, p)
 		_draw_badge(n, p)
 
@@ -674,9 +722,13 @@ func _build_ui() -> void:
 	for i in 7:
 		_top.add_child(UiKit.label("", 15, Palette.TEXT_PRIMARY, false))
 
-	var col := UiKit.vbox(4)
+	# 間距 2 而不是 4：B1.1 起建造欄有 10 種節點＋3 個模式鈕，44px 的觸控高度
+	# （手機移植前提，不能縮）乘 13 已經吃掉 572px，只剩間距可以讓。
+	var col := UiKit.vbox(2)
 	col.position = Vector2(8, 56)
-	col.custom_minimum_size = Vector2(104, 0)
+	# 112 ＝ 剛好貼到地圖原點 x=120（`ORIGIN`）而不蓋住它。
+	# 最長的一顆是「碎浪 140+60合」。
+	col.custom_minimum_size = Vector2(112, 0)
 	add_child(col)
 
 	# ★ 全部 11 個鈕共用一個 `ButtonGroup`：任一時刻**恰好一個**是按下狀態，
@@ -688,7 +740,10 @@ func _build_ui() -> void:
 		# TL_NAKED 連造價都遮：它的語意是「隱藏所有數值標籤」，不是「隱藏狀態數值」。
 		var b := _tool_button(group, (
 			NodeDefs.label(type) if Hooks.naked
-			else "%s %d" % [NodeDefs.label(type), NodeDefs.cost(type)]
+			else "%s %d%s" % [
+				NodeDefs.label(type), NodeDefs.cost(type),
+				"+%d合" % NodeDefs.alloy_cost(type) if NodeDefs.alloy_cost(type) > 0 else ""
+			]
 		))
 		b.pressed.connect(_on_build_type.bind(type))
 		# ★ 角色簡介：滑鼠停在鈕上就浮出來，移開就消失（可用底欄「圖鑑」關掉）。
@@ -698,7 +753,7 @@ func _build_ui() -> void:
 		col.add_child(UiKit.touchable(b))
 	(_build_buttons[_build_type] as Button).button_pressed = true
 
-	col.add_child(_spacer(12))
+	col.add_child(_spacer(4))
 	for pair: Array in [[Mode.CONNECT, "連線"], [Mode.UPGRADE, "加粗"], [Mode.DEMOLISH, "拆除"]]:
 		var b := _tool_button(group, String(pair[1]))
 		b.pressed.connect(_on_mode.bind(int(pair[0])))
@@ -765,15 +820,28 @@ func _build_ui() -> void:
 ##   ③ 預設收合。它是抽屜不是常駐欄（§6.2 全畫面地圖 ＋ 可收合浮層）。
 func _build_priority_panel() -> void:
 	var box := UiKit.panel()
-	box.position = Vector2(1000, 330)   # 讓開上方的能量收支面板，兩個可以同時開
+	# B1.1 起 9 列：單欄 × 44px 觸控高度（手機移植前提，不能縮）放不進一屏，
+	# 改**雙欄**——左生產、右防線（`NodeDefs.PRIORITY_SPLIT`），而那個分界
+	# 正好就是這個面板在問的問題。
+	#
+	# 位置搬到畫面左下：能量面板佔右上（872..1264 × 96..416）、提示列佔
+	# x ≥ 520 的底邊、底欄鈕佔 y ≥ 668——這一塊是唯一能讓兩張表同時開又
+	# 互不相疊的地方。舊的 (1000, 330) 其實早就和能量面板疊了 66px。
+	box.position = Vector2(128, 380)
 	box.visible = false
-	var col := UiKit.vbox(6)
-	box.add_child(col)
-	col.add_child(UiKit.label("能量／礦砂不足時，誰先餓死", 14, Palette.TEXT_SECONDARY, false))
-	for type: String in NodeDefs.PRIORITY_ROWS:
-		var row := UiKit.hbox(6)
+	var outer := UiKit.vbox(4)
+	box.add_child(outer)
+	outer.add_child(UiKit.label("能量／礦砂不足時，誰先餓死", 14, Palette.TEXT_SECONDARY, false))
+	var cols := UiKit.hbox(10)
+	outer.add_child(cols)
+	var lanes := [UiKit.vbox(4), UiKit.vbox(4)]
+	cols.add_child(lanes[0])
+	cols.add_child(lanes[1])
+	for i in NodeDefs.PRIORITY_ROWS.size():
+		var type := String(NodeDefs.PRIORITY_ROWS[i])
+		var row := UiKit.hbox(4)
 		var name_label := UiKit.label(NodeDefs.label(type), 15, Palette.TEXT_PRIMARY, false)
-		name_label.custom_minimum_size = Vector2(72, 0)
+		name_label.custom_minimum_size = Vector2(52, 0)
 		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		row.add_child(name_label)
 		var down := Button.new()
@@ -781,7 +849,7 @@ func _build_priority_panel() -> void:
 		down.pressed.connect(_on_priority.bind(type, -1))
 		row.add_child(UiKit.touchable(down))
 		var value := UiKit.label("", 17, Palette.ENERGY_AMBER)
-		value.custom_minimum_size = Vector2(30, 0)
+		value.custom_minimum_size = Vector2(24, 0)
 		value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		row.add_child(value)
 		_prio_labels[type] = value
@@ -789,7 +857,7 @@ func _build_priority_panel() -> void:
 		up.text = "▶"
 		up.pressed.connect(_on_priority.bind(type, 1))
 		row.add_child(UiKit.touchable(up))
-		col.add_child(row)
+		(lanes[0] if i < NodeDefs.PRIORITY_SPLIT else lanes[1]).add_child(row)
 	add_child(box)
 	_prio_panel = box
 	_refresh_priority()
@@ -865,7 +933,8 @@ func _build_energy_panel() -> void:
 	#   跟著縮放，於是每過一個 tick 版面就位移一次。
 	#   **一張一直在動的表，讀不了**。現在列數恆定、寬度恆定，
 	#   不存在的項目留在原位變暗——**位置固定本身就是可讀性**。
-	box.custom_minimum_size = Vector2(392, 300)
+	# 320 ＝ 標題 ＋ 14 列 ×（17 ＋ 3）＋ 邊距。B1.1 多了「熔爐」一列。
+	box.custom_minimum_size = Vector2(392, 320)
 	var col := UiKit.vbox(3)
 	box.add_child(col)
 	col.add_child(UiKit.label("能量收支（每秒）", 15, Palette.ENERGY_AMBER, false))
@@ -889,17 +958,22 @@ func _refresh_energy() -> void:
 	var gen := 0.0
 	var reclaim := 0.0
 	var tower := 0.0
+	# 熔爐的耗能**不能併進任何一列既有的**：它既不是交戰耗能（待機也吃），
+	# 也不是儲槽充能。B1.1 之前 `silo_in = demand − tower` 會把熔爐那 10/秒
+	# 記到儲槽頭上——面板從此開始說謊。
+	var smelt := 0.0
 	for n: Dictionary in s.nodes:
 		var def := NodeDefs.of(String(n["type"]))
 		gen += float(def.get("power_out", 0.0)) * float((r["satisfaction"] as Dictionary).get(n["id"], 1.0))
 		if def.has("reclaim"):
 			reclaim += float(n["buffer"])
+		smelt += float(def.get("power_in", 0.0))
 		if _engaged.get(int(n["id"]), false):
 			tower += float(def.get("engage_power", 0.0))
 	var supply := float(r["power_supply"])
 	var demand := float(r["power_demand"])
 	var silo_out := maxf(0.0, supply - gen)
-	var silo_in := maxf(0.0, demand - tower)
+	var silo_in := maxf(0.0, demand - tower - smelt)
 	var net := supply - demand
 
 	_set_row("gen", "＋ 發電機 ×%d　%+.0f" % [s.count_of("generator"), gen],
@@ -909,6 +983,8 @@ func _refresh_energy() -> void:
 		reclaim > 0.05, Palette.ENERGY_AMBER)
 	_set_row("sep1", "─────────────────", false)
 	_set_row("tower", "− 塔（交戰 %d 座）　%.0f" % [int(r["engaged"]), tower], tower > 0.05)
+	_set_row("smelt", "− 熔爐 ×%d　%.0f（待機也吃）" % [s.count_of("smelter"), smelt],
+		smelt > 0.05)
 	_set_row("silo_in", "− 儲槽充能　%.0f（受自己那條線限速）" % silo_in, silo_in > 0.05)
 	_set_row("sep2", "─────────────────", false)
 
@@ -985,16 +1061,20 @@ func _on_codex_hide() -> void:
 ## 一串沒有脈絡的數值幫不了正在決定「這一分鐘要蓋什麼」的人。
 func _codex_lines(type: String) -> Array[String]:
 	var def := NodeDefs.of(type)
-	var out: Array[String] = ["%s　%d 礦砂" % [NodeDefs.label(type), NodeDefs.cost(type)]]
+	var out: Array[String] = [BuildController.price_text(type)]
 	out.append({
 		"extractor": "礦砂的源頭。只能蓋在礦點上，而且要接到核心才入帳。",
 		"generator": "把礦砂燒成能量。它是你唯一的發電來源，也是礦砂的第一大支出。",
+		"smelter": "合金的唯一來源。它同時吃礦砂與電，而且「待機也吃」——蓋下去那一刻起，你的塔就少了 10 能量/秒。合金也要接到核心才入帳。",
+		"breaker": "濺射：打中最前那一隻，順便打到它周圍 2.5 格內的每一隻。單打比錨還弱，只有敵人擠成一團時才划算。",
 		"relay": "轉彎與分岔用。導管只能走直線與 45°，所有拐角都靠它。",
 		"silo": "準備期存電、波次期放電。充放電速率受「它自己那條導管的 cap」限制——擺太遠或線太細，電趕不到前線。",
 		"anchor": "最便宜的塔，物理傷害。護甲是減法，打甲殼很吃虧。",
 		"prism": "最貴的塔，能量傷害穿透一直線。與路徑同一列時可一次貫穿整段——擺位就是它的謎題。",
 		"knell": "不開火。減速 40% ＋ 破甲 25%，多座不疊加取最強。它讓別的塔變強。",
-		"reclaimer": "射程內**任何**敵人死亡就回收能量（不限自己擊殺）。蹲在擊殺點上，不是蹲在它自己射得爽的地方。",
+		# `Label` 不解析 Markdown——`**任何**` 會原樣印出兩排星號（B0.7.1／B0.7.3
+		# 各犯過一次，這裡是第三處，B1.1 一併掃掉）。強調一律用「」。
+		"reclaimer": "射程內「任何」敵人死亡就回收能量（不限自己擊殺）。蹲在擊殺點上，不是蹲在它自己射得爽的地方。",
 	}.get(type, ""))
 	if def.has("ore_out"):
 		out.append("產出　＋%.0f 礦砂/秒" % float(def["ore_out"]))
@@ -1002,14 +1082,19 @@ func _codex_lines(type: String) -> Array[String]:
 		out.append("燃料　−%.0f 礦砂/秒" % float(def["ore_in"]))
 	if def.has("power_out"):
 		out.append("產出　＋%.0f 能量/秒" % float(def["power_out"]))
+	if def.has("alloy_out"):
+		out.append("產出　＋%.0f 合金/秒" % float(def["alloy_out"]))
+	if def.has("power_in"):
+		out.append("耗能　−%.0f 能量/秒（一直吃）" % float(def["power_in"]))
 	if def.has("capacity"):
 		out.append("容量　%.0f 能量" % float(def["capacity"]))
 	if def.has("engage_power"):
 		out.append("耗能　交戰時 −%.0f 能量/秒（待機 0）" % float(def["engage_power"]))
 	if def.has("range"):
-		out.append("射程　%.0f 格　射速 %.1f 發/秒　傷害 %.0f（%s）" % [
+		out.append("射程　%.0f 格　射速 %.1f 發/秒　傷害 %.0f（%s）%s" % [
 			float(def["range"]), float(def.get("rof", 0.0)), float(def.get("dmg", 0.0)),
-			"能量" if String(def.get("dmg_type", "physical")) == "energy" else "物理"
+			"能量" if String(def.get("dmg_type", "physical")) == "energy" else "物理",
+			"　濺射 %.1f 格" % float(def["splash"]) if def.has("splash") else ""
 		])
 	out.append("生命　%.0f　※ 退開敵人路徑 2 格就打不到" % NodeDefs.hp(type))
 	return out
@@ -1079,13 +1164,16 @@ func _refresh_top() -> void:
 	)
 	var texts := [
 		["礦砂 %s　▲%.1f/秒" % [UiKit.commas(int(s.ore)), r["ore_in"]], Palette.ORDER_CYAN],
+		# 合金緊貼礦砂：**兩個都是造價貨幣**，玩家看的是同一個問題（我買得起嗎）。
+		# 它擠掉的是「節點 N　導管 M」——那是開發用的計數，沒有任何決定依賴它，
+		# 而頂欄的寬度是有限的（B1.1）。
+		["合金 %s　▲%.1f/秒" % [UiKit.commas(int(s.alloy)), r["alloy_in"]], Palette.ALLOY_VIOLET],
 		["能量 %.0f/%.0f" % [r["power_supply"], r["power_demand"]], Palette.ENERGY_AMBER],
 		["儲槽 %.0f/%.0f" % [r["silo_charge"], r["silo_capacity"]], Palette.ENERGY_AMBER],
 		# 「能量需求為什麼突然翻倍」這個問題的答案永遠是交戰座數（§7.4 峰值約束）。
 		["交戰 %d 座　擊殺 %d" % [int(r["engaged"]), s.kills], Palette.ENERGY_AMBER],
 		[_phase_text(), Palette.TIDE_MAGENTA if s.phase == "wave" else Palette.TEXT_SECONDARY],
 		["核心 %.0f/%.0f" % [maxf(0.0, s.core_hp()), core_full], core_col],
-		["節點 %d　導管 %d" % [s.nodes.size(), s.conduits.size()], Palette.TEXT_SECONDARY],
 	]
 	for i in texts.size():
 		var l := _top.get_child(i) as Label
@@ -1235,7 +1323,7 @@ func _refresh_hint() -> void:
 			else:
 				parts.append("連線：左鍵點「起點節點」，再點「終點節點」。只能走水平／垂直／45°，轉彎要先放中繼；過敵人路徑只能走橋。")
 		Mode.UPGRADE:
-			parts.append("加粗：左鍵點一段導管的「中間」（不是兩端的節點）。每級 +6 吞吐，造價 20×級數，上限 3 級（→28）。")
+			parts.append("加粗：左鍵點一段導管的「中間」（不是兩端的節點）。每級 +6 吞吐，上限 3 級（→28）。1 級 20 礦砂；2 級 40 礦砂＋20 合金；3 級 60 礦砂＋50 合金。")
 		Mode.DEMOLISH:
 			parts.append("拆除：左鍵點節點或導管，返還 75%%。")
 	if _message != "":
@@ -1266,6 +1354,12 @@ func _next_step() -> String:
 		return "電有了。左欄點「錨」（最便宜的塔）蓋在「離紫色路徑 2 格以上」的地方——貼太近會被走過的敵人打壞。"
 	if _unpowered_tower():
 		return "那座塔還沒接進電網，交戰時一發都打不出：左欄點「連線」，把它接到發電機那一側。"
+	# 合金是第三資源，但它排在「防線先站得住」之後才提——B0.7 的教訓是
+	# 提示列一次只能給一件事做，塞第二條路線只會讓玩家兩件都不做。
+	if s.count_of("smelter") == 0 and s.alloy <= 0.0:
+		return "防線站住了。想加粗幹線到 2 級以上、或蓋「碎浪」，都要合金：左欄點「熔爐」，它吃 8 礦砂/秒 ＋ 10 能量/秒，產 2 合金/秒。"
+	if s.count_of("smelter") > 0 and float(s.rates["alloy_in"]) <= 0.0:
+		return "熔爐產的合金也要「送達核心」才入帳：用「連線」把熔爐一路接到核心，同時它的礦砂與電也都要接得到。"
 	if s.phase == "prep":
 		return "都齊了。等倒數跑完自動開波，或按「提前召喚」提早開——倒數剩越多，這一波掉落倍率越高。"
 	return "波次進行中：盯著頂端能量條，橙色那截就是餵不飽的部分；節點上的橙色倒三角＝這個缺料。"
@@ -1319,7 +1413,13 @@ func _unpowered_tower() -> bool:
 # 指令表在 `data/Maps.gd`，與 `TL_SIM` 的 headless 跑局共用同一份——
 # 截圖與數字看的必須是同一個局面。
 func _demo_layout() -> void:
-	var failures := BuildController.apply_ops(s, MapsData.SHOAL_DEMO)
+	var sandbox: bool = Hooks.panel == "sandbox"
+	# 沙盤的佈局全部是純礦砂造價（沒有加粗），所以那邊不發合金——
+	# **合金要從畫面上那座熔爐煉出來，那正是那張圖要證明的事。**
+	s.alloy = 0.0 if sandbox else MapsData.DEMO_ALLOY
+	var failures := BuildController.apply_ops(
+		s, MapsData.SANDBOX_DEMO if sandbox else MapsData.SHOAL_DEMO
+	)
 	for f: Dictionary in failures:
 		push_warning("示範佈局第 %d 步失敗：%s" % [f["index"], f["reason"]])
 	# 快轉到敵潮進入塔的射程。等真實時間跑 86 秒等於讓使用者的桌面開著一個

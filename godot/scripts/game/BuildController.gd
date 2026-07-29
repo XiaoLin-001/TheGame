@@ -22,6 +22,7 @@ const REASONS := {
 	Build.DUPLICATE: "這兩個節點之間已經有一條導管了",
 	Build.MAX_LEVEL: "這條導管已經是最高級（cap 28）",
 	Build.NO_ORE: "礦砂不夠",
+	Build.NO_ALLOY: "合金不夠——合金要蓋熔爐、而且熔爐要接到核心才入帳",
 }
 
 
@@ -35,9 +36,13 @@ static func place(s: RefCounted, type: String, cell: Vector2i) -> String:
 	if code != Build.OK:
 		return code
 	var cost := NodeDefs.cost(type)
+	var alloy := NodeDefs.alloy_cost(type)
 	if s.ore < float(cost):
 		return Build.NO_ORE
+	if s.alloy < float(alloy):
+		return Build.NO_ALLOY
 	s.ore -= float(cost)
+	s.alloy -= float(alloy)
 	s.add_node(type, cell)
 	return Build.OK
 
@@ -58,7 +63,8 @@ static func lay_conduit(s: RefCounted, a: Vector2i, b: Vector2i) -> String:
 
 
 ## 幹線加粗（局內升級，§7.2）。**這是一個和「多蓋一座採集器」競爭的取捨**，
-## 所以它花的是同一份礦砂，沒有另外的貨幣。
+## 1 級花的是同一份礦砂；2/3 級**還要合金**（B1.1）——於是後半段的加粗和
+## 蓋碎浪搶同一份合金，核心取捨在第三種資源上再演一次。
 static func upgrade(s: RefCounted, index: int) -> String:
 	if index < 0 or index >= s.conduits.size():
 		return Build.OCCUPIED
@@ -67,9 +73,13 @@ static func upgrade(s: RefCounted, index: int) -> String:
 	if level >= Build.CAP_MAX_LEVEL:
 		return Build.MAX_LEVEL
 	var cost := Build.upgrade_cost(level)
+	var alloy := Build.upgrade_alloy(level)
 	if s.ore < float(cost):
 		return Build.NO_ORE
+	if s.alloy < float(alloy):
+		return Build.NO_ALLOY
 	s.ore -= float(cost)
+	s.alloy -= float(alloy)
 	c["level"] = level + 1
 	return Build.OK
 
@@ -80,16 +90,21 @@ static func demolish(s: RefCounted, cell: Vector2i) -> String:
 	if not n.is_empty():
 		if n["type"] == "core":
 			return Build.OCCUPIED  # 核心拆不得
-		s.ore += floorf(float(NodeDefs.cost(String(n["type"]))) * REFUND)
+		var type := String(n["type"])
+		s.ore += floorf(float(NodeDefs.cost(type)) * REFUND)
+		s.alloy += floorf(float(NodeDefs.alloy_cost(type)) * REFUND)
 		s.remove_node_at(cell)
 		return Build.OK
 	var ci: int = s.conduit_at(cell)
 	if ci >= 0:
 		var c: Dictionary = s.conduits[ci]
 		var spent := Build.conduit_cost(c["a"], c["b"])
+		var spent_alloy := 0
 		for lv in range(int(c["level"])):
 			spent += Build.upgrade_cost(lv)
+			spent_alloy += Build.upgrade_alloy(lv)
 		s.ore += floorf(float(spent) * REFUND)
+		s.alloy += floorf(float(spent_alloy) * REFUND)
 		s.remove_conduit(ci)
 		return Build.OK
 	return Build.OCCUPIED
@@ -137,8 +152,9 @@ static func _index_of(s: RefCounted, a: Vector2i, b: Vector2i) -> int:
 static func preview_place(s: RefCounted, type: String, cell: Vector2i) -> Dictionary:
 	var code: String = Build.can_place(s.sets, s.occupied(), type, cell)
 	var cost := NodeDefs.cost(type)
+	var alloy := NodeDefs.alloy_cost(type)
 	var def := NodeDefs.of(type)
-	var lines: Array[String] = ["%s　%d 礦砂" % [NodeDefs.label(type), cost]]
+	var lines: Array[String] = [price_text(type)]
 
 	if def.has("ore_out"):
 		lines.append("＋%.0f 礦砂/秒（要接到核心才入帳）" % float(def["ore_out"]))
@@ -146,6 +162,12 @@ static func preview_place(s: RefCounted, type: String, cell: Vector2i) -> Dictio
 		lines.append("−%.0f 礦砂/秒（燃料）" % float(def["ore_in"]))
 	if def.has("power_out"):
 		lines.append("＋%.0f 能量/秒" % float(def["power_out"]))
+	if def.has("alloy_out"):
+		lines.append("＋%.0f 合金/秒（要接到核心才入帳）" % float(def["alloy_out"]))
+	# 熔爐的 `power_in` 是**待機也吃**的，不是交戰耗能——說法要和塔區分開，
+	# 不然玩家會以為它跟塔一樣沒事不耗電。
+	if def.has("power_in"):
+		lines.append("−%.0f 能量/秒（一直吃，不分準備期或波次期）" % float(def["power_in"]))
 	if def.has("capacity"):
 		lines.append("緩衝 %.0f 能量" % float(def["capacity"]))
 	# ★ 塔：**交戰耗能才是要買的東西**，待機 0 要一起講——
@@ -170,13 +192,25 @@ static func preview_place(s: RefCounted, type: String, cell: Vector2i) -> Dictio
 		lines.append("✕ " + reason_text(code))
 	elif s.ore < float(cost):
 		lines.append("✕ " + reason_text(Build.NO_ORE))
+	elif s.alloy < float(alloy):
+		lines.append("✕ " + reason_text(Build.NO_ALLOY))
 
 	return {
 		"cost": cost,
-		"ok": code == Build.OK and s.ore >= float(cost),
+		"alloy": alloy,
+		"ok": code == Build.OK and s.ore >= float(cost) and s.alloy >= float(alloy),
 		"reason": code,
 		"lines": lines,
 	}
+
+
+## 一種節點的價牌。**只有真的要合金的才會出現第二個數字**——
+## 給每一顆鈕都掛上「＋0 合金」只會讓那三個真的要合金的東西沉下去。
+static func price_text(type: String) -> String:
+	var alloy := NodeDefs.alloy_cost(type)
+	if alloy <= 0:
+		return "%s　%d 礦砂" % [NodeDefs.label(type), NodeDefs.cost(type)]
+	return "%s　%d 礦砂 ＋ %d 合金" % [NodeDefs.label(type), NodeDefs.cost(type), alloy]
 
 
 ## 這個類型會替全網增加多少能量需求。

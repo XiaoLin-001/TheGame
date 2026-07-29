@@ -157,10 +157,18 @@ func _economy(t: T) -> void:
 	t.eq(BuildController.lay_conduit(s, Vector2i(7, 10), Vector2i(11, 10)), Build.OK, "拉導管")
 	t.near(s.ore, start - 40.0 - 15.0 - 12.0, "扣款：中繼 15 ＋ 導管 4 格 ×3")
 
-	t.eq(BuildController.upgrade(s, 0), Build.OK, "加粗 1 級")
+	# ★ 1 級純礦砂（B0.3 的教學動作不可被合金鎖掉），2/3 級要合金（§7.2）。
+	t.eq(BuildController.upgrade(s, 0), Build.OK, "加粗 1 級：不用合金")
 	t.eq(int(s.conduits[0]["level"]), 1, "加粗後 level = 1")
-	t.eq(BuildController.upgrade(s, 0), Build.OK, "加粗 2 級")
+	t.eq(BuildController.upgrade(s, 0), Build.NO_ALLOY, "★ 加粗 2 級沒合金 → 擋下")
+	t.eq(int(s.conduits[0]["level"]), 1, "被擋下就不會偷偷升級")
+	s.alloy = 70.0
+	var ore_before: float = s.ore
+	t.eq(BuildController.upgrade(s, 0), Build.OK, "有合金了 → 加粗 2 級")
+	t.near(s.alloy, 50.0, "扣款：2 級 20 合金")
+	t.near(s.ore, ore_before - 40.0, "扣款：2 級 40 礦砂")
 	t.eq(BuildController.upgrade(s, 0), Build.OK, "加粗 3 級")
+	t.near(s.alloy, 0.0, "扣款：3 級 50 合金（70 − 20 − 50）")
 	t.eq(BuildController.upgrade(s, 0), Build.MAX_LEVEL, "第 4 次加粗被擋（上限 3 級）")
 
 	var before: float = s.ore
@@ -220,6 +228,10 @@ func _generator_saturates_base_trunk(t: T) -> void:
 	BuildController.upgrade(s, 1)
 	BattleController.step(s)
 	t.near(float(s.rates["conduit_flow"][trunk]), 16.0, "★ 升 1 級 → 16")
+	# ★ 「第一台發電機的一半電出不來」這一課，**在合金之前只能解到 16**——
+	# 要真的送滿 20 得先蓋熔爐（§7.2）。這一步發合金是為了驗 cap 22 的流量，
+	# 合金經濟本身在 `_economy` 與 `flow_test` 裡驗。
+	s.alloy = 20.0
 	BuildController.upgrade(s, 1)
 	BattleController.step(s)
 	t.near(float(s.rates["conduit_flow"][trunk]), 20.0, "★ 升 2 級（cap 22）→ 送滿 20，瓶頸解除")

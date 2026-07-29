@@ -97,6 +97,7 @@ func _full_session_hash(t: T) -> void:
 func _session(ops: Array) -> RefCounted:
 	var s: RefCounted = SessionState.new()
 	s.setup(Maps.SHOAL)
+	s.alloy = Maps.DEMO_ALLOY   # 示範佈局的加粗要合金（`Maps.DEMO_ALLOY`）
 	BuildController.apply_ops(s, ops)
 	return s
 

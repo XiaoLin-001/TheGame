@@ -36,7 +36,49 @@ func _initialize() -> void:
 	_reclaim_rate_is_capped_by_its_own_conduit(t)
 	_knell_aura(t)
 	_priority_decides_who_starves(t)
+	_breaker_splash(t)
 	quit(t.report())
+
+
+# ── ★ 碎浪的濺射（B1.1、§7.4）────────────────────────────────────────
+
+## 它要解的是**密集隊列**，而它換來的代價是單體 dps 比錨還低。
+## 兩件事都要成立，只驗其中一件就會養出一隻「錨但更強」的塔。
+func _breaker_splash(t: T) -> void:
+	# 單體：碎浪 22 × 0.6 發/秒 ＝ 13.2/秒 < 錨 18 × 1.2 ＝ 21.6/秒。
+	t.ok(
+		NodeDefs.of("breaker")["dmg"] * NodeDefs.of("breaker")["rof"]
+		< NodeDefs.of("anchor")["dmg"] * NodeDefs.of("anchor")["rof"],
+		"★ 單體 dps 比錨低——濺射是對『敵人排隊方式』的賭注，不是免費傷害"
+	)
+	t.eq(
+		String(NodeDefs.of("breaker")["dmg_type"]), "physical",
+		"★ 物理：甲殼護甲 8 是減法 → 碎浪打不動裝甲隊，剋制表沒被壓平"
+	)
+	t.ok(NodeDefs.alloy_cost("breaker") > 0, "★ 碎浪要合金：它是第一個合金去處")
+
+	# 三隻擠在一起 → 一發打到三隻。**這是它存在的全部理由。**
+	var s := _session()
+	_power_plant(s)
+	BuildController.place(s, "breaker", Vector2i(16, 6))
+	BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(16, 6))
+	_spawn_at(s, "drifter", 16.0)
+	s.add_enemy("drifter")
+	s.enemies[s.enemies.size() - 1]["progress"] = 15.0
+	s.add_enemy("drifter")
+	s.enemies[s.enemies.size() - 1]["progress"] = 17.0
+	# 30 隻遠在射程外的對照組不需要——射程本來就有 `_targeting_and_pierce` 在守。
+	var hp0: Array[float] = []
+	for e: Dictionary in s.enemies:
+		hp0.append(float(e["hp"]))
+	# 射速 0.6/秒 → 平均 1.67 秒一發；推 30 tick（3 秒）保證至少開了一發。
+	for _i in 30:
+		BattleController.step(s)
+	var hurt := 0
+	for i in s.enemies.size():
+		if float((s.enemies[i] as Dictionary)["hp"]) < hp0[i]:
+			hurt += 1
+	t.eq(hurt, 3, "★ 一發同時打到三隻（濺射以『主目標所在的格』為圓心）")
 
 
 # ── ★ 匯率（CLAUDE.md 鎖定設計）────────────────────────────────────
@@ -386,16 +428,30 @@ func _priority_decides_who_starves(t: T) -> void:
 		"★ 而錨相對餓了——電就那麼多，這是取捨不是設定"
 	)
 
-	# 面板本身的約束（§3.1）。
-	t.ok(
-		NodeDefs.PRIORITY_ROWS.size() >= 5 and NodeDefs.PRIORITY_ROWS.size() <= 8,
-		"優先權面板 5–8 列——操作負擔不隨建築數量成長"
+	# 面板本身的約束（§3.1）。**真正被鎖住的是「依類型、不依單一節點」**——
+	# 那才是「操作負擔不隨建築數量成長」（R-1）的來源。列數上限跟著角色名冊走：
+	# B1.1 加了熔爐與碎浪 → 9 列。12 是這個單欄／雙欄版面撐得住的天花板，
+	# 撞到就得改成角色分組（M2 有 16 隻角色，見風險 R-15）。
+	t.ok(NodeDefs.PRIORITY_ROWS.size() <= 12, "優先權面板 ≤ 12 列（撞到就要改分組，R-15）")
+	t.eq(
+		NodeDefs.PRIORITY_ROWS.size(), 9,
+		"★ 列數＝有需求的節點『類型』數，不隨蓋了幾座成長"
 	)
 	t.ok(NodeDefs.PRIORITY_ROWS.has("silo"), "★ 儲槽佔一格：它是核心策略建築，不是配件")
+	t.ok(NodeDefs.PRIORITY_ROWS.has("smelter"), "★ 熔爐佔一格：它就是「餵塔還是餵產線」那一格")
 	for type: String in NodeDefs.PRIORITY_ROWS:
 		t.ok(NodeDefs.of(type).size() > 0, "優先權列「%s」對得上資料表" % type)
+	# 雙欄的分界＝生產側／防線側。分界左邊不得出現塔，右邊不得出現生產節點，
+	# 否則那條線就只是排版而不是那句話（`Battle.gd` 的面板照這個切）。
+	for i in NodeDefs.PRIORITY_ROWS.size():
+		var is_tower: bool = NodeDefs.of(String(NodeDefs.PRIORITY_ROWS[i])).get("tower", false)
+		t.eq(
+			is_tower, i >= NodeDefs.PRIORITY_SPLIT,
+			"優先權第 %d 列落在正確的欄（左生產／右防線）" % i
+		)
 	t.eq(NodeDefs.DEFAULT_PRIORITY["silo"], 2, "預設：儲槽充能搶不贏塔（波次期先餵防線）")
 	t.eq(NodeDefs.DEFAULT_PRIORITY["anchor"], 3, "預設：塔 3 > 儲槽 2")
+	t.eq(NodeDefs.DEFAULT_PRIORITY["smelter"], 2, "★ 預設：熔爐搶不贏塔——輸掉核心是不可逆的")
 
 
 # ── 共用 ──────────────────────────────────────────────────────────
@@ -403,6 +459,10 @@ func _priority_decides_who_starves(t: T) -> void:
 func _session() -> RefCounted:
 	var s: RefCounted = SessionState.new()
 	s.setup(Maps.SHOAL)
+	# B1.1 起導管升到 2/3 級要合金。本檔測的是**電網與戰鬥**，加粗只是為了把
+	# 瓶頸挪開——所以直接發合金，不讓「合金經濟」變成每個電網測試的前置條件。
+	# 合金經濟本身由 `build_test` 與 `flow_test` 負責。
+	s.alloy = 999.0
 	return s
 
 

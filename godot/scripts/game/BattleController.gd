@@ -45,6 +45,8 @@ static func step(s: RefCounted) -> void:
 	var edges := _edges(s)
 	var ore_res := _solve_ore(s, edges)
 	var power_res := _solve_power(s, edges, ore_res, engaged)
+	# 合金最後：熔爐的產出要乘上它**礦砂與能量兩個滿足率中較低的那一個**（§3.1）。
+	var alloy_res := _solve_alloy(s, edges, ore_res, power_res)
 	var sat: Dictionary = power_res["satisfaction"]
 
 	# 光環算一次就好，推進與開火共用：兩者相隔一個 tick 的移動量，
@@ -53,7 +55,7 @@ static func step(s: RefCounted) -> void:
 	_advance_and_damage(s, aura)
 	_fire(s, engaged, sat, aura)
 	_end_of_wave(s)
-	_write_rates(s, edges, ore_res, power_res, engaged)
+	_write_rates(s, edges, ore_res, power_res, alloy_res, engaged)
 
 
 # ── 敵潮：時間流 ＋ walk-by 破壞 ──────────────────────────────────────
@@ -187,7 +189,15 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 		else:
 			var t := Combat.front_most(Combat.in_range_indices(n["cell"], cells, r), s.enemies)
 			if t >= 0:
-				targets = [t]
+				# ★ 濺射（碎浪，§7.4）：主目標仍是「最前」那一隻，濺射以**它所在的
+				#   格**為圓心往外找。不寫新幾何——「這個圓內有誰」就是射程判定本身。
+				# 寫成 if/else 而不是三元式：`[t]` 在三元式裡是 untyped `Array`，
+				# 指派給 `Array[int]` 會在**執行期**丟型別錯誤（塔從此一發不發）。
+				var splash := float(def.get("splash", 0.0))
+				if splash > 0.0:
+					targets = Combat.in_range_indices(cells[t], cells, splash)
+				else:
+					targets = [t]
 		for i: int in targets:
 			var edef := Enemies.of(String((s.enemies[i] as Dictionary)["type"]))
 			damage[i] += Combat.hit_damage(
@@ -265,6 +275,40 @@ static func _solve_ore(s: RefCounted, edges: Array) -> Dictionary:
 
 	# ★ 核心只收剩下的（`10_GDD.md` §7.3）：燃料永遠優先於入帳。
 	# 這讓「礦砂 ▲0/秒」變成一句完整的診斷——你採到的剛好被發電機吃光。
+	for sn: Dictionary in nodes:
+		if sn["id"] == s.core_id:
+			sn["demand"] = maxf(0.0, supply_total - demand_total)
+
+	return FlowNetwork.solve(nodes, edges, s.priorities)
+
+
+# ── 合金網（B1.1）─────────────────────────────────────────────────────
+
+## 熔爐 → 核心。**沒有其他消費者**：合金是造價貨幣不是流量（§7.3）。
+##
+## 所以核心的 `demand` 就是全網供給。這與礦砂的「只收剩下的」是同一個式子，
+## 只是減數為 0——特意用同一段程式碼寫，日後真的出現吃合金的節點時，
+## 那個 `demand_total` 會自己開始起作用，不必回頭改語意。
+static func _solve_alloy(
+	s: RefCounted, edges: Array, ore_res: Dictionary, power_res: Dictionary
+) -> Dictionary:
+	var ore_sat: Dictionary = ore_res.get("satisfaction", {})
+	var power_sat: Dictionary = power_res.get("satisfaction", {})
+	var nodes: Array = []
+	var supply_total := 0.0
+	var demand_total := 0.0
+	for n: Dictionary in s.nodes:
+		var def := NodeDefs.of(String(n["type"]))
+		# ★ 取**較低**的那個滿足率：缺礦砂或缺電都會讓熔爐降速，而它不會
+		#   因為兩樣都缺就降兩次——那會讓 50% 電 ＋ 50% 礦變成 25% 產出，
+		#   比玩家從畫面上讀到的兩條線任何一條都糟，因果就斷了。
+		var k := minf(float(ore_sat.get(n["id"], 1.0)), float(power_sat.get(n["id"], 1.0)))
+		var supply := float(def.get("alloy_out", 0.0)) * TICK * k
+		var demand := float(def.get("alloy_in", 0.0)) * TICK
+		supply_total += supply
+		demand_total += demand
+		nodes.append(_sim_node(n, supply, demand))
+
 	for sn: Dictionary in nodes:
 		if sn["id"] == s.core_id:
 			sn["demand"] = maxf(0.0, supply_total - demand_total)
@@ -384,25 +428,29 @@ static func _edges(s: RefCounted) -> Array:
 ## 把解算結果換算成**單位/秒**寫進 `rates`，供渲染與頂欄讀取。
 ## 渲染層不做單位換算——它只讀這裡。
 static func _write_rates(
-	s: RefCounted, edges: Array, ore_res: Dictionary, power_res: Dictionary, engaged: Dictionary
+	s: RefCounted, edges: Array, ore_res: Dictionary, power_res: Dictionary,
+	alloy_res: Dictionary, engaged: Dictionary
 ) -> void:
 	var per_sec := 1.0 / TICK
 	var flows: Dictionary = {}
-	# 每條導管的**淨流率**（`Vector2(礦砂, 能量)`，沿 a→b 為正）。線寬只要大小，
-	# 流動珠還要方向與資源別——一條同時走礦與電的幹線上，兩者常常反向。
+	# 每條導管的**淨流率**（`Vector3(礦砂, 能量, 合金)`，沿 a→b 為正）。線寬只要
+	# 大小，流動珠還要方向與資源別——一條幹線上三者常常互相反向。
 	var nets: Dictionary = {}
 	for i in edges.size():
 		var e: Dictionary = edges[i]
 		var cid: int = int(e.get("conduit", -1))
 		var ore_f := float((ore_res["flow"] as Array)[i])
 		var pow_f := float((power_res["flow"] as Array)[i])
-		var net: Vector2 = nets.get(cid, Vector2.ZERO)
-		nets[cid] = net + Vector2(ore_f, pow_f) * float(e.get("dir", 1.0)) * per_sec
-		# **取最大值，不是相加**：礦砂與能量各跑一次解算、各自吃滿同一個 cap
+		var alloy_f := float((alloy_res["flow"] as Array)[i])
+		var net: Vector3 = nets.get(cid, Vector3.ZERO)
+		nets[cid] = net + Vector3(ore_f, pow_f, alloy_f) * float(e.get("dir", 1.0)) * per_sec
+		# **取最大值，不是相加**：三種資源各跑一次解算、各自吃滿同一個 cap
 		# （每種資源獨立計容量）。相加會讓一條同時走礦與電的幹線報出超過 cap
 		# 的流量，於是渲染層把一條還有餘裕的線畫成滿載——瓶頸圖直接說謊（R-3）。
-		# 兩者共用同一個 cap 數值，所以「最大流率 ÷ cap」正好等於最大飽和度。
-		flows[cid] = maxf(float(flows.get(cid, 0.0)), maxf(ore_f, pow_f) * per_sec)
+		# 三者共用同一個 cap 數值，所以「最大流率 ÷ cap」正好等於最大飽和度。
+		flows[cid] = maxf(
+			float(flows.get(cid, 0.0)), maxf(alloy_f, maxf(ore_f, pow_f)) * per_sec
+		)
 
 	var charge := 0.0
 	var capacity := 0.0
@@ -418,6 +466,7 @@ static func _write_rates(
 		)
 
 	s.rates["ore_in"] = float((ore_res["received"] as Dictionary).get(s.core_id, 0.0)) * per_sec
+	s.rates["alloy_in"] = float((alloy_res["received"] as Dictionary).get(s.core_id, 0.0)) * per_sec
 	s.rates["power_supply"] = float(power_res["supply_total"]) * per_sec
 	# 儲槽的充能需求算進「需求」——網路本 tick 確實想要那些電，
 	# 存量／容量則由 `silo_charge` / `silo_capacity` 另列一格（GDD §3.1）。
@@ -429,16 +478,19 @@ static func _write_rates(
 	s.rates["conduit_flow"] = flows
 	s.rates["conduit_net"] = nets
 	s.rates["satisfaction"] = sat
-	s.rates["node_state"] = _node_states(s, sat, ore_res, power_res)
+	s.rates["node_state"] = _node_states(s, sat, ore_res, power_res, alloy_res)
 
 	# 交戰中的塔座數＝**本 tick 真的在吃電的那些**。頂欄要它，因為
 	# 「能量需求為什麼突然翻倍」這個問題的答案永遠是這個數字。
 	s.rates["engaged"] = engaged.values().count(true)
 
-	# 入帳：**只有送達核心的礦砂算數**（§7.3）。
+	# 入帳：**只有送達核心的算數**（§7.3）。合金走完全同一條規則。
 	var delivered := float((ore_res["received"] as Dictionary).get(s.core_id, 0.0))
 	s.ore += delivered
 	s.delivered_total += delivered
+	var smelted := float((alloy_res["received"] as Dictionary).get(s.core_id, 0.0))
+	s.alloy += smelted
+	s.alloy_total += smelted
 
 
 ## 節點三態（`10_GDD.md` §3.1）。**兩種資源合看**：一座塔缺電、一台採集器
@@ -447,10 +499,12 @@ static func _write_rates(
 ## `缺料` 排在 `滿溢` 前面：兩者同時成立時（中繼被兩邊夾住），
 ## 玩家該先處理的是「有東西沒送到」，那是產能真的在流失的那一半。
 static func _node_states(
-	s: RefCounted, sat: Dictionary, ore_res: Dictionary, power_res: Dictionary
+	s: RefCounted, sat: Dictionary, ore_res: Dictionary, power_res: Dictionary,
+	alloy_res: Dictionary
 ) -> Dictionary:
 	var ore_stuck: Dictionary = ore_res.get("stuck", {})
 	var power_stuck: Dictionary = power_res.get("stuck", {})
+	var alloy_stuck: Dictionary = alloy_res.get("stuck", {})
 	var out: Dictionary = {}
 	for n: Dictionary in s.nodes:
 		var nid := int(n["id"])
@@ -464,12 +518,14 @@ static func _node_states(
 		# 對稱的另一半：只有**自己產得出東西**的節點才會 `滿溢`。中繼手上塞著
 		# 推不掉的餘量是「全網有盈餘」的路由後果，不是一件玩家能在那一格處理的事
 		# ——電網滿載又儲槽充飽時它會恆亮，例外標記照樣退化成背景雜訊。
-		var produces: bool = def.has("ore_out") or def.has("power_out")
+		var produces: bool = (
+			def.has("ore_out") or def.has("power_out") or def.has("alloy_out")
+		)
 		if declares_demand and float(sat.get(nid, 1.0)) < STARVED_BELOW:
 			out[nid] = SessionState.STARVED
-		elif produces and maxf(
+		elif produces and maxf(float(alloy_stuck.get(nid, 0.0)), maxf(
 			float(ore_stuck.get(nid, 0.0)), float(power_stuck.get(nid, 0.0))
-		) > OVERFLOW_ABOVE:
+		)) > OVERFLOW_ABOVE:
 			out[nid] = SessionState.OVERFLOW
 		else:
 			out[nid] = SessionState.NORMAL

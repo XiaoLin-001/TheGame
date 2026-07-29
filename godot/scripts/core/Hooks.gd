@@ -62,6 +62,7 @@ func _run_sim() -> void:
 
 	var s: RefCounted = SessionState.new()
 	s.setup(MapsData.SHOAL)
+	s.alloy = MapsData.DEMO_ALLOY   # 示範佈局的加粗要合金（`Maps.DEMO_ALLOY`）
 	var failures := BuildController.apply_ops(s, MapsData.SHOAL_DEMO)
 	for _i in sim_ticks:
 		BattleController.step(s)
@@ -110,6 +111,8 @@ func _run_sim() -> void:
 			"core_hp": snappedf(s.core_hp(), 0.01),
 			"ore": snappedf(s.ore, 0.01),
 			"ore_in_per_sec": snappedf(float(s.rates["ore_in"]), 0.01),
+			"alloy": snappedf(s.alloy, 0.01),
+			"alloy_in_per_sec": snappedf(float(s.rates["alloy_in"]), 0.01),
 			"power_supply": snappedf(float(s.rates["power_supply"]), 0.01),
 			"power_demand": snappedf(float(s.rates["power_demand"]), 0.01),
 			"silo": "%.1f/%.0f" % [s.rates["silo_charge"], s.rates["silo_capacity"]],

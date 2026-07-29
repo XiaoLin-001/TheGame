@@ -19,6 +19,9 @@ var sets: Dictionary = {}
 
 ## 帳上礦砂。**只有送達核心的礦砂才進得來**（`10_GDD.md` §7.3）。
 var ore: float = 0.0
+## 帳上合金。**同一條規則**：熔爐產的合金要經導管送達核心才入帳（§7.3）。
+## 起始一律 0——沒有地圖參數，第一塊合金必然來自玩家自己蓋的熔爐。
+var alloy: float = 0.0
 
 ## `{id, type, cell, hp, charge, cd, buffer}`。核心也是一個節點（type = "core"）。
 ## `cd` 是塔的射速累加器、`buffer` 是回收者尚未推進電網的回收能量——
@@ -42,6 +45,9 @@ var reclaimed_total: float = 0.0
 ## 送達核心的礦砂累計。局末的**產能積分**分子（`10_GDD.md` §7.6）——
 ## 與頂欄 `▲/秒` 同一個口徑：採得出來但運不回去的不算產能。
 var delivered_total: float = 0.0
+## 送達核心的合金累計。**不併進 `delivered_total`**：產能積分的口徑是礦砂
+## （§7.6 已定），把合金摻進去等於偷偷改掉一個已經算過分數的公式。
+var alloy_total: float = 0.0
 ## 本 tick 的開火線 `[{from, to}]`——純渲染用，每 tick 重寫。
 var shots: Array = []
 
@@ -71,12 +77,13 @@ var path: Array = []
 ## `conduit_flow` 依 conduit 索引；其餘依 node id。
 var rates: Dictionary = {
 	"ore_in": 0.0,       # 本 tick 實際入帳速率
+	"alloy_in": 0.0,     # 本 tick 實際入帳的合金速率
 	"power_supply": 0.0,
 	"power_demand": 0.0,
 	"silo_charge": 0.0,
 	"silo_capacity": 0.0,
 	"conduit_flow": {},   # {conduit id: 該線的最大資源流率}（線寬與顏色用）
-	"conduit_net": {},    # {conduit id: Vector2(礦砂, 能量) 淨流率，沿 a→b 為正}（流動珠用）
+	"conduit_net": {},    # {conduit id: Vector3(礦砂, 能量, 合金) 淨流率，沿 a→b 為正}（流動珠用）
 	"satisfaction": {},   # {node id: 0..1}
 	"engaged": 0,         # 本 tick 交戰中的塔座數（＝正在吃電的那些）
 	"node_state": {},     # {node id: NORMAL/STARVED/OVERFLOW}（三態徽章，GDD §3.1）
@@ -214,8 +221,10 @@ func state_hash() -> String:
 	var parts := PackedStringArray([
 		"tick=%d" % tick_count,
 		"phase=%s/%s/%s" % [phase, wave_index, phase_time],
-		"ore=%s" % ore,
-		"tally=%s/%s/%s/%s" % [kills, salvage_total, reclaimed_total, delivered_total],
+		"ore=%s/%s" % [ore, alloy],
+		"tally=%s/%s/%s/%s/%s" % [
+			kills, salvage_total, reclaimed_total, delivered_total, alloy_total
+		],
 		"bonus=%s/%s" % [wave_bonus, bonus_data],
 	])
 	for type: String in priorities.keys().duplicate():

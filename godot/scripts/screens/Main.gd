@@ -7,12 +7,14 @@ extends Control
 const BattleScreen := preload("res://scripts/screens/Battle.gd")
 
 ## TL_PANEL 目前認得的畫面。其餘由後續批次補進來。
-const KNOWN_PANELS := ["title", "battle"]
+## `sandbox` ＝ 局內畫面但換成沙盤「靜水」（`data/Maps.gd`）：
+## 沒有敵人，只有三種資源在跑，用來驗合金那一列流動珠（B1.1）。
+const KNOWN_PANELS := ["title", "battle", "sandbox"]
 
 
 func _ready() -> void:
 	theme = UiKit.theme()
-	if Hooks.panel == "battle":
+	if Hooks.panel in ["battle", "sandbox"]:
 		_enter_battle()
 		return
 	_build()

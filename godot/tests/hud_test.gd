@@ -59,11 +59,13 @@ func _conduit_net_direction(t: T) -> void:
 	t.near(b.x, -a.x, "★ 反過來蓋同一條線 → 淨流率恰好反號（導管無方向）")
 
 
-func _net(s: RefCounted, a: Vector2i, b: Vector2i) -> Vector2:
+## B1.1 起是 `Vector3(礦砂, 能量, 合金)`——第三種資源也要有自己的流動珠列，
+## 不然熔爐那條線在畫面上是靜止的（R-3 可讀性）。
+func _net(s: RefCounted, a: Vector2i, b: Vector2i) -> Vector3:
 	for c: Dictionary in s.conduits:
 		if (c["a"] == a and c["b"] == b) or (c["a"] == b and c["b"] == a):
-			return (s.rates["conduit_net"] as Dictionary).get(int(c["id"]), Vector2.ZERO)
-	return Vector2.ZERO
+			return (s.rates["conduit_net"] as Dictionary).get(int(c["id"]), Vector3.ZERO)
+	return Vector3.ZERO
 
 
 # ── 提前召喚的下注數學（§7.6）──────────────────────────────────────────
@@ -243,6 +245,7 @@ func _session() -> RefCounted:
 ## 在測試裡手刻一條過橋礦線只會刻出第二份會過期的地圖知識。
 func _demo(ticks: int) -> RefCounted:
 	var s := _session()
+	s.alloy = Maps.DEMO_ALLOY   # 示範佈局的加粗要合金（`Maps.DEMO_ALLOY`）
 	BuildController.apply_ops(s, Maps.SHOAL_DEMO)
 	for _i in ticks:
 		BattleController.step(s)
