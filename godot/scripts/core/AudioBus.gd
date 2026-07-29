@@ -15,7 +15,3 @@ func _ready() -> void:
 	if muted:
 		print("[TL] audio muted")
 
-
-func set_muted(v: bool) -> void:
-	muted = v
-	AudioServer.set_bus_mute(AudioServer.get_bus_index("Master"), v)

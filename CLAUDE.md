@@ -155,7 +155,7 @@ TheGame/
     ├── scripts/ui/            UiKit
     ├── scripts/meta/          TechTree / RosterData / TycoonSim
     ├── data/                  角色、敵人、關卡、訂單資料表
-    ├── tests/                 flow / combat / save / determinism / balance_probe
+    ├── tests/                 flow / build / combat / tide / save / determinism / hud
     └── assets/audio/
 ```
 

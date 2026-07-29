@@ -56,7 +56,7 @@
 | `tests/hud_test.gd` | HUD 背後的量：節點三態（含「哪些節點永遠不掛徽章」）、提前召喚倍率與鎖定時機、掉落倍率、產能積分口徑、研究數據公式、通關的終止條件 | B0.6 ✅ 42 項 |
 | `tests/save_test.gd` | 存檔往返、缺欄位安全預設、各版本遷移分支鏈式套用、寫檔原子性、時鐘倒退不獎不罰 | B0.1（骨架）／B1.4（完整） |
 | `tests/determinism_test.gd` | ★ 同 `(seed, ops)` 兩次跑出相同狀態雜湊；**700+500 tick ＝ 1200 tick**（跨 tick 累加器不含幀率相依）；反向對照（少一條導管／差一個 tick 必得不同雜湊） | B0.1（骨架）／**B0.7 ✅ 15 項** |
-| `tests/balance_probe.gd` | 用 `TL_SIM` 跑標準關卡 N 波，輸出經濟曲線 JSON 供人工核對 | B1.3 |
+| **`TL_SIM`** | 平衡調校的主力：跑標準關卡 N 個 tick，輸出經濟曲線 JSON 供人工核對。（B0.1 的 `tests/balance_probe.gd` 空殼已於 B1.1 刪除） | 可用 |
 
 **GDScript 測試地雷**：`--script` 模式**不載入 autoload**。`tests/*.gd` 不得 `preload` 引用 autoload 的腳本 → 反向強制 `scripts/sim/` 必須是自足的純函式（正是 `30_TECH_DESIGN.md` §2.4 要的）。
 

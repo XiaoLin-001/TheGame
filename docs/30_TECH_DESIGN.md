@@ -72,7 +72,7 @@ TheGame/
     │   ├── sim/          ★     FlowNetwork.gd / Combat.gd / WaveGen.gd / MapGen.gd / Score.gd
     │   ├── game/               BattleController.gd / BuildController.gd / SessionState.gd
     │   ├── screens/            Title / MainMenu / Battle / Result / TechTree / Roster / Tycoon / Settings
-    │   ├── render/             Palette.gd / Shapes.gd / Motion.gd   （美術 token 實作）
+    │   ├── render/             Palette.gd / Shapes.gd   （美術 token 實作）
     │   ├── ui/                 UiKit.gd（共用 UI helpers，static）
     │   └── meta/               TechTree.gd / RosterData.gd / TycoonSim.gd
     ├── data/                   角色、敵人、關卡、訂單的資料表（.json 或 .tres）
@@ -272,7 +272,7 @@ TL_SHOT="C:/tmp/shot.png" TL_PANEL=battle TL_SEED=42 <godot> --path godot --rend
 | `tests/save_test.gd` | 存檔往返、缺欄位預設、各版本遷移分支 |
 | `tests/determinism_test.gd` | ★ 同 `(seed, ops)` 兩次跑出相同狀態雜湊 |
 | `tests/hud_test.gd` | 節點三態（`缺料`／`滿溢`／`正常`）、提前召喚倍率與它鎖給哪一波、局末結算三個數字、`won` 階段的終止條件 |
-| `tests/balance_probe.gd` | 用 `TL_SIM` 跑標準關卡 N 波，輸出經濟曲線供人工核對 |
+| **`TL_SIM` 本身** | 平衡調校就走它——跑標準關卡 N 個 tick，輸出經濟曲線 JSON 供人工核對。B0.1 建的 `tests/balance_probe.gd` 只是這件事的空殼（斷言 JSON 能往返），B1.1 刪掉；真的需要多場次批跑時再寫 |
 
 **GDScript 測試地雷**：`--script` 模式**不載入 autoload**。因此 `tests/*.gd` 不得 `preload` 任何引用 autoload 的腳本。這反過來要求 `scripts/sim/` 的核心邏輯必須是**自足的純函式**——正好與 §2.4 的確定性要求一致。
 

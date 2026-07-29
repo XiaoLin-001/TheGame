@@ -63,7 +63,7 @@ func _build() -> void:
 	col.add_child(UiKit.label("v%s" % GameState.VERSION, 13, Palette.TEXT_DISABLED))
 
 	# 只列名稱不列值 —— 值（例如 TL_SHOT 的絕對路徑）會撐爆版面，細節在 stdout。
-	var hooks := Env.active_names()
+	var hooks := Env.active()
 	if hooks != "":
 		col.add_child(UiKit.label(hooks, 11, Palette.WARN_ORANGE))
 

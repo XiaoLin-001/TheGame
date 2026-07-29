@@ -35,8 +35,3 @@ static func stream(s: int) -> RandomNumberGenerator:
 	r.seed = s
 	return r
 
-
-## UI／演出用的非確定性隨機（粒子抖動之類）。
-## **絕對不要**在 scripts/sim/ 裡呼叫它。
-func cosmetic() -> RandomNumberGenerator:
-	return _rng

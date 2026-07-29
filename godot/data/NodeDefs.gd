@@ -11,12 +11,6 @@ extends RefCounted
 ## 塔專屬欄位：`tower` / `engage_power` / `range` / `rof` / `dmg` / `dmg_type`
 ## ／`pierce` / `slow` / `armor_break` / `reclaim`。
 
-## 資源鍵。解算器一次只解一種（`sim/FlowNetwork.gd`）。
-## **順序就是解算順序**：礦砂 → 能量 → 合金（`10_GDD.md` §3.1）。
-const ORE := "ore"
-const POWER := "power"
-const ALLOY := "alloy"
-
 ## 可建造的節點。`core` 不在此列——它由地圖宣告，玩家蓋不出來。
 const BUILDABLE := [
 	"extractor", "generator", "smelter", "relay", "silo",
@@ -28,8 +22,7 @@ const DEFS := {
 		"name": "採集器",
 		"cost": 40,
 		"hp": 60.0,
-		"ore_out": 6.0,      # 礦砂/秒
-		"on_ore_only": true, # 只能蓋在礦點上
+		"ore_out": 6.0,      # 礦砂/秒（「只能蓋在礦點上」寫在 `sim/Build.can_place`）
 	},
 	"generator": {
 		"name": "發電機",

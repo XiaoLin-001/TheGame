@@ -66,21 +66,13 @@ static func want_mute() -> bool:
 	return flag("TL_MUTE") or has("TL_SHOT")
 
 
-## 啟用中的鉤子＋值。**只給 stdout 用**——值可能是很長的絕對路徑。
-static func active_summary() -> String:
+## 啟用中的鉤子。`with_values` 只給 stdout 用。
+##
+## **畫面上一律用不帶值的那個**：TL_SHOT 的值是絕對路徑，直接畫上去會橫跨
+## 整個畫面、在小解析度下裁切（P1）。螢幕要回答的是「哪些鉤子開著」。
+static func active(with_values: bool = false) -> String:
 	var on: PackedStringArray = []
 	for h: String in HOOKS:
 		if has(h):
-			on.append("%s=%s" % [h, str_of(h)])
-	return " ".join(on)
-
-
-## 啟用中的鉤子名稱（不含值）。**畫面上一律用這個。**
-## 理由：TL_SHOT 的值是絕對路徑，直接畫上去會橫跨整個畫面、在小解析度下裁切
-## （P1）。螢幕要回答的是「哪些鉤子開著」，細節去讀 stdout。
-static func active_names() -> String:
-	var on: PackedStringArray = []
-	for h: String in HOOKS:
-		if has(h):
-			on.append(h)
+			on.append("%s=%s" % [h, str_of(h)] if with_values else h)
 	return " ".join(on)

@@ -56,11 +56,8 @@ static func normalize(raw: Dictionary) -> Dictionary:
 ## 新增時的形狀：
 ##   while sv < SAVE_VERSION: match sv: 1: _migrate_sv1_to_sv2(d); sv += 1
 static func migrate(d: Dictionary) -> Dictionary:
-	var sv := int(d.get("sv", 0))
-	if sv == 0:
-		# 沒有 sv 的檔案：視為首版，交給 _fill_defaults 補完即可。
-		return d
-	# 尚無 sv2，故無迴圈。加入第一個遷移時把上面註解的形狀展開。
+	# 尚無 sv2，故無迴圈；沒有 sv 的舊檔也一樣，交給 _fill_defaults 補完。
+	# 加入第一個遷移時把上面註解的形狀展開。
 	return d
 
 

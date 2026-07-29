@@ -39,7 +39,7 @@ func _ready() -> void:
 			demo_ticks = 0
 
 	if Env.any_hook():
-		print("[TL] hooks: %s" % Env.active_summary())
+		print("[TL] hooks: %s" % Env.active(true))
 		print("[TL] persist=false（有鉤子時不寫真存檔）")
 
 	# TL_SIM 優先於 TL_SHOT：headless 模擬不需要畫面。

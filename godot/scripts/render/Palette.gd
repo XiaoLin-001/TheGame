@@ -51,9 +51,7 @@ const TEXT_DISABLED := Color("#4a5f6b")
 ## 導管顏色：正常（青）→ 滿載（亮青）→ 飢餓（暗青）。
 ## 這是「線的顏色＝飽和度」這條資訊視覺化規則的唯一實作（§1.4、R-3）。
 static func conduit(flow: float, cap: float, starving: bool) -> Color:
-	if starving:
-		return ORDER_DIM
-	if cap <= 0.0:
+	if starving or cap <= 0.0:
 		return ORDER_DIM
 	return ORDER_BRIGHT if flow >= cap - 0.001 else ORDER_CYAN
 
