@@ -50,6 +50,16 @@ var _over_panel: Control = null
 var _prio_panel: Control = null
 var _help_panel: Control = null
 var _help_button: Button = null
+## 說明面板是「自動開的」還是玩家自己開的。自動開的那一份在玩家放下第一個
+## 節點時自己收起來——他已經證明會操作了，再擋著就只是擋著。
+var _help_auto: bool = false
+var _energy_panel: Control = null
+var _energy_button: Button = null
+var _energy_rows: Dictionary = {}
+var _codex_button: Button = null
+var _codex_panel: Control = null
+var _codex_label: Label = null
+var _codex_on: bool = true
 var _prio_labels: Dictionary = {}
 ## 本幀交戰中的塔 `{id: Array}`。繪圖層自己算——它要畫的是「誰正在吃電」，
 ## 而模擬只留了一個座數（`rates.engaged`）。
@@ -105,11 +115,48 @@ func _click_selftest() -> void:
 		await get_tree().process_frame
 	var rejected: bool = s.nodes.size() == before + 1 and _message.begins_with("✕")
 
-	var ok: bool = placed and rejected
-	print("[TL_CLICKTEST] place=%s reject_on_path=%s message=%s → %s" % [
-		placed, rejected, _message, "PASS" if ok else "FAIL"
+	# ★ 45° 導管（使用者回報「沒辦法 45 度放置管道」）：在礦點的正斜角放一個
+	#   中繼，切「連線」，點兩端。整條路徑都走真實輸入——包含按鈕。
+	_press(_build_buttons["relay"])
+	var from := Vector2i(10, 10)
+	var to := Vector2i(13, 13)     # 正斜角，且遠離路徑（路徑走 y=4 與 x=30）
+	_click(from)
+	_click(to)
+	for _i in 3:
+		await get_tree().process_frame
+	var diag_placed: bool = s.nodes.size() == before + 3
+	_press(_mode_buttons[Mode.CONNECT])
+	_click(from)
+	_click(to)
+	for _i in 3:
+		await get_tree().process_frame
+	var wired: bool = s.conduits.size() == 1
+
+	# 留一個懸而未決的起點，讓八條方向導引與「連不成」的橙色預覽線入鏡。
+	_click(from)
+	_hover = from + Vector2i(4, 3)     # 橫 4 直 3：正好不是 45°
+	_refresh_hint()
+
+	# 兩個新浮層也走同一條真實路徑：按鈕 → 面板出現且有內容。
+	_energy_button.button_pressed = true
+	_on_codex_show("prism", _build_buttons["prism"])
+	await get_tree().process_frame
+	var energy_ok: bool = _energy_panel.visible and (_energy_rows["net"] as Label).text != ""
+	var codex_ok: bool = _codex_panel.visible and _codex_label.text.contains("稜鏡")
+
+	var ok: bool = placed and rejected and diag_placed and wired and energy_ok and codex_ok
+	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s energy=%s codex=%s → %s" % [
+		placed, rejected, diag_placed, wired, energy_ok, codex_ok, "PASS" if ok else "FAIL"
 	])
-	get_tree().quit(0 if ok else 1)
+	# 同時給 `TL_SHOT` 時不退出，把畫面交給截圖鉤子——**有些狀態只有互動才到得了**
+	# （浮層要按鈕才會開、簡介要 hover 才會浮），沒有這條就永遠拍不到它們。
+	if Hooks.shot_path == "":
+		get_tree().quit(0 if ok else 1)
+
+
+func _press(b: Button) -> void:
+	b.button_pressed = true
+	b.pressed.emit()
 
 
 ## GUI 的滑鼠路由要先有「游標在這裡」才認得出按下的是誰，所以**先送一個移動事件**。
@@ -147,11 +194,15 @@ func _process(delta: float) -> void:
 				BattleController.step(s)
 			_accum -= BattleController.TICK
 			guard += mult
+	if _help_auto and s.nodes.size() > 1:
+		_help_auto = false
+		_help_button.button_pressed = false  # → `toggled` → 面板收起
 	_refresh_top()
 	# 提示列每幀重算：它講的是**當前狀態**下的下一步，而狀態每 tick 都在變。
 	# B0.7 之前它只在滑鼠移動時更新，於是「礦砂開始入帳了」「波次開打了」這類
 	# 轉折要等玩家碰一下滑鼠才會反映——手不動的那幾秒，提示列是在說謊。
 	_refresh_hint()
+	_refresh_energy()
 	_refresh_over()
 	queue_redraw()
 
@@ -559,7 +610,36 @@ func _draw_hover() -> void:
 		draw_rect(Rect2(p, g), Palette.BORDER_STRONG, false, 2.0)
 	if _connect_from.x >= 0:
 		draw_rect(Rect2(_world(_connect_from), g), Palette.ORDER_BRIGHT, false, 2.0)
-		draw_line(_center(_connect_from), _center(_hover), Palette.alpha(Palette.ORDER_BRIGHT, 0.5), 2.0)
+		_draw_connect_guides()
+		# ★ 預覽線依**合法性**上色。B0.7.2 之前不管連不連得成都畫一條亮線，
+		#   那是在畫一條不可能存在的導管——玩家只能點下去才知道不行。
+		var code: String = Build.can_connect(s.sets, s.conduit_keys(), _connect_from, _hover)
+		var legal: bool = code == Build.OK and not s.node_at(_hover).is_empty()
+		draw_line(
+			_center(_connect_from), _center(_hover),
+			Palette.alpha(Palette.OK_GREEN if legal else Palette.WARN_ORANGE, 0.7), 2.0
+		)
+
+
+## ★ 連線的八條方向導引（`10_GDD.md` §3.2「導管只能走水平／垂直／45°」）。
+##
+## 使用者回報「沒有辦法 45 度放置管道」——規則其實是通的，**難的是用肉眼在
+## 網格上找出正斜角**（要 |dx| 恰好等於 |dy|）。一條規則如果只能靠試錯才知道
+## 自己有沒有踩中，那它在體感上就等於壞掉。把八條合法方向直接畫出來，
+## 「45°」從一句文字變成畫面上看得到的四條斜線。
+func _draw_connect_guides() -> void:
+	var from := _center(_connect_from)
+	var col := Palette.alpha(Palette.ORDER_DIM, 0.5)
+	var size: Vector2i = s.map["size"]
+	for d: Vector2i in [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+		Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)
+	]:
+		var end := _connect_from
+		while _in_map(end + d):
+			end += d
+		if end != _connect_from:
+			draw_line(from, _center(end), col, 1.0)
 
 
 func _world(c: Vector2i) -> Vector2:
@@ -596,6 +676,9 @@ func _build_ui() -> void:
 			else "%s %d" % [NodeDefs.label(type), NodeDefs.cost(type)]
 		))
 		b.pressed.connect(_on_build_type.bind(type))
+		# ★ 角色簡介：滑鼠停在鈕上就浮出來，移開就消失（可用底欄「圖鑑」關掉）。
+		b.mouse_entered.connect(_on_codex_show.bind(type, b))
+		b.mouse_exited.connect(_on_codex_hide)
 		_build_buttons[type] = b
 		col.add_child(UiKit.touchable(b))
 	(_build_buttons[_build_type] as Button).button_pressed = true
@@ -622,23 +705,38 @@ func _build_ui() -> void:
 	# 抽屜開關本來就是一個開關：做成 toggle，按下狀態才**真的**等於「抽屜開著」。
 	# 之前是普通按鈕，它拿到焦點時的外框看起來就像被選中，玩家會以為抽屜開了。
 	var prio := Button.new()
-	prio.text = "優先權"
+	prio.text = "優先權"  # 底欄六個鈕，字都壓到最短——提示列要留得下兩行字
+
 	prio.toggle_mode = true
 	prio.toggled.connect(_on_toggle_priority)
 	bar.add_child(UiKit.touchable(prio))
 	_help_button = Button.new()
-	_help_button.text = "操作說明"
+	_help_button.text = "說明"
 	_help_button.toggle_mode = true
 	_help_button.toggled.connect(_on_toggle_help)
 	bar.add_child(UiKit.touchable(_help_button))
 
+	_energy_button = Button.new()
+	_energy_button.text = "能量"
+	_energy_button.toggle_mode = true
+	_energy_button.toggled.connect(_on_toggle_energy)
+	bar.add_child(UiKit.touchable(_energy_button))
+	_codex_button = Button.new()
+	_codex_button.text = "圖鑑"
+	_codex_button.toggle_mode = true
+	_codex_button.button_pressed = true   # 預設開：它只在滑鼠停在建造鈕上時才出現
+	_codex_button.toggled.connect(func(on: bool) -> void: _codex_on = on)
+	bar.add_child(UiKit.touchable(_codex_button))
+
 	_build_priority_panel()
+	_build_energy_panel()
+	_build_codex_panel()
 	_build_help_panel()
 
 	# 兩行：上行「下一步」、下行當下動作的細節。x 從 350 起，避開底欄那三個鈕。
 	_hint = UiKit.label("", 13, Palette.TEXT_SECONDARY, false)
-	_hint.position = Vector2(350, 666)
-	_hint.size = Vector2(925, 50)
+	_hint.position = Vector2(520, 666)
+	_hint.size = Vector2(755, 50)
 	add_child(_hint)
 	_refresh_hint()
 
@@ -652,7 +750,7 @@ func _build_ui() -> void:
 ##   ③ 預設收合。它是抽屜不是常駐欄（§6.2 全畫面地圖 ＋ 可收合浮層）。
 func _build_priority_panel() -> void:
 	var box := PanelContainer.new()
-	box.position = Vector2(930, 96)
+	box.position = Vector2(1000, 330)   # 讓開上方的能量收支面板，兩個可以同時開
 	box.visible = false
 	var col := UiKit.vbox(6)
 	box.add_child(col)
@@ -720,16 +818,159 @@ func _build_help_panel() -> void:
 			line, 15 if head else 14,
 			Palette.ORDER_BRIGHT if head else Palette.TEXT_PRIMARY, false
 		))
+	# ★ **面板不吃滑鼠**：它是一張說明，底下就是玩家要點的地圖。
+	#   `PanelContainer` 預設 `STOP`，會把落在它範圍內的點擊整片吞掉——
+	#   而它預設開在玩家要放第一個節點的那一刻，等於教學把遊戲擋住了。
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(box)
 	_help_panel = box
 	# 空地圖＝這局還沒開始，正是需要它的時刻。TL_NAKED 下不開（它整片都是文字）。
 	var fresh: bool = s.nodes.size() <= 1 and not Hooks.naked
 	box.visible = fresh
+	_help_auto = fresh
 	_help_button.set_pressed_no_signal(fresh)
 
 
 func _on_toggle_help(open: bool) -> void:
 	_help_panel.visible = open
+
+
+## ★ 能量收支面板（使用者要求：「不太清楚怎樣的操作可以讓能量增加、哪些會減少」）。
+##
+## 頂欄的能量條說的是**結果**（供給 30／需求 37），它不說「這 37 是誰吃的」。
+## 這張表把每一項逐條攤開並**即時跟著跑**，所以它同時是答案與教材：
+## 玩家蓋一台發電機，`+` 那一欄當場多 20——因果在同一個畫面上發生。
+##
+## 只列**這一局真的存在**的項目：一張永遠有八行的表沒有資訊量，
+## 有幾行會動、什麼時候動，本身就是資訊。
+func _build_energy_panel() -> void:
+	var box := PanelContainer.new()
+	box.position = Vector2(872, 96)   # 寬 388 → 右緣 1260，不出畫面
+	box.visible = false
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var col := UiKit.vbox(4)
+	box.add_child(col)
+	col.add_child(UiKit.label("能量收支（每秒）", 15, Palette.ENERGY_AMBER, false))
+	# 每一行都必須短於面板寬度：`PanelContainer` 會被最長的那一行撐開，
+	# 撐出畫面外就直接被裁掉（沒有捲動）。長句一律拆兩行，不靠 autowrap。
+	for key: String in [
+		"gen", "reclaim", "silo_out", "sep", "tower", "silo_in", "net", "tip", "tip2"
+	]:
+		var l := UiKit.label("", 13, Palette.TEXT_SECONDARY, false)
+		l.custom_minimum_size = Vector2(388, 0)
+		col.add_child(l)
+		_energy_rows[key] = l
+	add_child(box)
+	_energy_panel = box
+
+
+func _on_toggle_energy(open: bool) -> void:
+	_energy_panel.visible = open
+
+
+func _refresh_energy() -> void:
+	if _energy_panel == null or not _energy_panel.visible:
+		return
+	var r: Dictionary = s.rates
+	var gen := 0.0
+	var reclaim := 0.0
+	var tower := 0.0
+	for n: Dictionary in s.nodes:
+		var def := NodeDefs.of(String(n["type"]))
+		gen += float(def.get("power_out", 0.0)) * float((r["satisfaction"] as Dictionary).get(n["id"], 1.0))
+		if def.has("reclaim"):
+			reclaim += float(n["buffer"])
+		if _engaged.get(int(n["id"]), false):
+			tower += float(def.get("engage_power", 0.0))
+	var supply := float(r["power_supply"])
+	var demand := float(r["power_demand"])
+	var silo_out := maxf(0.0, supply - gen)
+	var silo_in := maxf(0.0, demand - tower)
+	var net := supply - demand
+
+	_set_row("gen", "＋ 發電機 ×%d　%+.0f" % [s.count_of("generator"), gen], Palette.ENERGY_AMBER)
+	_set_row("reclaim", "＋ 回收者存量　%.0f（擊殺換來的，慢慢注入）" % reclaim
+		if reclaim > 0.0 else "", Palette.ENERGY_AMBER)
+	_set_row("silo_out", "＋ 儲槽放電　%+.0f" % silo_out if silo_out > 0.05 else "", Palette.ENERGY_AMBER)
+	_set_row("sep", "──────────────", Palette.BORDER_STRONG)
+	_set_row("tower", "− 塔（交戰 %d 座）　%.0f　※ 待機不耗電" % [int(r["engaged"]), tower]
+		if tower > 0.05 else "− 塔　0　※ 沒有敵人進射程，全部待機", Palette.TEXT_SECONDARY)
+	_set_row("silo_in", "− 儲槽充能　%.0f（受自己那條線的 cap 限速）" % silo_in
+		if silo_in > 0.05 else "", Palette.TEXT_SECONDARY)
+	_set_row("net", "淨值　%+.0f/秒　%s" % [net, "餵得飽" if net >= -0.05 else "餵不飽，射速會降"],
+		Palette.OK_GREEN if net >= -0.05 else Palette.WARN_ORANGE)
+	_set_row("tip", "加電：多蓋發電機（每台吃 4 礦砂/秒）", Palette.TEXT_DISABLED)
+	_set_row("tip2", "省電：塔蓋少一點，或用「優先權」決定誰先餓", Palette.TEXT_DISABLED)
+
+
+func _set_row(key: String, text: String, col: Color) -> void:
+	var l: Label = _energy_rows[key]
+	l.visible = text != ""
+	l.text = text
+	l.add_theme_color_override("font_color", col)
+
+
+## ★ 角色簡介浮層（使用者要求）。滑鼠停在左欄的建造鈕上就浮出來、移開就收，
+## 底欄「圖鑑」可整個關掉。**半透明**：它蓋在地圖上，要讓人看得見底下是什麼。
+##
+## 內容一律**從 `data/NodeDefs.gd` 現算**，不另外寫一份文案表——
+## 兩份會漂移，而漂移的那一份剛好就是玩家讀到的那一份。
+func _build_codex_panel() -> void:
+	var box := PanelContainer.new()
+	box.visible = false
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.modulate = Color(1.0, 1.0, 1.0, 0.92)
+	_codex_label = UiKit.label("", 14, Palette.TEXT_PRIMARY, false)
+	box.add_child(_codex_label)
+	add_child(box)
+	_codex_panel = box
+
+
+func _on_codex_show(type: String, from: Button) -> void:
+	if not _codex_on or Hooks.naked:
+		return
+	_codex_label.text = "\n".join(_codex_lines(type))
+	_codex_panel.visible = true
+	# 貼著那顆鈕的右側浮出來，垂直對齊它——視線不必離開來源。
+	_codex_panel.position = Vector2(124.0, clampf(from.global_position.y - 8.0, 56.0, 470.0))
+
+
+func _on_codex_hide() -> void:
+	_codex_panel.visible = false
+
+
+## 一種節點的簡介。**先講它在取捨裡的位置，再列數字**——
+## 一串沒有脈絡的數值幫不了正在決定「這一分鐘要蓋什麼」的人。
+func _codex_lines(type: String) -> Array[String]:
+	var def := NodeDefs.of(type)
+	var out: Array[String] = ["%s　%d 礦砂" % [NodeDefs.label(type), NodeDefs.cost(type)]]
+	out.append({
+		"extractor": "礦砂的源頭。只能蓋在礦點上，而且要接到核心才入帳。",
+		"generator": "把礦砂燒成能量。它是你唯一的發電來源，也是礦砂的第一大支出。",
+		"relay": "轉彎與分岔用。導管只能走直線與 45°，所有拐角都靠它。",
+		"silo": "準備期存電、波次期放電。充放電速率受「它自己那條導管的 cap」限制——擺太遠或線太細，電趕不到前線。",
+		"anchor": "最便宜的塔，物理傷害。護甲是減法，打甲殼很吃虧。",
+		"prism": "最貴的塔，能量傷害穿透一直線。與路徑同一列時可一次貫穿整段——擺位就是它的謎題。",
+		"knell": "不開火。減速 40% ＋ 破甲 25%，多座不疊加取最強。它讓別的塔變強。",
+		"reclaimer": "射程內**任何**敵人死亡就回收能量（不限自己擊殺）。蹲在擊殺點上，不是蹲在它自己射得爽的地方。",
+	}.get(type, ""))
+	if def.has("ore_out"):
+		out.append("產出　＋%.0f 礦砂/秒" % float(def["ore_out"]))
+	if def.has("ore_in"):
+		out.append("燃料　−%.0f 礦砂/秒" % float(def["ore_in"]))
+	if def.has("power_out"):
+		out.append("產出　＋%.0f 能量/秒" % float(def["power_out"]))
+	if def.has("capacity"):
+		out.append("容量　%.0f 能量" % float(def["capacity"]))
+	if def.has("engage_power"):
+		out.append("耗能　交戰時 −%.0f 能量/秒（待機 0）" % float(def["engage_power"]))
+	if def.has("range"):
+		out.append("射程　%.0f 格　射速 %.1f 發/秒　傷害 %.0f（%s）" % [
+			float(def["range"]), float(def.get("rof", 0.0)), float(def.get("dmg", 0.0)),
+			"能量" if String(def.get("dmg_type", "physical")) == "energy" else "物理"
+		])
+	out.append("生命　%.0f　※ 退開敵人路徑 2 格就打不到" % NodeDefs.hp(type))
+	return out
 
 
 func _on_toggle_priority(open: bool) -> void:
@@ -912,6 +1153,12 @@ func _restart() -> void:
 	_prio_panel = null
 	_help_panel = null
 	_help_button = null
+	_energy_panel = null
+	_energy_button = null
+	_codex_panel = null
+	_codex_button = null
+	_codex_label = null
+	_energy_rows.clear()
 	_prio_labels.clear()
 	_mode_buttons.clear()
 	_build_buttons.clear()
@@ -939,7 +1186,12 @@ func _refresh_hint() -> void:
 			else:
 				parts.append("建造 %s：把滑鼠移到地圖上，左鍵點一格放下。" % NodeDefs.label(_build_type))
 		Mode.CONNECT:
-			parts.append("連線：左鍵點「起點節點」，再點「終點節點」。只能走水平／垂直／45°，轉彎要先放中繼；過敵人路徑只能走橋。")
+			if _connect_from.x >= 0 and _in_map(_hover):
+				# 起點選好之後就逐格回報「這一條連不連得成、為什麼」，
+				# 不必點下去才知道（八條導引線同時畫在地圖上）。
+				parts.append(_connect_hint())
+			else:
+				parts.append("連線：左鍵點「起點節點」，再點「終點節點」。只能走水平／垂直／45°，轉彎要先放中繼；過敵人路徑只能走橋。")
 		Mode.UPGRADE:
 			parts.append("加粗：左鍵點一段導管的「中間」（不是兩端的節點）。每級 +6 吞吐，造價 20×級數，上限 3 級（→28）。")
 		Mode.DEMOLISH:
@@ -975,6 +1227,26 @@ func _next_step() -> String:
 	if s.phase == "prep":
 		return "都齊了。等倒數跑完自動開波，或按「提前召喚」提早開——倒數剩越多，這一波掉落倍率越高。"
 	return "波次進行中：盯著頂端能量條，橙色那截就是餵不飽的部分；節點上的橙色倒三角＝這個缺料。"
+
+
+## 連線預覽的逐格回報。**連不成的時候要說出差在哪**——「不是 45°」對玩家
+## 沒有動作可做，「橫 4 直 3，要 4/4 或 3/3」才有。
+func _connect_hint() -> String:
+	if s.node_at(_hover).is_empty():
+		return "終點也要是一個節點（先在那裡蓋一個「中繼」）。"
+	var code: String = Build.can_connect(s.sets, s.conduit_keys(), _connect_from, _hover)
+	if code == Build.NOT_STRAIGHT:
+		var d: Vector2i = _hover - _connect_from
+		return "✕ 不是直線：橫 %d 直 %d。要走 45° 兩邊得一樣長；否則先放一個「中繼」轉彎。" % [
+			absi(d.x), absi(d.y)
+		]
+	if code != Build.OK:
+		return "✕ " + BuildController.reason_text(code)
+	var cost := Build.conduit_cost(_connect_from, _hover)
+	var afford := "" if s.ore >= float(cost) else "　（礦砂不夠）"
+	return "✔ 可連：%s → %s，%d 礦砂%s" % [
+		_label_at(_connect_from), _label_at(_hover), cost, afford
+	]
 
 
 func _towers() -> int:

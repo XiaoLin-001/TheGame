@@ -101,6 +101,9 @@ TL_SHOT="C:/tmp/first.png" TL_DEMO_TICKS=0 TL_PANEL=battle <godot> --path godot 
 # ⚠ 唯一不能 --headless 的檢查：dummy display server 不做 GUI 命中測試
 TL_CLICKTEST=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 
+# 拍「只有互動才到得了」的狀態：驅動完 UI 之後不退出，交給 TL_SHOT
+TL_CLICKTEST=1 TL_SHOT="C:/tmp/panels.png" TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
+
 # 可讀性驗收：隱藏所有數值標籤，只留線寬／顏色／三態徽章
 TL_SHOT="C:/tmp/naked.png" TL_NAKED=1 TL_PANEL=battle TL_SEED=42 <godot> --path godot --rendering-driver opengl3
 
