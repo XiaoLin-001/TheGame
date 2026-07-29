@@ -33,7 +33,10 @@ func _ready() -> void:
 	click_test = Env.flag("TL_CLICKTEST")
 	if click_test:
 		panel = "battle"
-		demo_ticks = 0  # 空地圖才驗得到「點一下有沒有蓋出東西」
+		# 空地圖才驗得到「點一下有沒有蓋出東西」。但明寫 `TL_DEMO_TICKS` 時尊重它——
+		# 那是「我要的是示範佈局跑到第 N tick 的畫面，只是需要有人幫我開浮層」。
+		if Env.str_of("TL_DEMO_TICKS") == "":
+			demo_ticks = 0
 
 	if Env.any_hook():
 		print("[TL] hooks: %s" % Env.active_summary())

@@ -29,6 +29,15 @@ const BEAD_GAP := 20.0
 const BEAD_SPEED := 6.0
 const BEAD_MIN_RATE := 0.05
 
+## 能量收支面板的**固定列序**。列數與順序恆定，沒有值的列留在原位變暗，
+## 面板才不會每個 tick 抖一次（B0.7.4）。`short0..2` 是餵不飽的節點清單。
+const ENERGY_ROWS := [
+	"gen", "silo_out", "reclaim", "sep1", "tower", "silo_in", "sep2", "net",
+	"short0", "short1", "short2", "tip", "tip2",
+]
+## 「餵不飽」最多列幾座，其餘收成一行「…還有 N 座」。
+const SHORT_ROWS := 3
+
 enum Mode { BUILD, CONNECT, UPGRADE, DEMOLISH }
 
 var s: RefCounted = null
@@ -101,6 +110,12 @@ func _ready() -> void:
 func _click_selftest() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
+	# 有示範佈局在場時只驗浮層：地圖上的格子被佔走了，建造斷言本來就不成立。
+	if s.nodes.size() > 1:
+		_energy_button.button_pressed = true
+		_on_codex_show("prism", _build_buttons["prism"])
+		print("[TL_CLICKTEST] 示範佈局在場，只開浮層（建造斷言略過）")
+		return
 	var ore: Vector2i = (s.map["ore"] as Array)[0]
 	var on_path: Vector2i = s.path[10]
 	var before: int = s.nodes.size()
@@ -749,7 +764,7 @@ func _build_ui() -> void:
 ##   ② **沒有「每一座」的選項**——操作負擔不得隨建築數量成長（風險 R-1）。
 ##   ③ 預設收合。它是抽屜不是常駐欄（§6.2 全畫面地圖 ＋ 可收合浮層）。
 func _build_priority_panel() -> void:
-	var box := PanelContainer.new()
+	var box := UiKit.panel()
 	box.position = Vector2(1000, 330)   # 讓開上方的能量收支面板，兩個可以同時開
 	box.visible = false
 	var col := UiKit.vbox(6)
@@ -790,7 +805,7 @@ func _build_priority_panel() -> void:
 ## **預設開在空地圖上、有東西之後就不再擋路**：不用存檔旗標（那要跨局狀態），
 ## 用「這一局蓋了東西沒有」判斷——玩家一放下第一個節點就代表他會操作了。
 func _build_help_panel() -> void:
-	var box := PanelContainer.new()
+	var box := UiKit.panel(0.94)
 	box.position = Vector2(150, 250)
 	var col := UiKit.vbox(3)
 	box.add_child(col)
@@ -818,10 +833,8 @@ func _build_help_panel() -> void:
 			line, 15 if head else 14,
 			Palette.ORDER_BRIGHT if head else Palette.TEXT_PRIMARY, false
 		))
-	# ★ **面板不吃滑鼠**：它是一張說明，底下就是玩家要點的地圖。
-	#   `PanelContainer` 預設 `STOP`，會把落在它範圍內的點擊整片吞掉——
-	#   而它預設開在玩家要放第一個節點的那一刻，等於教學把遊戲擋住了。
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# （不吃滑鼠由 `UiKit.panel()` 保證——這一張曾經預設開在玩家要放第一個
+	#   節點的位置上並把那片點擊整片吞掉，等於教學把遊戲擋住了。RG-39）
 	add_child(box)
 	_help_panel = box
 	# 空地圖＝這局還沒開始，正是需要它的時刻。TL_NAKED 下不開（它整片都是文字）。
@@ -844,20 +857,21 @@ func _on_toggle_help(open: bool) -> void:
 ## 只列**這一局真的存在**的項目：一張永遠有八行的表沒有資訊量，
 ## 有幾行會動、什麼時候動，本身就是資訊。
 func _build_energy_panel() -> void:
-	var box := PanelContainer.new()
-	box.position = Vector2(872, 96)   # 寬 388 → 右緣 1260，不出畫面
+	var box := UiKit.panel()
+	box.position = Vector2(872, 96)
 	box.visible = false
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var col := UiKit.vbox(4)
+	# ★ **固定尺寸、固定列數**（B0.7.4）。使用者回報「面板會因為一些小改動
+	#   一直跳動，很難看清楚」——原因是沒有數值的列會自己隱藏，`PanelContainer`
+	#   跟著縮放，於是每過一個 tick 版面就位移一次。
+	#   **一張一直在動的表，讀不了**。現在列數恆定、寬度恆定，
+	#   不存在的項目留在原位變暗——**位置固定本身就是可讀性**。
+	box.custom_minimum_size = Vector2(392, 300)
+	var col := UiKit.vbox(3)
 	box.add_child(col)
 	col.add_child(UiKit.label("能量收支（每秒）", 15, Palette.ENERGY_AMBER, false))
-	# 每一行都必須短於面板寬度：`PanelContainer` 會被最長的那一行撐開，
-	# 撐出畫面外就直接被裁掉（沒有捲動）。長句一律拆兩行，不靠 autowrap。
-	for key: String in [
-		"gen", "reclaim", "silo_out", "sep", "tower", "silo_in", "net", "tip", "tip2"
-	]:
+	for key: String in ENERGY_ROWS:
 		var l := UiKit.label("", 13, Palette.TEXT_SECONDARY, false)
-		l.custom_minimum_size = Vector2(388, 0)
+		l.custom_minimum_size = Vector2(380, 17)
 		col.add_child(l)
 		_energy_rows[key] = l
 	add_child(box)
@@ -888,26 +902,55 @@ func _refresh_energy() -> void:
 	var silo_in := maxf(0.0, demand - tower)
 	var net := supply - demand
 
-	_set_row("gen", "＋ 發電機 ×%d　%+.0f" % [s.count_of("generator"), gen], Palette.ENERGY_AMBER)
-	_set_row("reclaim", "＋ 回收者存量　%.0f（擊殺換來的，慢慢注入）" % reclaim
-		if reclaim > 0.0 else "", Palette.ENERGY_AMBER)
-	_set_row("silo_out", "＋ 儲槽放電　%+.0f" % silo_out if silo_out > 0.05 else "", Palette.ENERGY_AMBER)
-	_set_row("sep", "──────────────", Palette.BORDER_STRONG)
-	_set_row("tower", "− 塔（交戰 %d 座）　%.0f　※ 待機不耗電" % [int(r["engaged"]), tower]
-		if tower > 0.05 else "− 塔　0　※ 沒有敵人進射程，全部待機", Palette.TEXT_SECONDARY)
-	_set_row("silo_in", "− 儲槽充能　%.0f（受自己那條線的 cap 限速）" % silo_in
-		if silo_in > 0.05 else "", Palette.TEXT_SECONDARY)
-	_set_row("net", "淨值　%+.0f/秒　%s" % [net, "餵得飽" if net >= -0.05 else "餵不飽，射速會降"],
-		Palette.OK_GREEN if net >= -0.05 else Palette.WARN_ORANGE)
-	_set_row("tip", "加電：多蓋發電機（每台吃 4 礦砂/秒）", Palette.TEXT_DISABLED)
-	_set_row("tip2", "省電：塔蓋少一點，或用「優先權」決定誰先餓", Palette.TEXT_DISABLED)
+	_set_row("gen", "＋ 發電機 ×%d　%+.0f" % [s.count_of("generator"), gen],
+		gen > 0.05, Palette.ENERGY_AMBER)
+	_set_row("silo_out", "＋ 儲槽放電　%+.0f" % silo_out, silo_out > 0.05, Palette.ENERGY_AMBER)
+	_set_row("reclaim", "＋ 回收者存量　%.0f（擊殺換來的，限速注入）" % reclaim,
+		reclaim > 0.05, Palette.ENERGY_AMBER)
+	_set_row("sep1", "─────────────────", false)
+	_set_row("tower", "− 塔（交戰 %d 座）　%.0f" % [int(r["engaged"]), tower], tower > 0.05)
+	_set_row("silo_in", "− 儲槽充能　%.0f（受自己那條線限速）" % silo_in, silo_in > 0.05)
+	_set_row("sep2", "─────────────────", false)
+
+	# ★ 「誰餵不飽」（使用者要求）。淨值只說「差多少」，不說「誰在挨餓」——
+	#   而玩家能採取的動作（拉優先權、加粗那條線、多蓋一台發電機）取決於後者。
+	#   名單直接取三態徽章的 `STARVED`，與地圖上的橙色倒三角是同一份判定。
+	var short_list: Array[String] = []
+	var states: Dictionary = r["node_state"]
+	for n: Dictionary in s.nodes:
+		if int(states.get(int(n["id"]), 0)) != SessionState.STARVED:
+			continue
+		short_list.append("%s%s %.0f%%" % [
+			NodeDefs.label(String(n["type"])), n["cell"],
+			100.0 * float((r["satisfaction"] as Dictionary).get(n["id"], 1.0))
+		])
+
+	var ok_all := short_list.is_empty()
+	_set_row("net", "淨值　%+.0f/秒　%s" % [net, "餵得飽" if ok_all else "有東西在挨餓"], true,
+		Palette.OK_GREEN if ok_all else Palette.WARN_ORANGE)
+	for i in SHORT_ROWS:
+		var key := "short%d" % i
+		if ok_all:
+			_set_row(key, "　全部餵得飽" if i == 0 else "", false)
+		elif i == SHORT_ROWS - 1 and short_list.size() > SHORT_ROWS:
+			_set_row(key, "　…還有 %d 座" % (short_list.size() - SHORT_ROWS + 1), true,
+				Palette.WARN_ORANGE)
+		elif i < short_list.size():
+			_set_row(key, "　餵不飽：" + short_list[i] if i == 0 else "　　　　　" + short_list[i],
+				true, Palette.WARN_ORANGE)
+		else:
+			_set_row(key, "", false)
+
+	_set_row("tip", "加電：多蓋發電機（每台吃 4 礦砂/秒）", false)
+	_set_row("tip2", "省電：塔少一點，或用「優先權」決定誰先餓", false)
 
 
-func _set_row(key: String, text: String, col: Color) -> void:
+## `live` ＝ 這一項現在有沒有在作用。**沒作用的列不隱藏、只變暗**——
+## 隱藏會讓下面每一列往上跳，而一張一直在動的表讀不了（B0.7.4）。
+func _set_row(key: String, text: String, live: bool, col: Color = Palette.TEXT_SECONDARY) -> void:
 	var l: Label = _energy_rows[key]
-	l.visible = text != ""
 	l.text = text
-	l.add_theme_color_override("font_color", col)
+	l.add_theme_color_override("font_color", col if live else Palette.TEXT_DISABLED)
 
 
 ## ★ 角色簡介浮層（使用者要求）。滑鼠停在左欄的建造鈕上就浮出來、移開就收，
@@ -916,10 +959,9 @@ func _set_row(key: String, text: String, col: Color) -> void:
 ## 內容一律**從 `data/NodeDefs.gd` 現算**，不另外寫一份文案表——
 ## 兩份會漂移，而漂移的那一份剛好就是玩家讀到的那一份。
 func _build_codex_panel() -> void:
-	var box := PanelContainer.new()
+	# 角色簡介刻意半透明：它浮在地圖上，要讓人看得見底下是什麼（使用者指定）。
+	var box := UiKit.panel(0.88)
 	box.visible = false
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.modulate = Color(1.0, 1.0, 1.0, 0.92)
 	_codex_label = UiKit.label("", 14, Palette.TEXT_PRIMARY, false)
 	box.add_child(_codex_label)
 	add_child(box)
@@ -1114,7 +1156,7 @@ func _refresh_over() -> void:
 	var won: bool = s.phase == "won"
 	var waves: int = s.wave_index if won else maxi(0, s.wave_index - 1)
 	var score := Score.throughput(s.delivered_total, s.tick_count, BattleController.TICK)
-	var box := PanelContainer.new()
+	var box := UiKit.panel()
 	box.position = Vector2(440, 250)
 	var col := UiKit.vbox(10)
 	box.add_child(col)

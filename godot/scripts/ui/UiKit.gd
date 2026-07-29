@@ -65,6 +65,24 @@ static func touchable(c: Control) -> Control:
 	return c
 
 
+## 浮層容器。**預設的 `PanelContainer` 背景太透**，蓋在地圖上時導管會從字後面
+## 穿過去，暗色的次要文字直接讀不到（B0.7.4 使用者回報）。
+## 這裡給一個近乎不透明的底 ＋ 一圈細邊，讓浮層與地圖分得開。
+## `opacity` 留給角色簡介那種刻意要半透明的（它要讓人看見底下是什麼）。
+static func panel(opacity: float = 0.96) -> PanelContainer:
+	var box := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Palette.alpha(Palette.BG_PANEL, opacity)
+	style.border_color = Palette.BORDER_STRONG
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(2)   # radius.ui（20_ART_DIRECTION.md §1.4）
+	style.set_content_margin_all(10)
+	box.add_theme_stylebox_override("panel", style)
+	# 浮層是資訊不是障礙物：一律不吃滑鼠（RG-39）。
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return box
+
+
 ## 千分位。資源數字到處都要用，統一在這裡免得各處各寫一份。
 static func commas(n: int) -> String:
 	var s := str(absi(n))
