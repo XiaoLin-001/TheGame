@@ -13,6 +13,7 @@ const Campaign := preload("res://data/Campaign.gd")
 const Maps := preload("res://data/Maps.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const Build := preload("res://scripts/sim/Build.gd")
+const Shapes := preload("res://scripts/render/Shapes.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
@@ -22,13 +23,16 @@ const BattleController := preload("res://scripts/game/BattleController.gd")
 ## 一局跑多久才判定「跑不完」。五關最長的是第 5 關（準備期 45s ＋ 5 波），
 ## 4000 tick ＝ 400 秒，遠寬於任何一關的實際長度。
 const MAX_TICKS := 9000
-## 地圖硬性一屏可見（`CLAUDE.md`）：36×19 格 ×32px 放進 1280×720 的設計基準。
-const MAX_SIZE := Vector2i(36, 19)
+## 地圖框架（`screens/Battle.gd` 的 `FRAME`）。**一屏可見從此由縮放保證**，
+## 不再靠「地圖必須小於這個尺寸」——所以這裡不再檢查格數上限，改檢查
+## **fit 之後的格子還讀不讀得出來**（B1.2.2）。
+const FRAME := Vector2(1152.0, 604.0)
 
 
 func _initialize() -> void:
 	var t := T.new("campaign_test")
 	_geometry(t)
+	_frame_fit(t)
 	_unlock_ladder(t)
 	_no_hidden_multiplier(t)
 	_locked_is_a_rule(t)
@@ -47,9 +51,14 @@ func _geometry(t: RefCounted) -> void:
 		var m: Dictionary = lv["map"]
 		var name: String = m["name"]
 		var size: Vector2i = m["size"]
+		# ★ 一屏可見現在由框架＋自動 fit 保證（B1.2.2），所以要守的不是格數，
+		#   而是**fit 之後一格還有幾個像素**——視覺編碼是在 32px 上驗收的。
+		var cell_px := Shapes.fit_cell_px(size, FRAME)
 		t.ok(
-			size.x <= MAX_SIZE.x and size.y <= MAX_SIZE.y,
-			"%s 一屏可見（%s ≤ %s）" % [name, size, MAX_SIZE]
+			cell_px >= Shapes.MIN_READABLE_CELL,
+			"%s fit 後一格 %.1f px ≥ 可讀性地板 %.0f（%s）" % [
+				name, cell_px, Shapes.MIN_READABLE_CELL, size
+			]
 		)
 		var path := Maps.path_of(m)
 		t.ok(path.size() > 0, "%s 有敵人路徑" % name)
@@ -72,6 +81,36 @@ func _geometry(t: RefCounted) -> void:
 				c.x >= 0 and c.y >= 0 and c.x < size.x and c.y < size.y,
 				"%s 礦點 %s 在圖內" % [name, c]
 			)
+
+
+## ★ 地圖框架與自動 fit（B1.2.2，使用者要求）。
+##
+## 玩家看到的地圖區域**恆定**，進場時縮放到剛好填滿它。這裡守三件事：
+##   ① fit 之後**至少一軸剛好填滿框架**（另一軸留邊是長寬比不同，不是漏算）
+##   ② 兩軸都不溢出（溢出就不是「進場看得到全貌」）
+##   ③ 每一關 fit 後的格子都在可讀性地板之上（上面 `_geometry` 已逐關檢查）
+func _frame_fit(t: RefCounted) -> void:
+	for i in Campaign.count():
+		var m: Dictionary = (Campaign.at(i) as Dictionary)["map"]
+		var size: Vector2i = m["size"]
+		var z := Shapes.fit_zoom(size, FRAME)
+		var px := Vector2(size) * Shapes.GRID * z
+		t.ok(
+			is_equal_approx(px.x, FRAME.x) or is_equal_approx(px.y, FRAME.y),
+			"%s fit 後至少一軸填滿框架（%.1f×%.1f / %s）" % [m["name"], px.x, px.y, FRAME]
+		)
+		t.ok(
+			px.x <= FRAME.x + 0.5 and px.y <= FRAME.y + 0.5,
+			"%s fit 後兩軸都不溢出框架" % m["name"]
+		)
+	# 地板本身：40×40 這種圖會掉到 15px，**低於地板**——它不是不能做，
+	# 是要先重新跑一次 `TL_NAKED` 讀圖驗收才能做（`50_QA_PLAN.md` RG-58）。
+	t.ok(
+		Shapes.fit_cell_px(Vector2i(40, 40), FRAME) < Shapes.MIN_READABLE_CELL,
+		"40×40 的圖會掉到可讀性地板之下（%.1f px）——這條在提醒未來的人先驗收" % (
+			Shapes.fit_cell_px(Vector2i(40, 40), FRAME)
+		)
+	)
 
 
 ## 解鎖階梯：**只增不減**，而且第 5 關等於全解鎖（§7.9）。

@@ -19,7 +19,20 @@ const CampaignData := preload("res://data/Campaign.gd")
 
 ## 地圖左上角。36×19 格 ×32px = 1152×608；左側 120px 留給建造欄，
 ## 浮層與地圖**不重疊**（RG-20 的先行實踐，正式驗收在 B0.6）。
-const ORIGIN := Vector2(120.0, 56.0)
+## ★ 地圖框架（B1.2.2，使用者要求）。**玩家看到的地圖區域恆定**，不隨關卡
+## 大小變動：進場時自動縮放到剛好填滿它，之後玩家自由縮放。
+##
+## 這比「地圖必須小到放得進一屏」好在兩件事：關與關之間的視覺尺度一致
+## （20×12 的第 1 關不再只佔左上角一小塊），而且**地圖尺寸不再受畫面限制**
+## ——它變成純粹的關卡設計參數。代價是**格子的像素大小會隨圖變大而變小**，
+## 而線寬／徽章那套視覺編碼有一個可讀性地板（`50_QA_PLAN.md` RG-58）。
+##
+## x=120 讓出左側建造欄，y=56 讓出頂欄，下緣停在 660（底欄鈕在 668）。
+const FRAME := Rect2(Vector2(120.0, 56.0), Vector2(1152.0, 604.0))
+## 縮放上限＝ fit 的幾倍。下限就是 fit——比 fit 更小只是把地圖縮進框架裡的
+## 一小塊，那正是這一批要修掉的東西。
+const ZOOM_MAX_MULT := 3.0
+const ZOOM_STEP := 1.25
 
 ## `10_GDD.md` §7.1。**只在準備期可用。**
 const FAST_FORWARD_RATE := 4
@@ -39,7 +52,7 @@ const ENERGY_ROWS := [
 ## 「餵不飽」最多列幾座，其餘收成一行「…還有 N 座」。
 const SHORT_ROWS := 3
 
-enum Mode { BUILD, CONNECT, UPGRADE, DEMOLISH }
+enum Mode { BUILD, CONNECT, UPGRADE, DEMOLISH, PAN }
 
 var s: RefCounted = null
 
@@ -49,6 +62,13 @@ var s: RefCounted = null
 var level: Dictionary = {}
 ## 回關卡選擇。測試圖沒有上一層，所以是 Callable 而不是寫死的場景切換。
 var on_exit: Callable = Callable()
+
+## 視野（B1.2.2）。`_fit` 是「剛好填滿框架」的倍率，也是縮放下限。
+var _zoom: float = 1.0
+var _fit: float = 1.0
+## 平移（螢幕像素）。fit 時恆為 0（地圖與框架同大，居中就是全貌）。
+var _pan: Vector2 = Vector2.ZERO
+var _zoom_button: Button = null
 
 var _mode: int = Mode.BUILD
 var _build_type: String = "extractor"
@@ -110,8 +130,74 @@ func _ready() -> void:
 func _setup_session() -> void:
 	if not level.is_empty():
 		s.setup(level["map"], level["unlocked"])
+	else:
+		s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL)
+	_reset_view()
+
+
+# ── 視野：框架、fit、縮放、平移（B1.2.2）─────────────────────────────
+
+## 這張圖剛好填滿框架的倍率。取兩軸的**較小值**——較大值會讓另一軸溢出框架，
+## 而「進場就看得到全貌」是這個框架存在的理由。
+func _fit_zoom() -> float:
+	return Shapes.fit_zoom(s.map["size"], FRAME.size)
+
+
+## 進場（與「全景」鈕）的視野：fit ＋ 居中。
+func _reset_view() -> void:
+	_fit = _fit_zoom()
+	_zoom = _fit
+	_pan = Vector2.ZERO
+
+
+## 地圖左上角在螢幕上的位置。**框架內居中**，放大後由 `_pan` 帶著走。
+func _map_origin() -> Vector2:
+	var px := Vector2(s.map["size"]) * Shapes.GRID * _zoom
+	return FRAME.position + (FRAME.size - px) * 0.5 + _pan
+
+
+## 放大之後地圖比框架大，平移要有邊界——不然可以把地圖整片拖出畫面，
+## 然後玩家會以為遊戲壞了。夾住之後框架永遠被地圖蓋滿。
+func _clamp_pan() -> void:
+	var px := Vector2(s.map["size"]) * Shapes.GRID * _zoom
+	var slack := (px - FRAME.size) * 0.5
+	_pan.x = clampf(_pan.x, -maxf(0.0, slack.x), maxf(0.0, slack.x))
+	_pan.y = clampf(_pan.y, -maxf(0.0, slack.y), maxf(0.0, slack.y))
+
+
+## 縮放。`anchor` 是螢幕上要固定不動的那一點（滑鼠位置或框架中心）——
+## 少了它，滾輪縮放會把玩家正在看的東西推出畫面。
+func _zoom_by(mult: float, anchor: Vector2) -> void:
+	var before := _zoom
+	_zoom = clampf(_zoom * mult, _fit, _fit * ZOOM_MAX_MULT)
+	if is_equal_approx(before, _zoom):
 		return
-	s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL)
+	# 讓 anchor 在縮放前後對到同一個格：pan 補上原點的位移。
+	var k := _zoom / before
+	_pan += (anchor - _map_origin()) * (1.0 - k)
+	_clamp_pan()
+	_refresh_zoom()
+	queue_redraw()
+
+
+func _on_zoom(mult: float) -> void:
+	_zoom_by(mult, FRAME.position + FRAME.size * 0.5)
+
+
+func _on_zoom_reset() -> void:
+	_reset_view()
+	_refresh_zoom()
+	queue_redraw()
+
+
+func _refresh_zoom() -> void:
+	if _zoom_button == null:
+		return
+	# TL_NAKED 遮所有數值標籤；縮放倍率也是數值。
+	if Hooks.naked:
+		_zoom_button.text = "全景"
+		return
+	_zoom_button.text = "全景 %d%%" % roundi(_zoom / maxf(0.0001, _fit) * 100.0)
 
 
 ## 這一局蓋得出哪些節點。**空的 `unlocked` ＝ 全部**（測試圖與沙盤）。
@@ -186,7 +272,7 @@ func _click_selftest() -> void:
 	for _i in 3:
 		await get_tree().process_frame
 	_press(_mode_buttons[Mode.UPGRADE])
-	_click_at((_center(Vector2i(6, 12)) + _center(Vector2i(7, 13))) * 0.5)
+	_click_at(_to_screen((_center(Vector2i(6, 12)) + _center(Vector2i(7, 13))) * 0.5))
 	for _i in 3:
 		await get_tree().process_frame
 	var short_diag: int = s.conduit_near(Vector2(6.5, 12.5))
@@ -228,18 +314,75 @@ func _click_selftest() -> void:
 		and _prio_panel.position.x + _prio_panel.size.x <= _energy_panel.position.x
 	)
 
+	# ★ 視野（B1.2.2）。四件事：進場就是 fit、fit 真的填滿框架、放大/全景走得通、
+	#   平移夾得住。**縮放最容易壞的不是縮放本身，是命中判定跟著縮放走**——
+	#   所以最後再用合成點擊蓋一個節點，確認放大後點到的還是同一格。
+	var view_ok := await _view_selftest()
+
 	var ok: bool = (
 		placed and rejected and diag_placed and wired and upgraded
 		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
+		and view_ok
 	)
-	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s → %s" % [
+	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s → %s" % [
 		placed, rejected, diag_placed, wired, upgraded, reachable, alloy_gated,
-		energy_ok, codex_ok, prio_ok, "PASS" if ok else "FAIL"
+		energy_ok, codex_ok, prio_ok, view_ok, "PASS" if ok else "FAIL"
 	])
 	# 同時給 `TL_SHOT` 時不退出，把畫面交給截圖鉤子——**有些狀態只有互動才到得了**
 	# （浮層要按鈕才會開、簡介要 hover 才會浮），沒有這條就永遠拍不到它們。
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)
+
+
+## ★ 視野自檢（B1.2.2）。回傳全部通過與否，並**把畫面留在放大＋推到角落的
+## 狀態**——那正是「遮罩有沒有真的切住框架」唯一拍得出來的畫面。
+func _view_selftest() -> bool:
+	var px := Vector2(s.map["size"]) * Shapes.GRID
+	# ① 進場就是 fit，而且 fit 至少填滿一軸（另一軸留邊是長寬比不同，不是漏算）。
+	var at_fit: bool = is_equal_approx(_zoom, _fit)
+	var filled: bool = (
+		is_equal_approx(px.x * _fit, FRAME.size.x) or is_equal_approx(px.y * _fit, FRAME.size.y)
+	)
+	var inside: bool = px.x * _fit <= FRAME.size.x + 0.5 and px.y * _fit <= FRAME.size.y + 0.5
+
+	# ② 頂欄不能長到撞上縮放鈕（礦砂上萬之後那一排會變長）。
+	var bar_clear: bool = _top.position.x + _top.size.x <= _zoom_button.get_parent().position.x
+
+	# ③ 放大 → 倍率上升；「全景」→ 回到 fit 且平移歸零。
+	_on_zoom(ZOOM_STEP)
+	var zoomed_in: bool = _zoom > _fit
+	_pan = Vector2(99999.0, 99999.0)
+	_clamp_pan()
+	var pan_clamped: bool = _pan.x <= (px.x * _zoom - FRAME.size.x) * 0.5 + 0.5
+	_on_zoom_reset()
+	var reset_ok: bool = is_equal_approx(_zoom, _fit) and _pan == Vector2.ZERO
+	# 下限就是 fit：再按「−」也不該縮得比框架小。
+	_on_zoom(1.0 / ZOOM_STEP)
+	var floor_ok: bool = is_equal_approx(_zoom, _fit)
+
+	# ④ ★ **放大之後命中判定還對得上**：這是縮放最容易靜靜壞掉的地方。
+	#    放大兩級、把目標礦點平移到框架正中（玩家放大就是為了看某個東西），
+	#    再點它——蓋出來的必須就是那一格，不是隔壁那一格。
+	_on_zoom(ZOOM_STEP * ZOOM_STEP)
+	_press(_build_buttons["extractor"])
+	var target: Vector2i = (s.map["ore"] as Array)[1]
+	var px_map := Vector2(s.map["size"]) * Shapes.GRID
+	_pan = (px_map * 0.5 - _center(target)) * _zoom
+	_clamp_pan()
+	var before: int = s.nodes.size()
+	_click(target)
+	for _i in 3:
+		await get_tree().process_frame
+	var hit_ok: bool = s.nodes.size() == before + 1 and not s.node_at(target).is_empty()
+
+	print("[TL_CLICKTEST/view] fit=%s fills=%s inside=%s bar_clear=%s zoom_in=%s pan_clamp=%s reset=%s floor=%s hit_after_zoom=%s　（fit=%.3f，格 %.1f px）" % [
+		at_fit, filled, inside, bar_clear, zoomed_in, pan_clamped, reset_ok, floor_ok,
+		hit_ok, _fit, Shapes.GRID * _fit
+	])
+	return (
+		at_fit and filled and inside and bar_clear and zoomed_in
+		and pan_clamped and reset_ok and floor_ok and hit_ok
+	)
 
 
 func _press(b: Button) -> void:
@@ -250,8 +393,11 @@ func _press(b: Button) -> void:
 ## GUI 的滑鼠路由要先有「游標在這裡」才認得出按下的是誰，所以**先送一個移動事件**。
 ## 走 `Input.parse_input_event()`（完整輸入管線）而不是 `Viewport.push_input()`：
 ## 後者繞過了一部分 GUI 狀態的建立，測不到真實玩家會走的那條路。
+## ★ `_center()` 回的是**地圖座標**，合成滑鼠事件要的是**螢幕座標**——
+## 中間差的就是縮放與平移那個變換（B1.2.2）。少了 `_to_screen()`，
+## 這支自檢會點到旁邊那一格去，而畫面上一切看起來都正常。
 func _click(cell: Vector2i) -> void:
-	_click_at(_center(cell))
+	_click_at(_to_screen(_center(cell)))
 
 
 ## 像素座標版。**加粗要點的是兩個節點「之間」**，那不是任何一格的中心。
@@ -314,13 +460,30 @@ func _process(delta: float) -> void:
 ## **整個輸入層在這之前是零覆蓋。** 對策：`TL_CLICKTEST=1`（見 `_click_selftest()`）。
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
-		var c := _cell_at((event as InputEventMouseMotion).position)
+		var mm := event as InputEventMouseMotion
+		# ★ 平移模式：按著左鍵拖。**用一個模式鈕而不是右鍵或中鍵**——手機移植
+		#   預留條款 P3「操作不得只靠 hover／右鍵／鍵盤」，而拖曳在觸控上就是拖曳。
+		if _mode == Mode.PAN and (mm.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
+			_pan += mm.relative
+			_clamp_pan()
+			queue_redraw()
+			return
+		var c := _cell_at(mm.position)
 		if c != _hover:
 			_hover = c
 			_refresh_hint()
 		return
 	var mb := event as InputEventMouseButton
-	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+	if mb == null or not mb.pressed:
+		return
+	# 滾輪縮放是桌面的便利，不是唯一的路：底欄有 ＋／−／全景 三顆鈕（P3）。
+	if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+		_zoom_by(ZOOM_STEP, mb.position)
+		return
+	if mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		_zoom_by(1.0 / ZOOM_STEP, mb.position)
+		return
+	if mb.button_index != MOUSE_BUTTON_LEFT:
 		return
 	_act(_cell_at(mb.position), _point_at(mb.position))
 	_refresh_hint()
@@ -351,6 +514,10 @@ func _act(cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> void:
 				_message = _text_of(BuildController.upgrade(s, ci))
 		Mode.DEMOLISH:
 			_message = _text_of(BuildController.demolish(s, cell, p))
+		Mode.PAN:
+			# 拖曳在 `_gui_input` 處理；單擊在這個模式下刻意什麼都不做——
+			# 平移模式最重要的性質是「不會誤蓋東西」。
+			_message = "移動模式：按著左鍵拖動地圖。要蓋東西請先切回左欄。"
 
 
 func _text_of(code: String) -> String:
@@ -362,13 +529,15 @@ func _label_at(cell: Vector2i) -> String:
 	return NodeDefs.label(String(n["type"])) if not n.is_empty() else "空地"
 
 
+## 螢幕像素 → 格號。**縮放與平移的反變換就在這一行**，命中判定與繪圖
+## 因此永遠對得起來（各寫一份的那一天，滑鼠就會差半格）。
 func _cell_at(pos: Vector2) -> Vector2i:
-	return Shapes.to_grid(pos - ORIGIN)
+	return Shapes.to_grid((pos - _map_origin()) / _zoom)
 
 
 ## 螢幕像素 → **格為單位的浮點座標**（整數＝格中心）。
 func _point_at(pos: Vector2) -> Vector2:
-	return (pos - ORIGIN) / Shapes.GRID - Vector2(0.5, 0.5)
+	return (pos - _map_origin()) / (Shapes.GRID * _zoom) - Vector2(0.5, 0.5)
 
 
 func _in_map(c: Vector2i) -> bool:
@@ -380,13 +549,17 @@ func _in_map(c: Vector2i) -> bool:
 
 func _draw() -> void:
 	var size: Vector2i = s.map["size"]
-	var rect := Rect2(ORIGIN, Vector2(size) * Shapes.GRID)
+	var rect := Rect2(Vector2.ZERO, Vector2(size) * Shapes.GRID)
+
+	# ★ 全部的地圖繪圖都在**格為單位的地圖座標**裡做，縮放與平移交給這一個
+	#   變換（B1.2.2）。所以底下每一支 `_draw_*` 都不知道縮放存在——
+	#   縮放要是滲進 9 支繪圖函式裡，每加一種圖形就要記得乘一次倍率。
+	#   文字不受影響：`_draw()` 裡沒有任何 `draw_string`，HUD 全是 Control 子節點。
+	draw_set_transform(_map_origin(), 0.0, Vector2(_zoom, _zoom))
 	draw_rect(rect, Palette.BG_PANEL)
 
 	# 網格只畫在地圖範圍內：畫到浮層底下會讓「哪裡可以蓋」變得曖昧。
-	draw_set_transform(ORIGIN, 0.0, Vector2.ONE)
-	Shapes.draw_grid(self, Rect2(Vector2.ZERO, Vector2(size) * Shapes.GRID))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	Shapes.draw_grid(self, rect)
 
 	_engaged = Combat.engaged(s.nodes, Combat.enemy_cells(s.enemies, s.path))
 	_draw_path()
@@ -402,7 +575,29 @@ func _draw() -> void:
 		Palette.WARN_ORANGE if s.phase == "wave" else Palette.ORDER_CYAN,
 		0.10 if s.phase == "wave" else 0.03
 	))
+
+	# ── 回到螢幕座標 ──────────────────────────────────────────────────
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_draw_frame_matte()
 	_draw_energy_bar()
+
+
+## 放大之後地圖比框架大，多出來的部分要被切掉，否則會爬到頂欄與建造欄底下。
+## 直接畫四塊不透明的邊條當遮罩——`Control.clip_contents` 夾的是**整個滿版
+## 節點**（＝整個畫面），對「只夾住框架」這件事沒有用，而為此把 1500 行的
+## 繪圖搬進一個子節點，換到的只是同一個結果。
+func _draw_frame_matte() -> void:
+	var f := FRAME
+	var w := size.x
+	var h := size.y
+	for r: Rect2 in [
+		Rect2(0.0, 0.0, w, f.position.y),                                  # 上
+		Rect2(0.0, f.end.y, w, maxf(0.0, h - f.end.y)),                    # 下
+		Rect2(0.0, f.position.y, f.position.x, f.size.y),                  # 左
+		Rect2(f.end.x, f.position.y, maxf(0.0, w - f.end.x), f.size.y),    # 右
+	]:
+		if r.size.x > 0.0 and r.size.y > 0.0:
+			draw_rect(r, Palette.BG_DEEP)
 
 
 func _draw_path() -> void:
@@ -653,8 +848,10 @@ func _draw_energy_bar() -> void:
 	var supply := float(r["power_supply"])
 	var demand := float(r["power_demand"])
 	var span := maxf(1.0, maxf(supply, demand))
-	var w := float(s.map["size"].x) * Shapes.GRID
-	var at := Vector2(ORIGIN.x, ORIGIN.y - 12.0)
+	# ★ 跨滿**框架**而不是跨滿地圖（B1.2.2）：框架恆定，所以這條「全畫面最醒目
+	#   的元件」在每一關都是同一個長度，長度即資訊那句話才跨關成立。
+	var w := FRAME.size.x
+	var at := Vector2(FRAME.position.x, FRAME.position.y - 12.0)
 	draw_rect(Rect2(at, Vector2(w, 8.0)), Palette.BG_RAISED)
 	draw_rect(Rect2(at, Vector2(w * supply / span, 8.0)), Palette.ENERGY_AMBER)
 	if demand > supply:
@@ -763,12 +960,19 @@ func _draw_connect_guides() -> void:
 			draw_line(from, _center(end), col, 1.0)
 
 
+## ★ 地圖座標（格 × 32px），**不是螢幕座標**——縮放與平移由 `_draw()` 開頭
+## 那一個 `draw_set_transform` 統一處理（B1.2.2）。
 func _world(c: Vector2i) -> Vector2:
-	return ORIGIN + Shapes.to_world(c)
+	return Shapes.to_world(c)
 
 
 func _center(c: Vector2i) -> Vector2:
 	return _world(c) + Vector2(Shapes.GRID, Shapes.GRID) * 0.5
+
+
+## 地圖座標 → 螢幕座標。只有需要拿螢幕位置的地方才用（例：把浮層對到節點上）。
+func _to_screen(p: Vector2) -> Vector2:
+	return _map_origin() + p * _zoom
 
 
 # ── 浮層 ──────────────────────────────────────────────────────────────
@@ -779,6 +983,24 @@ func _build_ui() -> void:
 	add_child(_top)
 	for i in 7:
 		_top.add_child(UiKit.label("", 15, Palette.TEXT_PRIMARY, false))
+
+	# ★ 縮放（B1.2.2）。放在頂欄右端那片空白——建造欄與底欄都已經滿了，
+	#   而地圖右上角是縮放控制的慣例位置。**三顆鈕都是可點的**：滾輪只是
+	#   桌面的便利，手機移植預留條款 P3 不許任何操作只有滾輪／右鍵一條路。
+	var zoom_bar := UiKit.hbox(6)
+	zoom_bar.position = Vector2(1072, 6)
+	add_child(zoom_bar)
+	for pair: Array in [["−", 1.0 / ZOOM_STEP], ["＋", ZOOM_STEP]]:
+		var zb := Button.new()
+		zb.text = String(pair[0])
+		zb.pressed.connect(_on_zoom.bind(float(pair[1])))
+		zoom_bar.add_child(UiKit.touchable(zb))
+	_zoom_button = Button.new()
+	# 倍率印在「全景」鈕上，不另給一個標籤——底欄與建造欄都沒有空位了，
+	# 而「現在幾倍」與「回到全景」本來就是同一件事的兩面。
+	_zoom_button.pressed.connect(_on_zoom_reset)
+	zoom_bar.add_child(UiKit.touchable(_zoom_button))
+	_refresh_zoom()
 
 	# 間距 2 而不是 4：B1.1 起建造欄有 10 種節點＋3 個模式鈕，44px 的觸控高度
 	# （手機移植前提，不能縮）乘 13 已經吃掉 572px，只剩間距可以讓。
@@ -815,11 +1037,24 @@ func _build_ui() -> void:
 	(_build_buttons[_build_type] as Button).button_pressed = true
 
 	col.add_child(_spacer(4))
-	for pair: Array in [[Mode.CONNECT, "連線"], [Mode.UPGRADE, "加粗"], [Mode.DEMOLISH, "拆除"]]:
+	# ★ 四個動作鈕改**兩欄兩列**（B1.2.2）。加上「移動」之後單欄會滿：
+	#   第 5 關的 10 顆建造鈕 ＋ 4 顆動作鈕 × 44px 觸控高度（手機移植前提，
+	#   不能縮）＝ 646px，從 y=56 起算會撞到 y=668 的底欄。
+	#   鈕被擠出畫面時 `_draw()` 完全不會抱怨——這正是 RG-47 在守的事。
+	var modes := GridContainer.new()
+	modes.columns = 2
+	modes.add_theme_constant_override("h_separation", 2)
+	modes.add_theme_constant_override("v_separation", 2)
+	col.add_child(modes)
+	for pair: Array in [
+		[Mode.CONNECT, "連線"], [Mode.UPGRADE, "加粗"],
+		[Mode.DEMOLISH, "拆除"], [Mode.PAN, "移動"],
+	]:
 		var b := _tool_button(group, String(pair[1]))
+		b.custom_minimum_size = Vector2(54, 0)   # 兩欄要塞進 112px 的欄寬
 		b.pressed.connect(_on_mode.bind(int(pair[0])))
 		_mode_buttons[int(pair[0])] = b
-		col.add_child(UiKit.touchable(b))
+		modes.add_child(UiKit.touchable(b))
 
 	# 建造欄放不下八種節點再加動作鈕（8×44 已經吃掉 380px），
 	# 所以時間流與面板開關搬到地圖下緣那條 56px 的空帶——那裡本來就空著。
@@ -1414,6 +1649,7 @@ func _restart() -> void:
 	_codex_panel = null
 	_codex_button = null
 	_codex_label = null
+	_zoom_button = null
 	_energy_rows.clear()
 	_prio_labels.clear()
 	_mode_buttons.clear()

@@ -100,8 +100,14 @@ static func _fill_defaults(target: Dictionary, defs: Dictionary) -> void:
 # ─────────────────────────────────────────────────────────────
 
 ## 讀檔並**原地**填入 target，維持所有既有引用有效（§2.3）。
+##
+## ★ **有測試鉤子時連「讀」都不讀真存檔**（B1.2.2）。原本只擋寫入，於是
+## 任何 `TL_*` 跑出來的畫面都會跟著這台機器上玩家的進度變——`TL_SHOT`
+## 「同參數在任何機器上拍出同一張圖」那句保證，在關卡選擇畫面上是假的
+## （已通關幾關就長不一樣），而 `TL_CLICKTEST` 對「第 2 關是鎖著的」
+## 這種斷言會在玩過的機器上無故變紅。鉤子在兩個方向上都該是空操作。
 func load_into(target: Dictionary) -> void:
-	var loaded := normalize(_read_raw())
+	var loaded := normalize({} if not persist else _read_raw())
 	target.clear()
 	target.merge(loaded, true)
 

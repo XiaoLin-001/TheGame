@@ -28,6 +28,35 @@ static func conduit_width(flow: float, scale: float) -> float:
 	return 2.0 + 6.0 * clampf(flow / scale, 0.0, 1.0)
 
 
+## ★ 可讀性地板（B1.2.2）。**視覺編碼是在 32px 的格子上校準與驗收的**
+## （線寬 2–8px、三態徽章、射程圈，B0.6 的 `TL_NAKED` 讀圖紀錄）。
+##
+## 地圖框架固定之後，格子的像素大小 ＝ `GRID × fit_zoom`，也就是**圖越大格越小**。
+## 24px 是 32 的四分之三：低於它，8px 的滿載線寬只剩 6px、徽章開始糊成一團，
+## 「一眼看出瓶頸」（R-3）就不再是驗過的事。
+##
+## 這不是硬性禁令，是一條**要重新驗收才能跨過的線**：真的需要 40×40 的圖，
+## 就先拿那張圖跑一次 `TL_NAKED` 讀圖，把結論寫進 `50_QA_PLAN.md`。
+const MIN_READABLE_CELL := 24.0
+
+
+## 一張地圖剛好填滿框架的縮放倍率。取兩軸較小值——較大值會讓另一軸溢出，
+## 而「進場就看得到全貌」是框架存在的理由。
+##
+## 純函式放在這裡而不是畫面層：`campaign_test` 要拿它算每一關的格子大小，
+## 而測試不開視窗。
+static func fit_zoom(map_cells: Vector2i, frame: Vector2) -> float:
+	var px := Vector2(map_cells) * GRID
+	if px.x <= 0.0 or px.y <= 0.0:
+		return 1.0
+	return minf(frame.x / px.x, frame.y / px.y)
+
+
+## 這張圖在框架裡的一格會有幾個像素。
+static func fit_cell_px(map_cells: Vector2i, frame: Vector2) -> float:
+	return GRID * fit_zoom(map_cells, frame)
+
+
 ## 座標 ↔ 網格互換。
 static func to_grid(world: Vector2) -> Vector2i:
 	return Vector2i(floori(world.x / GRID), floori(world.y / GRID))
