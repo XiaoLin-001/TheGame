@@ -131,25 +131,29 @@ const SANDBOX := {
 	"start_ore": 9999,
 	"prep_time": 600.0,   # 沒有波次表，倒數只是為了不要立刻判「通關」
 	"crossings": [],
-	"ore": [Vector2i(2, 2), Vector2i(2, 3)],
+	# ★ B1.6.1：原本是 (2,2) 與 (2,3)，兩顆礦**同一列**——於是兩條到熔爐的線
+	# 完全共線、疊在同一排像素上，兩排流動珠交錯成一團（使用者回報「有破圖、
+	# 有重疊」）。錯開成一直一斜之後兩條線各走各的，而「兩條 cap 10 的線
+	# 餵一台吃 8 的熔爐」這個測試前提完全不變。
+	"ore": [Vector2i(2, 2), Vector2i(4, 4)],
 }
 
 ## 沙盤佈局：一座三路都接好的熔爐。
 ##
-##   (2,2)採集器 ─┬─ (6,2)發電機 ──45°── (2,6)熔爐 ── (6,6)中繼 ──45°── (10,10)核心
-##   (2,3)採集器 ─┘
+##   (2,2)採集器 ──垂直── (2,6)熔爐 ── (6,6)中繼 ──45°── (10,10)核心
+##   (4,4)採集器 ──45°───┘        （(6,2)發電機 ──45°── (2,6)熔爐）
 ##
 ## 兩台採集器 12 礦砂/秒 ＝ 發電機 4 ＋ 熔爐 8，剛好餵滿：所以這張圖上
 ## **礦砂入帳是 0 而合金入帳是 2/秒**——「兩張網各解各的」在畫面上就是這句話。
 const SANDBOX_DEMO := [
 	["place", "extractor", Vector2i(2, 2)],
-	["place", "extractor", Vector2i(2, 3)],
+	["place", "extractor", Vector2i(4, 4)],
 	["place", "generator", Vector2i(6, 2)],
 	["place", "smelter", Vector2i(2, 6)],
 	["place", "relay", Vector2i(6, 6)],
 	["conduit", Vector2i(2, 2), Vector2i(6, 2)],    # 礦 → 發電機
-	["conduit", Vector2i(2, 2), Vector2i(2, 6)],    # 礦 → 熔爐
-	["conduit", Vector2i(2, 3), Vector2i(2, 6)],    # 礦 → 熔爐
+	["conduit", Vector2i(2, 2), Vector2i(2, 6)],    # 礦 → 熔爐（垂直）
+	["conduit", Vector2i(4, 4), Vector2i(2, 6)],    # 礦 → 熔爐（45°，不與上一條共線）
 	["conduit", Vector2i(6, 2), Vector2i(2, 6)],    # 電 → 熔爐（45°）
 	["conduit", Vector2i(2, 6), Vector2i(6, 6)],    # 合金 → 中繼
 	["conduit", Vector2i(6, 6), Vector2i(10, 10)],  # 中繼 → 核心（45°）

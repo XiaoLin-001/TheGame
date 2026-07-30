@@ -26,6 +26,7 @@ func _initialize() -> void:
 	_generator_saturates_base_trunk(t)
 	_preview_before_paying(t)
 	_short_diagonal_is_clickable(t)
+	_no_overlapping_conduits(t)
 	quit(t.report())
 
 
@@ -276,6 +277,47 @@ func _short_diagonal_is_clickable(t: T) -> void:
 	var pick_a: int = s.conduit_near(Vector2(14.5, 10.0))
 	var pick_b: int = s.conduit_near(Vector2(13.5, 9.5))
 	t.ok(pick_a != pick_b, "★ 同一個節點上的兩條線分得開（靠哪條近選哪條）")
+
+
+## ★ 使用者回報：「有破圖，有重疊」（B1.6.1）。**他是對的。**
+##
+## 兩條共線導管可以疊在同一排格上，於是畫面上是一條線、實際是兩條，
+## 兩排流動珠交錯成一團；`conduit_near()` 在它們之間也只能任選一條
+## （加粗會加到你沒指的那一條）。
+##
+## 這一條鎖的是：**疊 2 格以上不准，共用 1 格（交叉／分岔）照樣可以。**
+func _no_overlapping_conduits(t: T) -> void:
+	var s := _session()
+	for cell: Vector2i in [Vector2i(6, 12), Vector2i(6, 14), Vector2i(6, 16), Vector2i(9, 12)]:
+		BuildController.place(s, "relay", cell)
+	t.eq(BuildController.lay_conduit(s, Vector2i(6, 12), Vector2i(6, 16)), Build.OK, "先拉一條長的")
+	# 完全落在上面那條裡面 → 疊 3 格。
+	t.eq(
+		BuildController.lay_conduit(s, Vector2i(6, 14), Vector2i(6, 16)), Build.OVERLAPS,
+		"★ 共線且疊在裡面 → 擋下"
+	)
+	# 反過來也一樣（規則不看誰先蓋）。
+	var s2 := _session()
+	for cell: Vector2i in [Vector2i(6, 12), Vector2i(6, 14), Vector2i(6, 16)]:
+		BuildController.place(s2, "relay", cell)
+	BuildController.lay_conduit(s2, Vector2i(6, 14), Vector2i(6, 16))
+	t.eq(
+		BuildController.lay_conduit(s2, Vector2i(6, 12), Vector2i(6, 16)), Build.OVERLAPS,
+		"★ 先蓋短的再蓋長的，一樣擋下"
+	)
+	# **共用 1 格是合法的**：從同一個節點分岔出去、或十字交叉。
+	t.eq(
+		BuildController.lay_conduit(s, Vector2i(6, 12), Vector2i(9, 12)), Build.OK,
+		"★ 從同一個節點分岔（只共用那一格）照樣可以"
+	)
+	# 從節點旁邊經過而不接它，**不禁**——那是一個真的戰術選擇。
+	var s3 := _session()
+	for cell: Vector2i in [Vector2i(6, 12), Vector2i(6, 14), Vector2i(6, 16)]:
+		BuildController.place(s3, "relay", cell)
+	t.eq(
+		BuildController.lay_conduit(s3, Vector2i(6, 12), Vector2i(6, 16)), Build.OK,
+		"★ 穿過中間那個節點而不接它是合法的（沒有既有導管可疊）"
+	)
 
 
 func _session() -> RefCounted:

@@ -26,6 +26,7 @@ const MAX_LEVEL := "max_level"
 const NO_ORE := "no_ore"
 const NO_ALLOY := "no_alloy"
 const LOCKED := "locked"            # 這一關還沒解鎖這種節點（`10_GDD.md` §7.9）
+const OVERLAPS := "overlaps"        # 這條線會和既有導管疊在同一排格上（B1.6.1）
 
 
 ## 導管吞吐上限。局內升級每級 +6，上限 3 級 → 28（§7.2）。
@@ -106,7 +107,25 @@ static func can_place(sets: Dictionary, occupied: Dictionary, type: String, cell
 
 ## 導管合法性。兩端都必須是既有節點的格（呼叫端保證），中間不得跨路徑，
 ## **除非那一格是跨越點**（§3.2：橋是路徑上唯一可鋪導管處）。
-static func can_connect(sets: Dictionary, existing: Dictionary, a: Vector2i, b: Vector2i) -> String:
+##
+## ★ **不得和既有導管疊在同一排格上**（B1.6.1，使用者回報「有破圖、有重疊」）。
+##
+## 兩條線**共用 2 格以上**就是疊在一起：畫面上是兩條線畫在同一排像素、
+## 兩排流動珠交錯成一團，而沒有任何辦法看出那裡有兩條線；`conduit_near()`
+## 的距離判定在它們之間也只能任選一條（加粗會加到你沒指的那一條）。
+##
+## **共用 1 格是合法的**——那是交叉或在同一個節點分岔，本來就要允許。
+##
+## 這條規則刻意**不是**「不准穿過節點」：從一個節點旁邊經過而不接它，
+## 在流量網路裡是一個真的戰術選擇（接上去就得和它共用那條線的 cap）。
+## 被禁掉的只有「看起來是一條線、其實是兩條」這件事。
+##
+## `existing_cells` 是既有導管的 `cells` 陣列；省略就是不檢查這一條
+## （純幾何的呼叫端不需要它）。
+static func can_connect(
+	sets: Dictionary, existing: Dictionary, a: Vector2i, b: Vector2i,
+	existing_cells: Array = []
+) -> String:
 	if a == b:
 		return SAME_NODE
 	if not is_straight(a, b):
@@ -115,11 +134,20 @@ static func can_connect(sets: Dictionary, existing: Dictionary, a: Vector2i, b: 
 		return DUPLICATE
 	var path: Dictionary = sets.get("path", {})
 	var crossings: Dictionary = sets.get("crossings", {})
+	var mine: Dictionary = {}
 	for c: Vector2i in line_cells(a, b):
+		mine[c] = true
 		if c == a or c == b:
 			continue
 		if path.has(c) and not crossings.has(c):
 			return CROSSES_PATH
+	for cells: Array in existing_cells:
+		var shared := 0
+		for c: Vector2i in cells:
+			if mine.has(c):
+				shared += 1
+				if shared >= 2:
+					return OVERLAPS
 	return OK
 
 

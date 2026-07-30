@@ -202,6 +202,14 @@ func occupied() -> Dictionary:
 	return d
 
 
+## 既有導管佔用的格，供「不得疊在一起」檢查用（B1.6.1）。
+func conduit_cells() -> Array:
+	var out: Array = []
+	for c: Dictionary in conduits:
+		out.append(c["cells"])
+	return out
+
+
 func conduit_keys() -> Dictionary:
 	var d: Dictionary = {}
 	for c: Dictionary in conduits:

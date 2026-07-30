@@ -24,6 +24,7 @@ const REASONS := {
 	Build.NO_ORE: "礦砂不夠",
 	Build.NO_ALLOY: "合金不夠——合金要蓋熔爐、而且熔爐要接到核心才入帳",
 	Build.LOCKED: "這一關還沒解鎖這種節點",
+	Build.OVERLAPS: "這條線會和一條既有導管疊在一起——兩條線畫在同一排格上看不出是兩條，請改個走法",
 }
 
 
@@ -52,7 +53,7 @@ static func place(s: RefCounted, type: String, cell: Vector2i) -> String:
 static func lay_conduit(s: RefCounted, a: Vector2i, b: Vector2i) -> String:
 	if s.node_at(a).is_empty() or s.node_at(b).is_empty():
 		return Build.SAME_NODE if a == b else Build.OCCUPIED
-	var code: String = Build.can_connect(s.sets, s.conduit_keys(), a, b)
+	var code: String = Build.can_connect(s.sets, s.conduit_keys(), a, b, s.conduit_cells())
 	if code != Build.OK:
 		return code
 	var cost := Build.conduit_cost(a, b)

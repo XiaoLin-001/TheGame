@@ -61,7 +61,7 @@ func _breaker_splash(t: T) -> void:
 	var s := _session()
 	_power_plant(s)
 	BuildController.place(s, "breaker", Vector2i(16, 6))
-	BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(16, 6))
+	BuildController.lay_conduit(s, Vector2i(16, 8), Vector2i(16, 6))
 	_spawn_at(s, "drifter", 16.0)
 	s.add_enemy("drifter")
 	s.enemies[s.enemies.size() - 1]["progress"] = 15.0
@@ -210,7 +210,7 @@ func _engage_power(t: T) -> void:
 	var busy := _session()
 	_power_plant(busy)
 	BuildController.place(busy, "anchor", Vector2i(16, 7))   # 距路徑 (16,4) 3 格 < 射程 4
-	BuildController.lay_conduit(busy, Vector2i(16, 11), Vector2i(16, 7))
+	BuildController.lay_conduit(busy, Vector2i(16, 8), Vector2i(16, 7))
 	_spawn_at(busy, "drifter", 16.0)
 	BattleController.step(busy)
 
@@ -230,9 +230,14 @@ func _starved_towers_slow_down(t: T) -> void:
 	var s := _session()
 	_power_plant(s)
 	BuildController.place(s, "relay", Vector2i(16, 6))
-	BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(16, 6))
+	BuildController.lay_conduit(s, Vector2i(16, 8), Vector2i(16, 6))
+	# 幹線 cap 22：**瓶頸不在線上**，這支測試要看的是供給不足時的分配。
+	# ★ B1.6.1：索引 0（採集器→發電機）也要一起加粗——支線改從採集器接出去
+	#   之後，電是走「發電機 → 採集器 → 幹線」，那一段沒加粗就換它當瓶頸了。
+	BuildController.upgrade(s, 0)
+	BuildController.upgrade(s, 0)
 	BuildController.upgrade(s, 1)
-	BuildController.upgrade(s, 1)                     # 幹線 cap 22：瓶頸不在線上
+	BuildController.upgrade(s, 1)
 	BuildController.place(s, "prism", Vector2i(14, 6))
 	BuildController.place(s, "prism", Vector2i(18, 6))
 	BuildController.lay_conduit(s, Vector2i(16, 6), Vector2i(14, 6))
@@ -260,7 +265,7 @@ func _kill_salvage(t: T) -> void:
 	var s := _session()
 	_power_plant(s)
 	BuildController.place(s, "anchor", Vector2i(16, 7))
-	BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(16, 7))
+	BuildController.lay_conduit(s, Vector2i(16, 8), Vector2i(16, 7))
 	_spawn_at(s, "drifter", 16.0)
 	s.enemies[0]["hp"] = 1.0                          # 下一發必死
 	var before: float = s.ore
@@ -290,7 +295,7 @@ func _reclaimer_counts_deaths_not_kills(t: T) -> void:
 	t.near(s.salvage_total, 3.0, "同一次擊殺**同時**產生礦砂與能量（兩條規則並存）")
 
 	# 射程外的死亡不算——這正是「擺在殺戮最密集處」這道空間謎題的來源。
-	var far := _kill_beside_reclaimer(Vector2i(16, 14))   # 離路徑 10 格，射程 5
+	var far := _kill_beside_reclaimer(Vector2i(11, 12))   # 離擊殺點 9.4 格，射程 5
 	t.eq(far.kills, 1, "前置：一樣死了一隻")
 	t.near(
 		far.reclaimed_total, 0.0,
@@ -385,7 +390,7 @@ func _knell_aura(t: T) -> void:
 	var s := _session()
 	_power_plant(s)
 	BuildController.place(s, "knell", Vector2i(16, 7))
-	BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(16, 7))
+	BuildController.lay_conduit(s, Vector2i(16, 8), Vector2i(16, 7))
 	_spawn_at(s, "drifter", 16.0)
 	for i in 10:
 		BattleController.step(s)
@@ -402,7 +407,7 @@ func _priority_decides_who_starves(t: T) -> void:
 	BuildController.place(s, "relay", Vector2i(16, 6))
 	BuildController.place(s, "prism", Vector2i(14, 6))
 	BuildController.place(s, "anchor", Vector2i(18, 6))
-	BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(16, 6))   # 索引 1：幹線
+	BuildController.lay_conduit(s, Vector2i(16, 8), Vector2i(16, 6))   # 索引 1：幹線
 	BuildController.lay_conduit(s, Vector2i(16, 6), Vector2i(14, 6))    # 索引 2：稜鏡支線
 	BuildController.lay_conduit(s, Vector2i(16, 6), Vector2i(18, 6))
 	for i in 2:
@@ -478,12 +483,15 @@ func _power_plant(s: RefCounted) -> void:
 func _kill_beside_reclaimer(cell: Vector2i) -> RefCounted:
 	var s := _session()
 	_power_plant(s)
-	BuildController.place(s, "relay", Vector2i(16, 9))
-	BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(16, 9))
+	# ★ B1.6.1：樞紐從 (16,9) 移到 (14,9)。(16,9) 坐在「採集器→發電機」那條
+	#   導管的正中間，於是每一條從它接出去的線都整段疊在那條線上——
+	#   新規則（不得和既有導管疊在同一排格上）擋掉的正是這個。
+	BuildController.place(s, "relay", Vector2i(14, 9))
+	BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(14, 9))
 	BuildController.place(s, "reclaimer", cell)
-	BuildController.lay_conduit(s, Vector2i(16, 9), cell)
+	BuildController.lay_conduit(s, Vector2i(14, 9), cell)
 	BuildController.place(s, "anchor", Vector2i(14, 7))
-	BuildController.lay_conduit(s, Vector2i(16, 9), Vector2i(14, 7))
+	BuildController.lay_conduit(s, Vector2i(14, 9), Vector2i(14, 7))
 	_spawn_at(s, "drifter", 16.0)
 	s.enemies[0]["hp"] = 1.0
 	for i in 20:

@@ -260,8 +260,14 @@ const L4_DEMO := [
 	["place", "extractor", Vector2i(21, 10)],
 	["conduit", Vector2i(21, 10), Vector2i(18, 7)],
 	# ③ 幹線沿南緣往東接核心。
+	#    ★ B1.6.1：原本是 (10,9)→(16,15) 一條 45°，而它和上面那條
+	#    (11,10)→(10,9) **同一個斜向**——兩條線疊在同一排格上（使用者回報
+	#    「有重疊」）。改成「先垂直下來、再水平往東」，順帶把採集器 (11,10)
+	#    留在自己的支線上。
+	["place", "relay", Vector2i(10, 15)],
+	["conduit", Vector2i(10, 9), Vector2i(10, 15)],
 	["place", "relay", Vector2i(16, 15)],
-	["conduit", Vector2i(10, 9), Vector2i(16, 15)],
+	["conduit", Vector2i(10, 15), Vector2i(16, 15)],
 	["place", "relay", Vector2i(22, 15)],
 	["conduit", Vector2i(16, 15), Vector2i(22, 15)],
 	["place", "relay", Vector2i(25, 15)],
@@ -269,7 +275,8 @@ const L4_DEMO := [
 	["conduit", Vector2i(25, 15), Vector2i(27, 13)],
 	# 四座採集器 24/秒塞不進 cap 10。1 級加粗不用合金（§7.2），先撐到 16。
 	["upgrade", Vector2i(8, 7), Vector2i(18, 7), 1],
-	["upgrade", Vector2i(10, 9), Vector2i(16, 15), 1],
+	["upgrade", Vector2i(10, 9), Vector2i(10, 15), 1],
+	["upgrade", Vector2i(10, 15), Vector2i(16, 15), 1],
 	["upgrade", Vector2i(16, 15), Vector2i(22, 15), 1],
 	["upgrade", Vector2i(22, 15), Vector2i(25, 15), 1],
 	["upgrade", Vector2i(25, 15), Vector2i(27, 13), 1],
@@ -278,7 +285,7 @@ const L4_DEMO := [
 
 	# ④ ★ 熔爐。它**待機也吃 10 能量/秒**——這是它與塔最大的不同（§7.3）。
 	["place", "smelter", Vector2i(13, 12)],
-	["conduit", Vector2i(10, 9), Vector2i(13, 12)],
+	["conduit", Vector2i(13, 12), Vector2i(10, 15)],
 	["conduit", Vector2i(13, 12), Vector2i(16, 15)],
 	# ⑤ 第二台發電機蹲在菱形頂點，稜鏡貼著下坡那一列 x=24。
 	["place", "generator", Vector2i(22, 16)],
@@ -302,7 +309,8 @@ const L4_DEMO := [
 
 	# ⑥ ★ 合金到帳：幹線加粗到 2 級（cap 22）。這是全案第一次「非合金不可」
 	#    的加粗（1 級不要合金，§7.2）。順手把最後一顆礦接上。
-	["upgrade", Vector2i(10, 9), Vector2i(16, 15), 1],
+	["upgrade", Vector2i(10, 9), Vector2i(10, 15), 1],
+	["upgrade", Vector2i(10, 15), Vector2i(16, 15), 1],
 	["upgrade", Vector2i(16, 15), Vector2i(22, 15), 1],
 	["place", "extractor", Vector2i(14, 17)],
 	["conduit", Vector2i(14, 17), Vector2i(16, 15)],
@@ -319,9 +327,14 @@ const L5 := {
 	"id": "tidethroat",
 	"name": "潮汐之喉",
 	"size": Vector2i(34, 18),
-	"core": Vector2i(31, 15),
-	"waypoints": [Vector2i(0, 4), Vector2i(28, 4), Vector2i(28, 15), Vector2i(31, 15)],
-	"start_ore": 1000,
+	# ★ B1.6.1：核心從 (31,15) 上移到 (31,14)。理由是**流量網路的一條硬語意**：
+	# 節點會先吃滿自己的需求才轉發，所以**把塔擺在幹線的接點上，會餓死它下游
+	# 的一切**。稜鏡要兩條進線就得當接點，而那條幹線同時要餵核心旁邊的錨——
+	# 兩件事互斥。核心上移一格之後 y=16 空出來，稜鏡可以貼在下坡列旁邊、
+	# 由**兩個中繼**（不吃電）分岔進去，錨的線就不用穿過任何消費者。
+	"core": Vector2i(31, 14),
+	"waypoints": [Vector2i(0, 4), Vector2i(28, 4), Vector2i(28, 14), Vector2i(31, 14)],
+	"start_ore": 1240,
 	"prep_time": 45.0,
 	"crossings": [Vector2i(7, 4), Vector2i(15, 4), Vector2i(23, 4)],
 	"ore": [
@@ -357,9 +370,13 @@ const L5_DEMO := [
 	["conduit", Vector2i(13, 9), Vector2i(21, 17)],
 	["place", "relay", Vector2i(26, 17)],
 	["conduit", Vector2i(21, 17), Vector2i(26, 17)],
+	["place", "relay", Vector2i(27, 17)],
+	["conduit", Vector2i(26, 17), Vector2i(27, 17)],
 	["place", "relay", Vector2i(29, 17)],
-	["conduit", Vector2i(26, 17), Vector2i(29, 17)],
-	["conduit", Vector2i(29, 17), Vector2i(31, 15)],
+	["conduit", Vector2i(27, 17), Vector2i(29, 17)],
+	["place", "relay", Vector2i(29, 16)],
+	["conduit", Vector2i(29, 17), Vector2i(29, 16)],
+	["conduit", Vector2i(29, 16), Vector2i(31, 14)],
 
 	["wait", 300],
 
@@ -368,23 +385,32 @@ const L5_DEMO := [
 	["conduit", Vector2i(17, 17), Vector2i(21, 17)],
 	["place", "relay", Vector2i(26, 15)],
 	["conduit", Vector2i(26, 17), Vector2i(26, 15)],
-	["place", "prism", Vector2i(28, 17)],
-	["conduit", Vector2i(26, 17), Vector2i(28, 17)],
-	["conduit", Vector2i(26, 15), Vector2i(28, 17)],
+	# ★ 稜鏡貼在下坡那一列 x=28 的旁邊，由幹線上的**兩個中繼**各分一條線進去。
+	#    中繼不吃電，所以錨那條線穿過它們不會被吃掉——這正是不能拿塔當接點的
+	#    理由（`sim/FlowNetwork` 的節點先吃滿自己才轉發）。
+	["place", "prism", Vector2i(28, 16)],
+	["conduit", Vector2i(27, 17), Vector2i(28, 16)],
+	["conduit", Vector2i(29, 17), Vector2i(28, 16)],
 	["place", "anchor", Vector2i(30, 17)],
 	["conduit", Vector2i(30, 17), Vector2i(29, 17)],
-	["place", "extractor", Vector2i(19, 15)],
-	["conduit", Vector2i(19, 15), Vector2i(21, 17)],
 	["place", "extractor", Vector2i(24, 13)],
 	["conduit", Vector2i(24, 13), Vector2i(26, 15)],
+	# (19,15) 那顆礦接**熔爐**而不是 (21,17)：接後者的話那條線會和主幹線
+	# (13,9)→(21,17) 同一個斜向、疊在一起（B1.6.1）。
+	["place", "extractor", Vector2i(19, 15)],
+	["conduit", Vector2i(19, 15), Vector2i(17, 17)],
 	["place", "knell", Vector2i(26, 13)],
 	["conduit", Vector2i(26, 13), Vector2i(26, 15)],
 	["place", "silo", Vector2i(27, 16)],
 	["conduit", Vector2i(27, 16), Vector2i(26, 17)],
 	# ★ 第三台發電機。全開的防線要 55 能量/秒，兩台只有 40——
 	#    這一關的峰值電力算術是前四關的總和。
-	["place", "generator", Vector2i(24, 17)],
-	["conduit", Vector2i(24, 17), Vector2i(26, 17)],
+	# ★ 第三台發電機要掛在**幹線的下游**，也就是塔群這一側。
+	#    掛到上游（(22,16)→(21,17)）的話它那 20 能量/秒得跟其他所有東西
+	#    一起擠過 (21,17)→(26,17) 那一段，塔全部餓著而頂欄卻顯示供給 60。
+	#    這是「能量是流率不是水池」在關卡佈局上的直接後果（§3.1）。
+	["place", "generator", Vector2i(25, 16)],
+	["conduit", Vector2i(25, 16), Vector2i(26, 17)],
 
 	["wait", 400],
 
@@ -393,14 +419,28 @@ const L5_DEMO := [
 	["upgrade", Vector2i(21, 17), Vector2i(26, 17), 2],
 	["upgrade", Vector2i(7, 7), Vector2i(15, 7), 1],
 	["upgrade", Vector2i(15, 7), Vector2i(23, 7), 1],
-	["upgrade", Vector2i(26, 17), Vector2i(29, 17), 1],
-	["upgrade", Vector2i(29, 17), Vector2i(31, 15), 1],
+	# ★ 這一段要加粗到 2 級（cap 22）：稜鏡當接點之後，**錨在它的下游**——
+	#    稜鏡吃掉 20 之後還得留得下錨的 4，不然核心旁邊那座塔一發都打不出來
+	#    （而頂欄會顯示供給 60，因為問題從來不在發電量上）。
+	["upgrade", Vector2i(26, 17), Vector2i(27, 17), 2],
+	["upgrade", Vector2i(27, 17), Vector2i(29, 17), 1],
+	["upgrade", Vector2i(29, 17), Vector2i(29, 16), 1],
+	["upgrade", Vector2i(29, 16), Vector2i(31, 14), 1],
 
 	["wait", 400],
 
 	# ⑥ 碎浪守下坡段：140 礦砂 ＋ 60 合金，全案最貴的一座塔。
 	["place", "breaker", Vector2i(26, 11)],
 	["conduit", Vector2i(26, 11), Vector2i(26, 13)],
+	# ★ 東側防線全開要 45 能量/秒（稜鏡 20 ＋ 碎浪 12 ＋ 潮鳴 9 ＋ 錨 4），
+	#    而每一條進去的線預設只有 10——**第三台發電機自己那條線就是第一個瓶頸**
+	#    （20 的輸出塞不進 cap 10，§7.2 那一課的最後一次考試）。
+	#    這幾段擺在最後：2 級加粗一條要 20 合金，五條就是 100，得等熔爐煉出來。
+	["upgrade", Vector2i(25, 16), Vector2i(26, 17), 2],
+	["upgrade", Vector2i(26, 17), Vector2i(26, 15), 1],
+	# 潮鳴／碎浪那條支線**刻意不加粗**：合金已經花完了（五條 2 級 ＝ 100），
+	# 而參考解本來就不該是最佳解——它只要證明這一關過得了。
+	["upgrade", Vector2i(26, 15), Vector2i(26, 13), 1],
 ]
 
 

@@ -706,25 +706,51 @@ func _draw_conduits() -> void:
 		var pa := _center(c["a"])
 		var pb := _center(c["b"])
 		var perp := (pb - pa).normalized().orthogonal()
+		# ★ B1.6.1：刻度必須**明確伸出管緣**。原本固定 ±5px，而滿載的管子
+		#   本身就有 8px 寬——刻度只比它寬一點點，畫成近白青之後讀起來是
+		#   「管子這裡破了一個洞」（使用者回報「有破圖」）。
+		#   現在長度跟著線寬走並固定外露 3px，而且貼在起點端而不是線長 12%
+		#   那個沒有意義的位置：等級是這條線的屬性，標在接頭上才讀得出來。
+		var reach := w * 0.5 + 3.0
+		var tick_w := maxf(1.5, 2.0 / maxf(0.2, _zoom))
+		var step := maxf(3.0, 4.0 / maxf(0.2, _zoom))
+		# 起點要**閃過節點自己的圖形**：節點最大到半徑 13（碎浪的外框），
+		# 貼太近就被畫在它底下看不見（第一版貼 6px，截圖當場抓到）。
+		# 短線上再夾一次，免得刻度跑過中點看起來像掛在另一端。
+		var span := pa.distance_to(pb)
+		var head := minf(17.0, span * 0.32)
 		for i in range(int(c["level"])):
-			var at := pa.lerp(pb, 0.12 + 0.05 * float(i))
-			draw_line(at - perp * 5.0, at + perp * 5.0, Palette.ORDER_BRIGHT, 2.0)
+			var at := pa + (pb - pa).normalized() * (head + step * float(i))
+			draw_line(at - perp * reach, at + perp * reach, Palette.ORDER_BRIGHT, tick_w)
 		# ★ 流動珠：礦砂／能量／合金各一列，各自往自己的淨流向跑（§1.4a）。
 		var net: Vector3 = (s.rates["conduit_net"] as Dictionary).get(c["id"], Vector3.ZERO)
 		# 只有一種資源在跑時**走線的正中央**：多數導管都是這種，
 		# 硬要分排會讓珠子懸在細線外面，看起來像掉出來的東西。
 		# 三種同時跑的線（熔爐那條）中間讓給合金，礦砂與能量各退一邊。
-		var lanes := 0
-		for v: float in [net.x, net.y, net.z]:
-			if absf(v) >= BEAD_MIN_RATE:
-				lanes += 1
-		var off := (w * 0.45 + 1.0) if lanes > 1 else 0.0
+		# ★ B1.6.1：珠子**一律走中線**，多種資源沿長度錯開相位，不再各佔一排。
+		#
+		# 原本是垂直偏移 `w * 0.45 + 1.0`，而它沒有夾在管子裡：8px 寬的線上
+		# 偏移 4.6 ＋ 珠半徑 2.6 ＋ 光暈 1.2 ＝ 8.4，遠超過半寬 4——**珠子兩側
+		# 都掛在管子外面**，看起來像從管子裡漏出來的（使用者回報「有破圖」）。
+		#
+		# 夾住偏移不是辦法：真的夾進去之後三排珠子會擠成一團更難讀。
+		# 改成共用中線、**相位錯開**：白、琥珀、紫依序前進，位置不再承載資訊
+		# （那本來也不是它該講的事），顏色照樣分得出是哪一種資源。
+		var lanes: Array = []
+		for pair: Array in [
+			[net.x, Palette.TEXT_PRIMARY], [net.y, Palette.ENERGY_AMBER],
+			[net.z, Palette.ALLOY_VIOLET],
+		]:
+			if absf(float(pair[0])) >= BEAD_MIN_RATE:
+				lanes.append(pair)
 		# 礦砂珠用 `text.primary`（近白）而不是 `order.bright`：導管本身就是亮青，
 		# 亮青珠子在亮青線上只讀得出「這裡有個洞」，讀不出「有東西在跑」。
-		# 能量珠的琥珀、合金珠的鋼銀本來就與線色分屬不同色相，維持配色紀律 2。
-		_draw_beads(pa, pb, net.x, Palette.TEXT_PRIMARY, -off, w)
-		_draw_beads(pa, pb, net.y, Palette.ENERGY_AMBER, off, w)
-		_draw_beads(pa, pb, net.z, Palette.ALLOY_VIOLET, 0.0, w)  # 合金恆走中線
+		# 能量珠的琥珀、合金珠的紫本來就與線色分屬不同色相，維持配色紀律 2。
+		for i in lanes.size():
+			_draw_beads(
+				pa, pb, float(lanes[i][0]), lanes[i][1], w,
+				float(i) / float(lanes.size())
+			)
 
 
 ## ★ 流動珠（`20_ART_DIRECTION.md` §1.4a）。線寬與顏色說的是「這條線有多滿」，
@@ -740,8 +766,11 @@ func _draw_conduits() -> void:
 ## M0 一屏（13 條導管）約 500 次，無感；`30_TECH_DESIGN.md` §5 的壓力情境
 ## （2000 條導管）會爆到六位數。到那時改成單一 `draw_multiline` 批繪或
 ## 用 shader 把相位推進 GPU——**在量到之前不要先做**。
+## `lane_phase` 是 0..1 的相位偏移：多種資源在同一條線上時用它錯開，
+## 於是白、琥珀、紫依序前進而不是疊在一起（B1.6.1）。
 func _draw_beads(
-	a: Vector2, b: Vector2, amount: float, col: Color, offset: float, width: float
+	a: Vector2, b: Vector2, amount: float, col: Color, width: float,
+	lane_phase: float = 0.0
 ) -> void:
 	if absf(amount) < BEAD_MIN_RATE:
 		return  # 沒在流動的線必須是靜止的——這是「哪裡斷了」最快的讀法
@@ -749,19 +778,23 @@ func _draw_beads(
 	if span < 1.0:
 		return
 	var u := (b - a) / span
-	var side := u.orthogonal() * offset
 	# 相位用模擬秒數推（tick 數 ＋ 幀內插值），不用系統時間：
 	# 渲染可以不確定，但別引入新的亂數源。`TL_SHOT` 下模擬凍結 → 珠子也凍結。
 	var t := (float(s.tick_count) + _accum / BattleController.TICK) * BattleController.TICK
 	# 珠子大小跟著線寬走：這樣它**強化**「線寬＝流量」而不是把線戳成虛線。
 	# 固定大小的珠子在 2px 的細線上會蓋掉整條線，粗細那條資訊就沒了（R-3）。
-	var r := clampf(width * 0.32, 1.4, 3.0)
-	var x := fposmod(t * amount * BEAD_SPEED, BEAD_GAP)
+	# ★ 上限收到半寬：珠子不得比管子胖，否則它就是「管子上的腫塊」。
+	var r := clampf(width * 0.30, 1.4, width * 0.5)
+	# ★ 描邊是**螢幕固定粗細**（B1.6.1）。原本是固定 +1.2 地圖 px：在 r=1.4 的
+	#   細線上，光暈佔了直徑的 46%，讀起來是「管子上的洞」而不是「在跑的東西」；
+	#   而放大到 300% 時它又變成一圈很粗的黑框。1px 螢幕在任何倍率下都只是描邊。
+	var edge := 1.0 / maxf(0.2, _zoom)
+	var x := fposmod(t * amount * BEAD_SPEED + lane_phase * BEAD_GAP, BEAD_GAP)
 	while x < span:
-		var p := a + u * x + side
-		# **深色底是這個元素能被看見的唯一原因**：導管本身就是亮青，
+		var p := a + u * x
+		# **深色描邊是這個元素能被看見的唯一原因**：導管本身就是亮青，
 		# 亮青珠子畫在亮青線上等於沒畫（使用者實看 B0.6 時反映的正是這件事）。
-		draw_circle(p, r + 1.2, Palette.BG_DEEP)
+		draw_circle(p, r + edge, Palette.BG_DEEP)
 		draw_circle(p, r, col)
 		x += BEAD_GAP
 
@@ -1038,7 +1071,9 @@ func _draw_hover() -> void:
 		_draw_connect_guides()
 		# ★ 預覽線依**合法性**上色。B0.7.2 之前不管連不連得成都畫一條亮線，
 		#   那是在畫一條不可能存在的導管——玩家只能點下去才知道不行。
-		var code: String = Build.can_connect(s.sets, s.conduit_keys(), _connect_from, _hover)
+		var code: String = Build.can_connect(
+		s.sets, s.conduit_keys(), _connect_from, _hover, s.conduit_cells()
+	)
 		var legal: bool = code == Build.OK and not s.node_at(_hover).is_empty()
 		draw_line(
 			_center(_connect_from), _center(_hover),
@@ -1853,7 +1888,9 @@ func _next_step() -> String:
 func _connect_hint() -> String:
 	if s.node_at(_hover).is_empty():
 		return "終點也要是一個節點（先在那裡蓋一個「中繼」）。"
-	var code: String = Build.can_connect(s.sets, s.conduit_keys(), _connect_from, _hover)
+	var code: String = Build.can_connect(
+		s.sets, s.conduit_keys(), _connect_from, _hover, s.conduit_cells()
+	)
 	if code == Build.NOT_STRAIGHT:
 		var d: Vector2i = _hover - _connect_from
 		return "✕ 不是直線：橫 %d 直 %d。要走 45° 兩邊得一樣長；否則先放一個「中繼」轉彎。" % [

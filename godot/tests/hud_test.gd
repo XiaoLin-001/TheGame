@@ -268,10 +268,12 @@ func _one_kill(early: bool) -> RefCounted:
 	BuildController.place(s, "extractor", Vector2i(16, 8))
 	BuildController.place(s, "generator", Vector2i(16, 11))
 	BuildController.lay_conduit(s, Vector2i(16, 8), Vector2i(16, 11))
-	BuildController.place(s, "relay", Vector2i(16, 9))
-	BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(16, 9))
+	# ★ B1.6.1：樞紐從 (16,9) 移到 (14,9)。(16,9) 坐在「採集器→發電機」那條
+	#   導管的正中間，接出去的線會整段疊在它上面（新規則擋掉的正是這個）。
+	BuildController.place(s, "relay", Vector2i(14, 9))
+	BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(14, 9))
 	BuildController.place(s, "anchor", Vector2i(14, 7))
-	BuildController.lay_conduit(s, Vector2i(16, 9), Vector2i(14, 7))
+	BuildController.lay_conduit(s, Vector2i(14, 9), Vector2i(14, 7))
 	if not early:
 		s.phase_time = s.prep_time()
 	BattleController.start_wave(s)
