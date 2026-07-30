@@ -24,6 +24,13 @@ var click_test: bool = false
 ## `TL_LEVEL=1..5`：`TL_PANEL=campaign` 時直接進那一關（1-based，0 ＝ 停在關卡選擇）。
 ## 截圖與 `TL_SIM` 要指定關卡都走這裡。
 var level: int = 0
+## ★ `TL_FOCUS="x,y,zoom"`：把鏡頭對到某一格並放大 N 倍（B1.6）。
+##
+## 為什麼要有它：**特效是 0.2 秒、十幾個像素的東西**，在 fit 倍率的全圖截圖上
+## 根本判不出好壞——我會一直宣稱「碎片爆做好了」而沒有真的看過它。
+## 空字串＝照原本的 fit 全景。
+var focus: Vector2i = Vector2i(-1, -1)
+var focus_zoom: float = 1.0
 
 
 func _ready() -> void:
@@ -35,6 +42,12 @@ func _ready() -> void:
 	demo_ticks = Env.int_of("TL_DEMO_TICKS", 860)
 	click_test = Env.flag("TL_CLICKTEST")
 	level = Env.int_of("TL_LEVEL", 0)
+	var f := Env.str_of("TL_FOCUS")
+	if f != "":
+		var parts := f.split(",")
+		if parts.size() >= 2:
+			focus = Vector2i(int(parts[0]), int(parts[1]))
+			focus_zoom = float(parts[2]) if parts.size() >= 3 else 2.0
 	# 預設驗局內畫面；明寫 `TL_PANEL` 時尊重它（B1.2 起關卡選擇也要驗一次
 	# ——那個畫面的全部價值就是「一顆鈕點得到」）。
 	if click_test and panel == "":

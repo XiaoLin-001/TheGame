@@ -16,6 +16,7 @@ const Tide := preload("res://scripts/sim/Tide.gd")
 const Combat := preload("res://scripts/sim/Combat.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const CampaignData := preload("res://data/Campaign.gd")
+const Motion := preload("res://scripts/render/Motion.gd")
 
 ## 地圖左上角。36×19 格 ×32px = 1152×608；左側 120px 留給建造欄，
 ## 浮層與地圖**不重疊**（RG-20 的先行實踐，正式驗收在 B0.6）。
@@ -101,6 +102,9 @@ var _prio_labels: Dictionary = {}
 ## 本幀交戰中的塔 `{id: Array}`。繪圖層自己算——它要畫的是「誰正在吃電」，
 ## 而模擬只留了一個座數（`rates.engaged`）。
 var _engaged: Dictionary = {}
+## 本幀「正在被啃」的格（敵人相鄰 1 格內）。**純渲染推導，不新增任何狀態**
+## ——同一份判定模擬層每 tick 都在做（`Tide.in_blast`），這裡只是把它畫出來。
+var _threat: Dictionary = {}
 
 
 func _ready() -> void:
@@ -111,6 +115,11 @@ func _ready() -> void:
 	# 所以**畫面完全正常，但滑鼠命中區是空的**：整張地圖點不動（B0.7.2）。
 	# 這是「看起來對」與「真的對」差最遠的一種缺陷。
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# ★ 「減少動態效果」（§4.4）。B1.6 之前這是**死設定**：存檔裡有、
+	#   沒有任何人讀。設定畫面在 B1.4，在那之前它由存檔預設值（false）決定。
+	Motion.reduce = bool(
+		(GameState.data.get("settings", {}) as Dictionary).get("reduce_motion", false)
+	)
 	s = SessionState.new()
 	# `TL_PANEL=sandbox`：沙盤「靜水」（`data/Maps.gd`）。**合金那一列流動珠
 	# 只有這張圖上有**——淺灘的示範佈局沒有熔爐，所以第三種資源的視覺編碼
@@ -148,6 +157,13 @@ func _reset_view() -> void:
 	_fit = _fit_zoom()
 	_zoom = _fit
 	_pan = Vector2.ZERO
+	# ★ `TL_FOCUS="x,y,zoom"`：拍特效的近照（B1.6）。**不會在真實遊玩中生效**
+	#   ——它只在有鉤子時存在，而有鉤子時存檔已經是唯讀的。
+	if Hooks.focus.x >= 0:
+		_zoom = clampf(_fit * Hooks.focus_zoom, _fit, _fit * ZOOM_MAX_MULT)
+		var px := Vector2(s.map["size"]) * Shapes.GRID
+		_pan = (px * 0.5 - _center(Hooks.focus)) * _zoom
+		_clamp_pan()
 
 
 ## 地圖左上角在螢幕上的位置。**框架內居中**，放大後由 `_pan` 帶著走。
@@ -562,12 +578,14 @@ func _draw() -> void:
 	Shapes.draw_grid(self, rect)
 
 	_engaged = Combat.engaged(s.nodes, Combat.enemy_cells(s.enemies, s.path))
+	_threat = _threat_cells()
 	_draw_path()
 	_draw_ore_cells()
 	_draw_conduits()
 	_draw_nodes()
 	_draw_enemies()
 	_draw_shots()
+	_draw_bursts()
 	_draw_hover()
 	# 階段色調（`10_GDD.md` §6.2 硬性要求 4）：**不看計時器也知道自己在哪個階段**。
 	# 蓋在最上層而不是墊在底下——墊底的話節點與敵人會把它整片蓋掉。
@@ -813,6 +831,7 @@ func _draw_nodes() -> void:
 				# 外框**：稜鏡是三角、碎浪是方——不靠顏色分辨（§1.6）。
 				draw_rect(Rect2(p - Vector2(9, 9), Vector2(18, 18)), Palette.ALLOY_STEEL)
 				draw_rect(Rect2(p - Vector2(13, 13), Vector2(26, 26)), Palette.ALLOY_STEEL, false, 1.5)
+		_draw_threat(n["cell"], p)
 		_draw_engaged(n, p)
 		_draw_badge(n, p)
 
@@ -855,8 +874,10 @@ func _draw_energy_bar() -> void:
 	draw_rect(Rect2(at, Vector2(w, 8.0)), Palette.BG_RAISED)
 	draw_rect(Rect2(at, Vector2(w * supply / span, 8.0)), Palette.ENERGY_AMBER)
 	if demand > supply:
-		# 脈動用 tick 數推，不用系統時間——渲染可以不確定，但別引入新的亂數源。
-		var pulse := 0.55 + 0.45 * sin(float(s.tick_count) * 0.4)
+		# 脈動走 `Motion`（§4.1 時長階、§4.4 可跳過）。B1.6 之前這裡是
+		# `sin(tick * 0.4)`、敵人是 `sin(tick * 0.25)`——兩個係數沒有任何理由
+		# 不同，看起來卻像兩件不同的事，而且都繞過了 `reduce_motion`。
+		var pulse := Motion.pulse01(s.tick_count, Motion.AMBIENT * 0.5, 0.55)
 		var x := w * supply / span
 		draw_rect(
 			Rect2(at + Vector2(x, 0.0), Vector2(w * demand / span - x, 8.0)),
@@ -883,8 +904,9 @@ func _draw_enemies() -> void:
 		var def := Enemies.of(String(e["type"]))
 		var p := _enemy_pos(e)
 		var r := float(def.get("radius", 9.0))
-		# 脈動用 tick 數推，不用系統時間——渲染可以不確定，但別引入新的亂數源。
-		var pulse := 1.0 + 0.12 * sin(float(s.tick_count) * 0.25 + float(e["id"]))
+		# 敵潮的動態是「有機的呼吸」（§4.2 ease-in-out-sine 循環）；
+		# 相位用 id 錯開，一群敵人才不會像節拍器一起脹縮。
+		var pulse := Motion.pulse(s.tick_count, Motion.AMBIENT, 0.12, float(e["id"]))
 		var pts := PackedVector2Array()
 		for i in 9:
 			var a := TAU * float(i) / 9.0
@@ -896,6 +918,91 @@ func _draw_enemies() -> void:
 		var frac := float(e["hp"]) / maxf(1.0, float(def.get("hp", 1.0)))
 		if frac < 1.0:
 			draw_arc(p, r + 4.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 20, Palette.TIDE_DEEP, 2.0)
+
+
+## ★ 「正在被啃」的格（B1.6，§4.3「一定要動」清單）。
+##
+## 敵人 walk-by 每 tick 傷害相鄰 1 格（`Tide.BLAST`），但在畫面上**那一刻完全
+## 沒有表現**——節點的血條會慢慢變短，而玩家不知道「現在」有東西在被吃。
+## 這裡把模擬層每 tick 都在做的同一份判定畫出來，不新增任何狀態。
+func _threat_cells() -> Dictionary:
+	var out: Dictionary = {}
+	for c: Vector2i in Combat.enemy_cells(s.enemies, s.path):
+		for dx in range(-Tide.BLAST, Tide.BLAST + 1):
+			for dy in range(-Tide.BLAST, Tide.BLAST + 1):
+				out[c + Vector2i(dx, dy)] = true
+	return out
+
+
+## 正在被啃的節點：脈動的**四角括號**。
+##
+## ★ **形狀必須和「交戰中」的圓環分得開**（第一版就是圓環，截圖當場抓到——
+## 交戰環是琥珀圓環、受擊環是橙色圓環，兩個疊在同一顆 12px 的節點上肉眼
+## 分不出來）。這是這個專案第二次踩同一個坑：B0.6 的「血條不是圓環」也是
+## 因為儲槽充能弧與血條弧撞在一起。**同一個位置上的兩個訊息，換顏色不夠，
+## 要換形狀。**
+func _draw_threat(cell: Vector2i, p: Vector2) -> void:
+	if not _threat.has(cell):
+		return
+	var a := Motion.pulse01(s.tick_count, Motion.BASE * 2.0, 0.3)
+	var col := Palette.alpha(Palette.WARN_ORANGE, a)
+	var h := Shapes.GRID * 0.5 - 1.0   # 半格：括號貼著這一格的邊界
+	var arm := 6.0
+	for sx: float in [-1.0, 1.0]:
+		for sy: float in [-1.0, 1.0]:
+			var corner := p + Vector2(sx * h, sy * h)
+			draw_line(corner, corner - Vector2(sx * arm, 0.0), col, 2.0)
+			draw_line(corner, corner - Vector2(0.0, sy * arm), col, 2.0)
+
+
+## ★ 碎片爆（B1.6）。規格直接來自 `20_ART_DIRECTION.md` §161 的反模式清單：
+## **「爆炸不用 200 顆粒子。用 3–5 個幾何碎片＋一次縮放閃光」**。
+##
+## 碎片的形狀服從核心視覺命題（§0 秩序 vs 混沌）——這不是裝飾選擇：
+##   `chaos`（敵人消散）＝**不規則三角碎片**、品紅、往外飛並旋轉
+##   `order`（建築破裂）＝**正方碎片**、青、往外飛但**不旋轉**（秩序連壞掉都是方的）
+## 兩種都配一次縮放閃光環：混沌用實心淡去、秩序用線框擴張。
+##
+## 零 RNG（`Motion.fragment_dir` 由來源 id 決定方向），所以重播與每日挑戰
+## 看到的是同一場爆炸。
+func _draw_bursts() -> void:
+	var frac := _accum / BattleController.TICK
+	for b: Dictionary in s.bursts:
+		var life := int(b["life"])
+		var t := Motion.progress(life, int(b["ttl"]), frac)
+		# 玩家操作之外的系統事件，用 ease-out：一開始炸得快，尾巴慢慢淡（§4.2）。
+		var e := Motion.ease_out_cubic(t)
+		var at: Vector2 = (b["at"] as Vector2) * Shapes.GRID + Vector2(Shapes.GRID, Shapes.GRID) * 0.5
+		var chaos: bool = String(b["kind"]) == "chaos"
+		var col := Palette.TIDE_MAGENTA if chaos else Palette.ORDER_CYAN
+		var seed_id := int(b["seed"])
+
+		# ── 一次縮放閃光 ──────────────────────────────────────────────
+		var flash := Palette.alpha(col, (1.0 - t) * (0.55 if chaos else 0.75))
+		if chaos:
+			draw_circle(at, 6.0 + 14.0 * e, flash)
+		else:
+			draw_arc(at, 4.0 + 18.0 * e, 0.0, TAU, 24, flash, 2.0)
+
+		# ── 3–5 個幾何碎片 ────────────────────────────────────────────
+		# 數量也由 id 決定（3/4/5 輪替），免得每一次爆炸的顆數都一樣。
+		var count := 3 + (absi(seed_id) % 3)
+		for i in count:
+			var dir := Motion.fragment_dir(seed_id, i, count)
+			var p := at + dir * (10.0 + 22.0 * e)
+			var r := (5.0 if chaos else 4.0) * (1.0 - 0.6 * t)
+			var c := Palette.alpha(col, 1.0 - t)
+			if chaos:
+				# 不規則三角＋自轉：混沌連碎片都不對齊。
+				var spin := float(seed_id) * 0.7 + t * 3.0
+				draw_colored_polygon(PackedVector2Array([
+					p + Vector2(r * 1.4, 0).rotated(spin),
+					p + Vector2(r, 0).rotated(spin + 2.3),
+					p + Vector2(r * 0.8, 0).rotated(spin + 4.1),
+				]), c)
+			else:
+				# 正方、不自轉：秩序的碎片仍然是軸對齊的方塊。
+				draw_rect(Rect2(p - Vector2(r, r), Vector2(r, r) * 2.0), c)
 
 
 func _enemy_pos(e: Dictionary) -> Vector2:
@@ -1498,6 +1605,15 @@ func _refresh_top() -> void:
 		var l := _top.get_child(i) as Label
 		l.text = String(texts[i][0])
 		l.add_theme_color_override("font_color", texts[i][1])
+	# ★ 倒數最後 10 秒脈動（`20_ART_DIRECTION.md` §4.3「一定要動」清單，B1.6）。
+	#   **它動的是階段那一格**，不是整條頂欄——脈動要指向「時間快到了」這一件事。
+	#   週期用 `dur.slow`：比環境呼吸急、又不到讓人分心的程度。
+	var phase_label := _top.get_child(5) as Label
+	var urgent: bool = s.phase == "prep" and s.prep_time() - s.phase_time <= 10.0
+	phase_label.modulate = Color(1, 1, 1, 1)
+	if urgent:
+		phase_label.add_theme_color_override("font_color", Palette.WARN_ORANGE)
+		phase_label.modulate = Color(1, 1, 1, Motion.pulse01(s.tick_count, Motion.SLOW, 0.45))
 
 
 ## 準備期顯示倒數（**計時器就在畫面上**——它是關卡參數不是隱藏係數，§7.7）。

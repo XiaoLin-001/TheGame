@@ -14,6 +14,7 @@ extends SceneTree
 ## 跑法：<godot> --headless --path godot --script res://tests/hud_test.gd
 
 const T := preload("res://tests/_assert.gd")
+const Motion := preload("res://scripts/render/Motion.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const Maps := preload("res://data/Maps.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
@@ -23,6 +24,8 @@ const BattleController := preload("res://scripts/game/BattleController.gd")
 
 func _initialize() -> void:
 	var t := T.new("hud_test")
+	_motion_tokens(t)
+	_bursts_are_render_only(t)
 	_summon_bonus_math(t)
 	_bonus_is_locked_to_its_wave(t)
 	_bonus_multiplies_the_drop(t)
@@ -279,3 +282,71 @@ func _one_kill(early: bool) -> RefCounted:
 	for _i in 20:
 		BattleController.step(s)
 	return s
+
+
+# ── 動效 token（B1.6、`20_ART_DIRECTION.md` §4）─────────────────────────
+
+## ★ 「**所有動效都可跳過**」（§4.4）是硬性要求，而它在 B1.6 之前
+## 沒有任何掛勾點：`settings.reduce_motion` 存在存檔裡、沒有任何人讀。
+## 這一段守的就是那個開關真的關得掉東西。
+func _motion_tokens(t: T) -> void:
+	Motion.reduce = false
+	# 時長階換算成 tick（`dur.base` 0.24s ÷ 0.1s = 2）。
+	t.eq(Motion.ticks(Motion.BASE), 2, "dur.base ＝ 2 個 tick")
+	t.ok(Motion.ticks(Motion.INSTANT) >= 1, "最短的時長階也至少活 1 個 tick（否則一出生就死）")
+	# 脈動：值域對稱、由 tick 驅動（同一個 tick 必得同一個值 → 截圖可重現）。
+	t.near(Motion.pulse(0, Motion.AMBIENT, 0.12), 1.0, "相位 0 的脈動＝1.0")
+	t.eq(
+		Motion.pulse(37, Motion.AMBIENT, 0.12), Motion.pulse(37, Motion.AMBIENT, 0.12),
+		"同一個 tick 必得同一個值（不用系統時間）"
+	)
+	# 緩動端點。
+	t.near(Motion.ease_out_cubic(0.0), 0.0, "ease-out-cubic 起點")
+	t.near(Motion.ease_out_cubic(1.0), 1.0, "ease-out-cubic 終點")
+	t.ok(Motion.ease_out_cubic(0.5) > 0.5, "ease-out-cubic 是快起慢收")
+	t.near(Motion.ease_in_out_sine(0.5), 0.5, "ease-in-out-sine 中點對稱")
+	# 效果進度：life 個 tick 走完 0→1，中間用 frac 補到 60Hz。
+	t.near(Motion.progress(2, 2, 0.0), 0.0, "剛生成＝0")
+	t.near(Motion.progress(2, 1, 0.0), 0.5, "過一個 tick＝一半")
+	t.near(Motion.progress(2, 1, 0.5), 0.75, "tick 內用 frac 補間")
+	# 碎片方向：零 RNG，同一個來源永遠炸成同一個樣子（`30_TECH_DESIGN.md` §2.4）。
+	t.eq(
+		Motion.fragment_dir(7, 2, 4), Motion.fragment_dir(7, 2, 4),
+		"★ 碎片方向是確定的（重播與每日挑戰要看到同一場爆炸）"
+	)
+	t.ok(
+		Motion.fragment_dir(7, 2, 4) != Motion.fragment_dir(8, 2, 4),
+		"不同來源炸出不同方向（否則每次爆炸都是同一朵標本花）"
+	)
+
+	# ★ reduce_motion：脈動靜止、效果不生成。
+	Motion.reduce = true
+	t.eq(Motion.ticks(Motion.BASE), 0, "★ reduce_motion → 效果壽命 0（碎片根本不生成）")
+	t.near(Motion.pulse(37, Motion.AMBIENT, 0.5), 1.0, "★ reduce_motion → 脈動回靜止值")
+	t.near(Motion.pulse01(37, Motion.AMBIENT, 0.2), 1.0, "★ reduce_motion → 透明度脈動也靜止")
+	Motion.reduce = false
+
+
+## ★ 碎片爆是**純渲染**：它不得改變任何一個會被雜湊的量（B1.6）。
+## 沒有這一條，哪天有人把碎片改成「會打到人的東西」，確定性會靜靜地壞掉。
+func _bursts_are_render_only(t: T) -> void:
+	var a := _played(false)
+	var b := _played(true)
+	t.eq(a["hash"], b["hash"], "★ 開不開碎片爆，局狀態雜湊完全相同")
+	t.ok(int(a["bursts_seen"]) > 0, "關掉 reduce 時真的有碎片生成過（否則上一條是空的）")
+	t.eq(int(b["bursts_seen"]), 0, "★ reduce_motion 時一顆碎片都沒生成")
+
+
+## 跑一段淺灘的示範佈局，回傳局狀態雜湊與期間出現過的碎片總數。
+func _played(reduce: bool) -> Dictionary:
+	Motion.reduce = reduce
+	var s: RefCounted = SessionState.new()
+	s.setup(Maps.SHOAL)
+	s.alloy = Maps.DEMO_ALLOY
+	BuildController.apply_ops(s, Maps.SHOAL_DEMO)
+	var seen := 0
+	for _i in 1200:
+		BattleController.step(s)
+		seen += s.bursts.size()
+	Motion.reduce = false
+	return {"hash": s.state_hash(), "bursts_seen": seen}

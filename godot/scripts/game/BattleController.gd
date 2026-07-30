@@ -13,6 +13,7 @@ const Tide := preload("res://scripts/sim/Tide.gd")
 const Combat := preload("res://scripts/sim/Combat.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
+const Motion := preload("res://scripts/render/Motion.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const Maps := preload("res://data/Maps.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
@@ -36,6 +37,14 @@ static func step(s: RefCounted) -> void:
 		return
 	s.tick_count += 1
 	s.phase_time += TICK
+	# 碎片的壽命在這裡遞減，**不放進 `_fire()`**：那支函式在「場上沒有敵人」
+	# 時會提早 return，而最後一隻敵人死掉的那一 tick 正好就是沒有敵人的那一 tick
+	# ——碎片會卡在畫面上不消失。
+	for i in range(s.bursts.size() - 1, -1, -1):
+		var b: Dictionary = s.bursts[i]
+		b["ttl"] = int(b["ttl"]) - 1
+		if int(b["ttl"]) <= 0:
+			s.bursts.remove_at(i)
 	_phase(s)
 
 	var cells := Combat.enemy_cells(s.enemies, s.path)
@@ -214,8 +223,22 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 	for i in range(s.enemies.size() - 1, -1, -1):
 		if float((s.enemies[i] as Dictionary)["hp"]) > 0.0:
 			continue
+		# ★ 碎片爆（B1.6）：混沌消散。種子用敵人 id → 同一隻永遠炸成同一個樣子。
+		_burst(s, Vector2(cells[i]), "chaos", int((s.enemies[i] as Dictionary)["id"]))
 		_on_kill(s, float(Enemies.of(String(s.enemies[i]["type"])).get("value", 0.0)), cells[i])
 		s.enemies.remove_at(i)
+
+
+## ★ 碎片爆（B1.6，`20_ART_DIRECTION.md` §161 反模式：「爆炸不用 200 顆粒子。
+## 用 3–5 個幾何碎片＋一次縮放閃光」）。純渲染，不進 `state_hash()`。
+##
+## `Motion.reduce` 為真時 `ticks()` 回 0 → 這裡直接不生成，「所有動效都可跳過」
+## （§4.4）在源頭就成立，不必讓畫面層再判一次。
+static func _burst(s: RefCounted, at: Vector2, kind: String, seed_id: int) -> void:
+	var life := Motion.ticks(Motion.BASE)
+	if life <= 0:
+		return
+	s.bursts.append({"at": at, "kind": kind, "seed": seed_id, "life": life, "ttl": life})
 
 
 ## 一次擊殺的兩種回收，**並存**（§7.4）。
@@ -253,10 +276,18 @@ static func _clear_wreckage(s: RefCounted) -> void:
 		var n: Dictionary = s.nodes[i]
 		if float(n["hp"]) > 0.0 or int(n["id"]) == s.core_id:
 			continue
+		# ★ 碎片爆（B1.6）：**秩序破裂**。玩家的東西被啃掉了，這件事之前
+		#   在畫面上完全沒有表現——節點就這樣消失，產能跟著掉，而玩家不知道
+		#   剛剛發生了什麼。這是「你的生產線就是你的防線」最該被看見的一刻。
+		_burst(s, Vector2(n["cell"]), "order", int(n["id"]))
 		s.remove_node_at(n["cell"])
 	for i in range(s.conduits.size() - 1, -1, -1):
-		if float((s.conduits[i] as Dictionary)["hp"]) <= 0.0:
-			s.conduits.remove_at(i)
+		var c: Dictionary = s.conduits[i]
+		if float(c["hp"]) > 0.0:
+			continue
+		# 導管斷在中點：整條線消失，爆在哪裡都不精確，中點最不誤導。
+		_burst(s, (Vector2(c["a"]) + Vector2(c["b"])) * 0.5, "order", int(c["id"]))
+		s.conduits.remove_at(i)
 
 
 # ── 礦砂網 ────────────────────────────────────────────────────────────

@@ -102,7 +102,13 @@ TL_SHOT="C:/tmp/first.png" TL_DEMO_TICKS=0 TL_PANEL=battle <godot> --path godot 
 
 # ★ 戰役（B1.2）：TL_PANEL=campaign 是關卡選擇，加 TL_LEVEL=1..5 直接進那一關。
 # 關卡的示範佈局＝該關的參考解，與 campaign_test 跑的是同一份腳本。
+# ⚠ TL_DEMO_TICKS 是**從參考解跑完那一刻起算**的（參考解的 wait 已經推掉一批 tick）。
 TL_SHOT="C:/tmp/lv.png" TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> --path godot --rendering-driver opengl3
+
+# ★ 拍特效近照（B1.6）：TL_FOCUS="x,y,zoom" 把鏡頭對到某一格並放大。
+# 特效是 0.2 秒、十幾個像素的東西——在 fit 倍率的全圖截圖上判不出好壞，
+# 沒有這個鉤子就會變成「宣稱做好了但沒真的看過」。
+TL_SHOT="C:/tmp/fx.png" TL_PANEL=campaign TL_LEVEL=5 TL_DEMO_TICKS=581 TL_FOCUS="30,15,3" <godot> --path godot --rendering-driver opengl3
 
 # ★ 輸入層自檢：用合成滑鼠事件真的點地圖（約 1 秒後自己退出，0 ＝ PASS）
 # ⚠ 唯一不能 --headless 的檢查：dummy display server 不做 GUI 命中測試

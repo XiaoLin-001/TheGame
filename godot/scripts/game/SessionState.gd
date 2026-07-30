@@ -50,6 +50,15 @@ var delivered_total: float = 0.0
 var alloy_total: float = 0.0
 ## 本 tick 的開火線 `[{from, to}]`——純渲染用，每 tick 重寫。
 var shots: Array = []
+## ★ 碎片爆（B1.6）。`{at: Vector2, kind: String, seed: int, life: int, ttl: int}`
+## ——`at` 是**格座標的浮點值**（整數＝格中心；模擬層不碰像素）、
+## `kind` 是 `chaos`（敵人消散）或
+## `order`（建築破裂）、`seed` 決定碎片方向（零 RNG，由來源 id 給）。
+##
+## **純渲染，和 `shots` 一樣不進 `state_hash()`。** 由模擬層在擊殺與清殘骸時
+## 生成是刻意的：那兩個時刻只有模擬知道，而渲染層看到的是「敵人不見了」——
+## 從「不見了」反推爆炸位置就得在畫面層重建一份死亡判定。
+var bursts: Array = []
 
 # ── 敵潮與時間流（B0.4）──────────────────────────────────────────────
 ## `prep` 準備期／`wave` 波次中／`lost` 核心已毀／`won` 波次表跑完。
