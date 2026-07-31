@@ -121,6 +121,8 @@ TL_CLICKTEST=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 TL_CLICKTEST=1 TL_PANEL=campaign TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 科技樹（解鎖鈕點得到、真的扣款、捲到底最後一顆鈕還在畫面內）
 TL_CLICKTEST=1 TL_PANEL=tech TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
+# 設定（音量真的接到匯流排、reduce_motion 當場生效、視窗真的變大再變回來）
+TL_CLICKTEST=1 TL_PANEL=settings TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 
 # 拍「只有互動才到得了」的狀態：驅動完 UI 之後不退出，交給 TL_SHOT
 TL_CLICKTEST=1 TL_SHOT="C:/tmp/panels.png" TL_MUTE=1 <godot> --path godot --rendering-driver opengl3

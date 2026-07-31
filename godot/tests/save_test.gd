@@ -50,9 +50,50 @@ func _initialize() -> void:
 	# ── 磁碟往返：原子寫入 → 讀回 → 一致 ──
 	_disk_round_trip(t)
 
-	t.pending("sv1→sv2 遷移分支（目前只有首版，尚無可測的遷移）", "首次結構改動時")
+	_migration_sv1_to_sv2(t)
 
 	quit(t.report())
+
+
+## ★ sv1 → sv2（B1.4）：`campaign.cleared` 併進 `campaign.stars`。
+##
+## 這是本專案第一個真的遷移分支，所以它同時也是**遷移機制本身**的覆蓋：
+## 一次跳一版、沒有 `sv` 的檔當成 1、遷移過的檔再跑一次不得二次變形。
+func _migration_sv1_to_sv2(t: RefCounted) -> void:
+	# ① 典型的 sv1 存檔：三關通關，其中兩關有星數。
+	var old := {
+		"sv": 1,
+		"campaign": {"cleared": ["tidemouth", "twinbay", "narrows"], "stars": {
+			"tidemouth": 3, "twinbay": 2,
+		}},
+	}
+	var up: Dictionary = Save.normalize(old)
+	var stars: Dictionary = (up["campaign"] as Dictionary)["stars"]
+	t.eq(up["sv"], 2, "遷移後 sv 是 2")
+	t.ok(not (up["campaign"] as Dictionary).has("cleared"), "cleared 已移除")
+	t.eq(int(stars["tidemouth"]), 3, "既有星數不被遷移壓低")
+	t.eq(int(stars["twinbay"]), 2, "既有星數原樣保留")
+	# ★ 「在 cleared 裡但 stars 沒記錄」補成 1 星。**遷移不能假設舊資料自洽**——
+	#   真實存檔會有中途版本、有當機、有手改過的檔。
+	t.eq(int(stars["narrows"]), 1, "只在 cleared 裡的關補成 1 星（不假設舊資料自洽）")
+
+	# ② 沒有 `sv` 的檔＝首版出貨的形狀，不是壞檔。
+	var no_sv: Dictionary = Save.normalize({"campaign": {"cleared": ["tidemouth"]}})
+	t.eq(no_sv["sv"], 2, "沒有 sv 的舊檔一樣跑得完遷移鏈")
+	t.eq(
+		int(((no_sv["campaign"] as Dictionary)["stars"] as Dictionary)["tidemouth"]), 1,
+		"沒有 sv 的舊檔也補得到星數"
+	)
+
+	# ③ **冪等**：已經是 sv2 的檔再 normalize 一次不得再變形。
+	#    遷移最常見的事故就是「開遊戲兩次跑了兩次遷移」。
+	var again: Dictionary = Save.normalize(up)
+	t.eq(again["campaign"], up["campaign"], "已遷移的檔再跑一次不變（冪等）")
+
+	# ④ 新存檔不受影響。
+	var fresh2: Dictionary = Save.normalize({})
+	t.eq((fresh2["campaign"] as Dictionary)["stars"], {}, "全新存檔：沒有任何星數")
+	t.ok(not (fresh2["campaign"] as Dictionary).has("cleared"), "全新存檔不會長出 cleared")
 
 
 ## 實際寫檔／讀檔。這段是「只增不破」承諾與原子寫入唯一的自動化覆蓋。

@@ -11,10 +11,17 @@ extends Node
 
 const Score := preload("res://scripts/sim/Score.gd")
 
-const SAVE_VERSION := 1
+## sv2（B1.4）：`campaign.cleared` 移除，改由 `campaign.stars` 推導。
+const SAVE_VERSION := 2
 
 const PATH := "user://save.json"
 const TMP_PATH := "user://save.json.tmp"
+
+## ★ 可選的視窗尺寸。**放在 schema 旁邊**：存檔存的是這個陣列的**索引**，
+## 兩者不在同一個檔案的那一天，刪掉一個選項就會留下一個選不到也顯示不出來的值。
+## 全部 16:9——版面基準是 1280×720，`stretch/aspect=expand` 在別的長寬比下
+## 會讓框架與地圖的比例對不上。
+const RESOLUTIONS := [Vector2i(1280, 720), Vector2i(1600, 900), Vector2i(1920, 1080)]
 
 ## 完整 schema 骨架。**讀取一律走 normalize()**，任何缺失欄位都由此補上安全預設。
 const DEFAULTS := {
@@ -22,7 +29,10 @@ const DEFAULTS := {
 	"company_level": 1,
 	"tech": {"unlocked": [], "data": 0},
 	"roster": {"owned": [], "tokens": 0},
-	"campaign": {"cleared": [], "stars": {}},
+	# ★ sv2 起**沒有 `cleared`**：它和 `stars` 講的是同一件事（`stars[id] >= 1`），
+	# 而同一個事實存兩份遲早會漂移——漂掉的那一天，玩家會看到「這一關通關了
+	# 但下一關還鎖著」，而兩個欄位各自都「對」。
+	"campaign": {"stars": {}},
 	"endless": {"best_wave": 0, "best_score": 0},
 	# 每日兩榜：{"<日期>": {"unified": {...}, "free": {...}}}（§3）
 	"daily": {},
@@ -30,7 +40,12 @@ const DEFAULTS := {
 	"levels": {"towers": {}, "nodes": {}},
 	"entitlements": {"purchases": [], "no_ads": false, "pass_season": 0, "pass_owned": false},
 	"blueprints": [],
-	"settings": {"master": 0.8, "bgm": 0.6, "sfx": 0.8, "reduce_motion": false},
+	# `resolution` 是 `screens/Settings.gd` 的 `RESOLUTIONS` 索引，不是像素——
+	# 存像素的話，日後刪掉一個選項就會出現一個選不到、也顯示不出來的設定值。
+	"settings": {
+		"master": 0.8, "bgm": 0.6, "sfx": 0.8,
+		"reduce_motion": false, "fullscreen": false, "resolution": 0,
+	},
 }
 
 ## 有任何 TL_* 鉤子時為 false。直接由 Env 靜態判定，不依賴其他 autoload 的 _ready 順序。
@@ -54,13 +69,36 @@ static func normalize(raw: Dictionary) -> Dictionary:
 	return d
 
 
-## 鏈式套用版本遷移。目前 sv=1 為首版，尚無遷移分支。
-## 新增時的形狀：
-##   while sv < SAVE_VERSION: match sv: 1: _migrate_sv1_to_sv2(d); sv += 1
+## ★ 鏈式套用版本遷移（B1.4 起真的有分支了）。
+##
+## **一次跳一版，不寫「從任何版本直達最新」的捷徑**：捷徑要在每加一版時
+## 重寫一次全部組合，而漏掉的那一格是玩家的存檔。
+##
+## 沒有 `sv` 的檔一律當成 1——那是首版出貨時的形狀，不是「壞檔」。
 static func migrate(d: Dictionary) -> Dictionary:
-	# 尚無 sv2，故無迴圈；沒有 sv 的舊檔也一樣，交給 _fill_defaults 補完。
-	# 加入第一個遷移時把上面註解的形狀展開。
+	var sv := int(d.get("sv", 1))
+	while sv < SAVE_VERSION:
+		match sv:
+			1: _migrate_sv1_to_sv2(d)
+		sv += 1
+	d["sv"] = SAVE_VERSION
 	return d
+
+
+## sv1 → sv2：`campaign.cleared` 併進 `campaign.stars`。
+##
+## 舊檔裡可能有「在 cleared 裡、但 stars 沒有記錄」的關（理論上不該發生，
+## 但存檔遷移**不能假設舊資料是自洽的**）——那種一律補成 1 星，
+## 因為 cleared 唯一的意思就是「至少通關過一次」。
+static func _migrate_sv1_to_sv2(d: Dictionary) -> void:
+	var campaign: Dictionary = d.get("campaign", {})
+	if not campaign.has("cleared"):
+		return
+	var stars: Dictionary = campaign.get("stars", {})
+	for id: Variant in campaign["cleared"]:
+		stars[String(id)] = maxi(1, int(stars.get(String(id), 0)))
+	campaign["stars"] = stars
+	campaign.erase("cleared")
 
 
 ## ★ 把一局戰役的結果寫進存檔（B1.2、`10_GDD.md` §7.9）。**只增不減**：
@@ -72,13 +110,10 @@ static func migrate(d: Dictionary) -> Dictionary:
 static func apply_result(d: Dictionary, level_id: String, stars: int, reward: int) -> float:
 	var campaign: Dictionary = d.get("campaign", {})
 	var best: Dictionary = campaign.get("stars", {})
-	var cleared: Array = campaign.get("cleared", [])
 	if stars <= 0:
 		return 0.0
 	var gain := Score.reward_delta(reward, stars, int(best.get(level_id, 0)))
 	best[level_id] = maxi(stars, int(best.get(level_id, 0)))
-	if not cleared.has(level_id):
-		cleared.append(level_id)
 	var tech: Dictionary = d.get("tech", {})
 	tech["data"] = float(tech.get("data", 0)) + gain
 	return gain

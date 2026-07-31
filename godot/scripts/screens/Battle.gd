@@ -123,9 +123,8 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# ★ 「減少動態效果」（§4.4）。B1.6 之前這是**死設定**：存檔裡有、
 	#   沒有任何人讀。設定畫面在 B1.4，在那之前它由存檔預設值（false）決定。
-	Motion.reduce = bool(
-		(GameState.data.get("settings", {}) as Dictionary).get("reduce_motion", false)
-	)
+	# `Motion.reduce` 由 `GameState.apply_settings()` 統一設定（B1.4）——
+	# 開機一次、設定畫面改一次動一次。這裡不再各讀一份。
 	s = SessionState.new()
 	# `TL_PANEL=sandbox`：沙盤「靜水」（`data/Maps.gd`）。**合金那一列流動珠
 	# 只有這張圖上有**——淺灘的示範佈局沒有熔爐，所以第三種資源的視覺編碼

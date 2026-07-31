@@ -7,14 +7,19 @@ extends Control
 const BattleScreen := preload("res://scripts/screens/Battle.gd")
 const CampaignScreen := preload("res://scripts/screens/Campaign.gd")
 const TechScreen := preload("res://scripts/screens/Tech.gd")
+const SettingsScreen := preload("res://scripts/screens/Settings.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 
 ## TL_PANEL 目前認得的畫面。其餘由後續批次補進來。
 ## `sandbox` ＝ 局內畫面但換成沙盤「靜水」（`data/Maps.gd`）：
 ## 沒有敵人，只有三種資源在跑，用來驗合金那一列流動珠（B1.1）。
 ## `campaign` ＝ 戰役關卡選擇；配 `TL_LEVEL=1..5` 直接進那一關（B1.2）。
-## `tech` ＝ 科技樹（B1.3）。
-const KNOWN_PANELS := ["title", "battle", "sandbox", "campaign", "tech"]
+## `tech` ＝ 科技樹（B1.3）、`settings` ＝ 設定（B1.4）。
+const KNOWN_PANELS := ["title", "battle", "sandbox", "campaign", "tech", "settings"]
+
+
+## 主選單的五顆鈕（自檢要按得到）。
+var _menu_buttons: Array[Button] = []
 
 
 func _ready() -> void:
@@ -27,6 +32,9 @@ func _ready() -> void:
 		return
 	if Hooks.panel == "tech":
 		_enter_tech()
+		return
+	if Hooks.panel == "settings":
+		_enter_settings()
 		return
 	_build()
 	_route_panel()
@@ -60,6 +68,14 @@ func _enter_tech() -> void:
 	add_child(screen)
 
 
+func _enter_settings() -> void:
+	for c: Node in get_children():
+		c.queue_free()
+	var screen := SettingsScreen.new()
+	screen.on_exit = _back_to_title
+	add_child(screen)
+
+
 func _back_to_title() -> void:
 	for c: Node in get_children():
 		remove_child(c)
@@ -85,23 +101,21 @@ func _build() -> void:
 
 	col.add_child(UiKit.label(GameState.TAGLINE, 16, Palette.TEXT_SECONDARY))
 
-	# 可玩 build 的入口（工作室鐵律 2）。真正的主選單在 B1.4。
-	var campaign := Button.new()
-	campaign.text = "戰役　五關"
-	campaign.pressed.connect(_enter_campaign)
-	col.add_child(UiKit.touchable(campaign))
-
-	var tech := Button.new()
-	tech.text = "科技樹　%s 研究數據" % UiKit.commas(
-		int(float((GameState.data.get("tech", {}) as Dictionary).get("data", 0)))
-	)
-	tech.pressed.connect(_enter_tech)
-	col.add_child(UiKit.touchable(tech))
-
-	var start := Button.new()
-	start.text = "進入測試圖　淺灘"
-	start.pressed.connect(_enter_battle)
-	col.add_child(UiKit.touchable(start))
+	# ★ 主選單（B1.4）。**戰役排第一顆**：它是這款遊戲；科技樹與設定是它的周邊，
+	#   測試圖是給我自己用的。順序就是「玩家最可能想按的東西」由上而下。
+	_menu_buttons.clear()
+	for entry: Array in [
+		["戰役　%s" % _campaign_progress(), _enter_campaign],
+		["科技樹　%s 研究數據" % UiKit.commas(int(_research_data())), _enter_tech],
+		["設定", _enter_settings],
+		["測試圖　淺灘", _enter_battle],
+		["離開遊戲", _quit],
+	]:
+		var b := Button.new()
+		b.text = String(entry[0])
+		b.pressed.connect(entry[1] as Callable)
+		_menu_buttons.append(b)
+		col.add_child(UiKit.touchable(b))
 
 	# TL_NAKED 的語意是「隱藏所有數值標籤，只留圖形」（30_TECH_DESIGN.md §4.1）。
 	# 本批還沒有 HUD 可遮，先把版本／鉤子這行納管，證明這條路徑真的接通了；
@@ -116,6 +130,28 @@ func _build() -> void:
 	var hooks := Env.active()
 	if hooks != "":
 		col.add_child(UiKit.label(hooks, 11, Palette.WARN_ORANGE))
+
+
+## 戰役進度：滿星是 15 顆。**主選單上就看得到「還差幾顆」**——
+## 回來的理由要在按下去之前就成立，不是進了關卡選擇才發現。
+func _campaign_progress() -> String:
+	var best: Dictionary = (GameState.data.get("campaign", {}) as Dictionary).get("stars", {})
+	var got := 0
+	for id: String in CampaignData.ids():
+		got += int(best.get(id, 0))
+	var total := CampaignData.count() * 3
+	return "%d／%d ★" % [got, total]
+
+
+func _research_data() -> float:
+	return float((GameState.data.get("tech", {}) as Dictionary).get("data", 0))
+
+
+## 離開。**存一次再走**——設定畫面雖然改一次存一次，但戰役結算那條路徑
+## 是在 `Battle` 裡寫的，留一個出口統一收尾比較不會漏。
+func _quit() -> void:
+	SaveService.save_from(GameState.data)
+	get_tree().quit()
 
 
 func _route_panel() -> void:

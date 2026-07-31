@@ -207,7 +207,8 @@ func _save_progress(t: RefCounted) -> void:
 	var gain := SaveService.apply_result(d, "tidemouth", 2, 30)
 	t.near(gain, 60.0, "首通 2 星＝30 × 2")
 	t.near(float((d["tech"] as Dictionary)["data"]), 60.0, "研究數據入帳")
-	t.eq((d["campaign"] as Dictionary)["cleared"], ["tidemouth"], "通關紀錄寫進去了")
+	# sv2 起「通關」就是「星數 >= 1」，沒有另一份 cleared 清單（B1.4）。
+	t.eq(int(((d["campaign"] as Dictionary)["stars"] as Dictionary)["tidemouth"]), 2, "通關紀錄＝星數")
 
 	# 回頭補到 3 星：**只補差額**。
 	var gain2 := SaveService.apply_result(d, "tidemouth", 3, 30)
@@ -222,7 +223,7 @@ func _save_progress(t: RefCounted) -> void:
 	# 重玩失敗：星數與通關紀錄都不得被抹掉（紅線 R1「失敗只花時間」）。
 	SaveService.apply_result(d, "tidemouth", 0, 30)
 	t.eq(int(((d["campaign"] as Dictionary)["stars"] as Dictionary)["tidemouth"]), 3, "失敗不扣星")
-	t.eq((d["campaign"] as Dictionary)["cleared"], ["tidemouth"], "失敗不會抹掉通關紀錄")
+	t.ok(not (d["campaign"] as Dictionary).has("cleared"), "sv2 不再有 cleared 這個重複來源")
 
 	# 存檔往返：normalize 之後戰役進度還在（只增不破）。
 	var round_trip := SaveService.normalize(d)

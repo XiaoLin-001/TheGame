@@ -116,8 +116,8 @@ func _build() -> void:
 func _unlocked(index: int) -> bool:
 	if index <= 0:
 		return true
-	var cleared: Array = (GameState.data.get("campaign", {}) as Dictionary).get("cleared", [])
-	return cleared.has(CampaignData.id_at(index - 1))
+	# 「通關」＝上一關至少 1 星（sv2 起沒有另一份 `cleared` 清單，§7.9）。
+	return _stars(index - 1) >= 1
 
 
 func _stars(index: int) -> int:

@@ -503,3 +503,11 @@ static func index_of(id: String) -> int:
 static func id_at(index: int) -> String:
 	var lv := at(index)
 	return "" if lv.is_empty() else String((lv["map"] as Dictionary)["id"])
+
+
+## 全部關卡 id（依關序）。統計進度時用，免得呼叫端自己寫一次 `for i in count()`。
+static func ids() -> Array[String]:
+	var out: Array[String] = []
+	for i in LEVELS.size():
+		out.append(id_at(i))
+	return out

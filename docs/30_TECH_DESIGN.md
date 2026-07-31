@@ -180,27 +180,29 @@ TheGame/
 | 格式 | JSON，`user://save.json`（Windows：`%APPDATA%/Godot/app_userdata/TideAndLine/`） |
 | 版本常數 | `SaveService.SAVE_VERSION`（int），置於 `scripts/core/SaveService.gd` 頂部 |
 | 讀取紀律 | **一律 `d.get(key, default)`**，任何欄位缺失都必須有安全預設 |
-| 遷移 | 結構性改動寫 `_migrate_sv<N>_to_sv<N+1>()` 分支，鏈式套用。**只增不破**（紅線層級的承諾） |
+| 遷移 | 結構性改動寫 `_migrate_sv<N>_to_sv<N+1>()` 分支，鏈式套用。**只增不破**（紅線層級的承諾）<br>**★ B1.4 落地時定的三條**：① **一次跳一版**，不寫「從任何版本直達最新」的捷徑——捷徑要在每加一版時重寫全部組合，而漏掉的那一格是玩家的存檔；② **沒有 `sv` 的檔一律當成 1**（首版出貨的形狀，不是壞檔）；③ **不得假設舊資料自洽**——真實存檔會有中途版本、當機、手改過的檔，遷移要能把不一致的資料收成合理的樣子。<br>**遷移必須冪等**（`save_test` 斷言）：最常見的事故就是「開遊戲兩次跑了兩次遷移」 |
+| sv 沿革 | `sv1` 首版 · **`sv2`（B1.4）移除 `campaign.cleared`**，改由 `campaign.stars` 推導（`cleared` ⟺ `stars[id] >= 1`）——同一個事實存兩份遲早會漂移 |
 | 備份 | 寫檔採「寫入 `.tmp` → 驗證可讀 → 原子改名」，避免寫壞主檔 |
 | 自動存檔 | 局末結算後、tycoon 收成後、設定變更後。**局內不自動存檔**（局內狀態不持久化，失敗重來即可，符合紅線 R1） |
 | 多存檔槽 | M3 前不做，但 schema 預留 `slots` 陣列外層結構 |
 
-**存檔內容**（v1 schema 骨架）：
+**存檔內容**（sv2 schema 骨架，B1.4）：
 
 ```json
 {
-  "sv": 1,
+  "sv": 2,
   "company_level": 1,
   "tech": { "unlocked": ["conduit_1"], "data": 0 },
   "roster": { "owned": ["anchor","prism"], "tokens": 0 },
-  "campaign": { "cleared": [], "stars": {} },
+  "campaign": { "stars": {} },
   "endless": { "best_wave": 0, "best_score": 0 },
   "daily": { "2026-07-27": { "score": 0, "wave": 0 } },
   "tycoon": { "level": 1, "credit": 0, "components": 0, "lines": [], "last_seen_unix": 0 },
   "levels": { "towers": {}, "nodes": {} },
   "entitlements": { "purchases": [], "no_ads": false, "pass_season": 0, "pass_owned": false },
   "blueprints": [],
-  "settings": { "master": 0.8, "bgm": 0.6, "sfx": 0.8, "reduce_motion": false }
+  "settings": { "master": 0.8, "bgm": 0.6, "sfx": 0.8,
+                "reduce_motion": false, "fullscreen": false, "resolution": 0 }
 }
 ```
 
