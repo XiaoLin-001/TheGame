@@ -53,7 +53,10 @@ const ENERGY_ROWS := [
 ## 「餵不飽」最多列幾座，其餘收成一行「…還有 N 座」。
 const SHORT_ROWS := 3
 
-enum Mode { BUILD, CONNECT, UPGRADE, DEMOLISH, PAN }
+## ★ B1.3.1：`CONNECT` 與 `PAN` 兩個模式已刪。拉線一律是拖曳（B1.6.2 取代了
+## 「連線」模式），平移是滑鼠中鍵按住拖——**兩件事都不該是模式**：
+## 模式的代價是「忘記切回來時點地圖沒反應」，而這兩個動作都頻繁到會天天付這個代價。
+enum Mode { BUILD, UPGRADE, DEMOLISH }
 
 var s: RefCounted = null
 
@@ -73,10 +76,10 @@ var _zoom_button: Button = null
 
 var _mode: int = Mode.BUILD
 var _build_type: String = "extractor"
-var _connect_from: Vector2i = Vector2i(-1, -1)
-## ★ 拖曳拉線的起點（B1.6.2）。**和 `_connect_from` 分開放**：兩者共用一個
-## 變數的話，「連線模式已經選好起點 A、玩家又從 B 開始拖」會把 A 悄悄蓋掉。
+## 拖曳拉線的起點（B1.6.2）。−1 ＝ 沒有在拉線。
 var _drag_from: Vector2i = Vector2i(-1, -1)
+## 中鍵按著沒放（B1.3.1）＝正在平移地圖。
+var _panning: bool = false
 var _hover: Vector2i = Vector2i(-999, -999)
 var _accum: float = 0.0
 var _message: String = ""
@@ -195,9 +198,26 @@ func _zoom_by(mult: float, anchor: Vector2) -> void:
 	_zoom = clampf(_zoom * mult, _fit, _fit * ZOOM_MAX_MULT)
 	if is_equal_approx(before, _zoom):
 		return
-	# 讓 anchor 在縮放前後對到同一個格：pan 補上原點的位移。
+	# ★ 讓 `anchor` 底下的那一格在縮放前後**待在原地**。
+	#
+	#   B1.2.2 的版本寫成 `_pan += (anchor - _map_origin()) * (1 - k)`，錯了兩層：
+	#     ① `_map_origin()` 讀的是**已經更新過**的 `_zoom`，量到的是新原點不是舊的；
+	#     ② 更根本地，`_map_origin()` 本來就把地圖置中，那一半的位移是縮放自己
+	#        帶來的、不該再由 pan 補一次。
+	#   兩個加起來的結果是：**按一次「＋」畫面就甩到左上角，而且 pan 當場撞上夾限、
+	#   再也拖不動。** `_view_selftest` 當時只斷言「倍率有變大」與「pan 夾得住」，
+	#   兩條都還是綠的——這個缺陷是 B1.3.1 加中鍵平移自檢時，
+	#   `mid_pan=false` 把它逼出來的。
+	#
+	#   所以直接照定義寫：新原點 = anchor − k × (anchor − 舊原點)，pan 就是它和
+	#   置中位置的差。看得懂比省一行重要。
+	var m := Vector2(s.map["size"]) * Shapes.GRID
+	var origin_before := FRAME.position + (FRAME.size - m * before) * 0.5 + _pan
 	var k := _zoom / before
-	_pan += (anchor - _map_origin()) * (1.0 - k)
+	_pan = (
+		anchor - (anchor - origin_before) * k
+		- (FRAME.position + (FRAME.size - m * _zoom) * 0.5)
+	)
 	_clamp_pan()
 	_refresh_zoom()
 	queue_redraw()
@@ -265,7 +285,7 @@ func _click_selftest() -> void:
 	var rejected: bool = s.nodes.size() == before + 1 and _message.begins_with("✕")
 
 	# ★ 45° 導管（使用者回報「沒辦法 45 度放置管道」）：在礦點的正斜角放一個
-	#   中繼，切「連線」，點兩端。整條路徑都走真實輸入——包含按鈕。
+	#   中繼，再從一端拖到另一端。整條路徑都走真實輸入——包含按鈕。
 	_press(_build_buttons["relay"])
 	var from := Vector2i(10, 10)
 	var to := Vector2i(13, 13)     # 正斜角，且遠離路徑（路徑走 y=4 與 x=30）
@@ -274,9 +294,7 @@ func _click_selftest() -> void:
 	for _i in 3:
 		await get_tree().process_frame
 	var diag_placed: bool = s.nodes.size() == before + 3
-	_press(_mode_buttons[Mode.CONNECT])
-	_click(from)
-	_click(to)
+	_drag(from, to)
 	for _i in 3:
 		await get_tree().process_frame
 	var wired: bool = s.conduits.size() == 1
@@ -289,9 +307,7 @@ func _click_selftest() -> void:
 	_click(Vector2i(7, 13))
 	for _i in 3:
 		await get_tree().process_frame
-	_press(_mode_buttons[Mode.CONNECT])
-	_click(Vector2i(6, 12))
-	_click(Vector2i(7, 13))
+	_drag(Vector2i(6, 12), Vector2i(7, 13))
 	for _i in 3:
 		await get_tree().process_frame
 	_press(_mode_buttons[Mode.UPGRADE])
@@ -301,9 +317,9 @@ func _click_selftest() -> void:
 	var short_diag: int = s.conduit_near(Vector2(6.5, 12.5))
 	var upgraded: bool = short_diag >= 0 and int((s.conduits[short_diag])["level"]) == 1
 
-	# ★ 拖曳拉線（B1.6.2）：**全程停在建造模式**，一次都不碰「連線」鈕。
-	#   會壞的地方有兩個——按下時沒把起點記起來、放開的事件沒被路由到——
-	#   而兩個都只有真的送出「按下 → 移動 → 放開」三顆事件才驗得出來。
+	# ★ 拖曳拉線（B1.6.2）：**全程停在建造模式**。會壞的地方有兩個——按下時
+	#   沒把起點記起來、放開的事件沒被路由到——而兩個都只有真的送出
+	#   「按下 → 移動 → 放開」三顆事件才驗得出來。
 	_press(_build_buttons["relay"])
 	_click(Vector2i(3, 8))
 	_click(Vector2i(3, 11))
@@ -315,12 +331,15 @@ func _click_selftest() -> void:
 		await get_tree().process_frame
 	var dragged: bool = s.conduits.size() == wires_before + 1 and _mode == Mode.BUILD
 
-	_press(_mode_buttons[Mode.CONNECT])
-
-	# 留一個懸而未決的起點，讓八條方向導引與「連不成」的橙色預覽線入鏡。
-	_click(from)
-	_hover = from + Vector2i(4, 3)     # 橫 4 直 3：正好不是 45°
-	_refresh_hint()
+	# ★ 中鍵平移（B1.3.1）：「移動」模式鈕拿掉之後，**這是唯一的平移路徑**。
+	#   先放大（fit 倍率下平移恆被夾成 0，量不到東西）。
+	_on_zoom(ZOOM_STEP * ZOOM_STEP)
+	var pan_before := _pan
+	_middle_drag(Vector2(600, 400), Vector2(540, 360))
+	for _i in 3:
+		await get_tree().process_frame
+	var panned: bool = _pan != pan_before
+	_on_zoom_reset()
 
 	# ★ B1.1：建造欄從 8 顆長到 10 顆（＋熔爐＋碎浪），高度逼近底欄。
 	#   **最後一顆鈕還點不點得到**是這件事唯一該問的問題——鈕被擠出畫面時
@@ -362,13 +381,20 @@ func _click_selftest() -> void:
 	#   所以最後再用合成點擊蓋一個節點，確認放大後點到的還是同一格。
 	var view_ok := await _view_selftest()
 
+	# ★ 最後才留一個懸而未決的拖曳起點（按下不放開），讓八條方向導引與
+	#   「連不成」的橙色預覽線入鏡——**這是玩家真的會看到的那一幀**（手指還沒鬆開）。
+	#   一定要放在所有斷言之後：懸著的起點會讓下一次點擊被當成拖曳的終點。
+	_press_at(_to_screen(_center(from)), true)
+	_hover = from + Vector2i(4, 3)     # 橫 4 直 3：正好不是 45°
+	_refresh_hint()
+
 	var ok: bool = (
-		placed and rejected and diag_placed and wired and upgraded and dragged
+		placed and rejected and diag_placed and wired and upgraded and dragged and panned
 		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
 		and view_ok
 	)
-	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s → %s" % [
-		placed, rejected, diag_placed, wired, upgraded, dragged, reachable, alloy_gated,
+	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s → %s" % [
+		placed, rejected, diag_placed, wired, upgraded, dragged, panned, reachable, alloy_gated,
 		energy_ok, codex_ok, prio_ok, view_ok, "PASS" if ok else "FAIL"
 	])
 	# 同時給 `TL_SHOT` 時不退出，把畫面交給截圖鉤子——**有些狀態只有互動才到得了**
@@ -394,6 +420,18 @@ func _view_selftest() -> bool:
 	# ③ 放大 → 倍率上升；「全景」→ 回到 fit 且平移歸零。
 	_on_zoom(ZOOM_STEP)
 	var zoomed_in: bool = _zoom > _fit
+	# ★ **以框架正中放大時，畫面中心不能跑掉**（B1.3.1）。舊版按一次「＋」就把
+	#   地圖甩到左上角、pan 當場撞上夾限再也拖不動，而當時的斷言全是綠的——
+	#   「倍率有變大」與「pan 夾得住」都成立，錯的是「往哪邊放大」。
+	var centered: bool = _pan.is_equal_approx(Vector2.ZERO)
+	# ★ 以滑鼠位置放大時，游標底下那一格必須還是同一格。
+	_on_zoom_reset()
+	var probe := Vector2(500.0, 300.0)
+	var probe_cell := _cell_at(probe)
+	_zoom_by(ZOOM_STEP, probe)
+	var anchored: bool = _cell_at(probe) == probe_cell
+	_on_zoom_reset()
+	_on_zoom(ZOOM_STEP)
 	_pan = Vector2(99999.0, 99999.0)
 	_clamp_pan()
 	var pan_clamped: bool = _pan.x <= (px.x * _zoom - FRAME.size.x) * 0.5 + 0.5
@@ -418,12 +456,12 @@ func _view_selftest() -> bool:
 		await get_tree().process_frame
 	var hit_ok: bool = s.nodes.size() == before + 1 and not s.node_at(target).is_empty()
 
-	print("[TL_CLICKTEST/view] fit=%s fills=%s inside=%s bar_clear=%s zoom_in=%s pan_clamp=%s reset=%s floor=%s hit_after_zoom=%s　（fit=%.3f，格 %.1f px）" % [
-		at_fit, filled, inside, bar_clear, zoomed_in, pan_clamped, reset_ok, floor_ok,
-		hit_ok, _fit, Shapes.GRID * _fit
+	print("[TL_CLICKTEST/view] fit=%s fills=%s inside=%s bar_clear=%s zoom_in=%s centered=%s anchored=%s pan_clamp=%s reset=%s floor=%s hit_after_zoom=%s　（fit=%.3f，格 %.1f px）" % [
+		at_fit, filled, inside, bar_clear, zoomed_in, centered, anchored, pan_clamped,
+		reset_ok, floor_ok, hit_ok, _fit, Shapes.GRID * _fit
 	])
 	return (
-		at_fit and filled and inside and bar_clear and zoomed_in
+		at_fit and filled and inside and bar_clear and zoomed_in and centered and anchored
 		and pan_clamped and reset_ok and floor_ok and hit_ok
 	)
 
@@ -445,23 +483,46 @@ func _click(cell: Vector2i) -> void:
 
 ## 合成一次拖曳：在 `a` 按下、移動到 `b`、在 `b` 放開。
 func _drag(a: Vector2i, b: Vector2i) -> void:
+	_drag_px(_to_screen(_center(a)), _to_screen(_center(b)), MOUSE_BUTTON_LEFT)
+
+
+## ★ 中鍵平移（B1.3.1）。**「移動」模式鈕拿掉之後這是唯一的平移路徑**，
+## 所以它得像其他輸入路徑一樣有一條真的走過去的自檢。
+func _middle_drag(a: Vector2, b: Vector2) -> void:
+	_drag_px(a, b, MOUSE_BUTTON_MIDDLE)
+
+
+## 像素座標的拖曳。按下 → 移動（鍵壓著）→ 放開。
+func _drag_px(a: Vector2, b: Vector2, button: int) -> void:
 	Input.use_accumulated_input = false
-	for step: Array in [[_to_screen(_center(a)), true], [_to_screen(_center(b)), false]]:
-		var at: Vector2 = step[0]
-		var down: bool = step[1]
-		var mm := InputEventMouseMotion.new()
-		mm.position = at
-		mm.global_position = at
-		# 按下前那一次移動還沒有人壓著鍵；移動到終點時鍵是壓著的。
-		mm.button_mask = 0 if down else MOUSE_BUTTON_MASK_LEFT
-		Input.parse_input_event(mm)
-		var ev := InputEventMouseButton.new()
-		ev.button_index = MOUSE_BUTTON_LEFT
-		ev.pressed = down
-		ev.button_mask = MOUSE_BUTTON_MASK_LEFT if down else 0
-		ev.position = at
-		ev.global_position = at
-		Input.parse_input_event(ev)
+	var mask := MOUSE_BUTTON_MASK_LEFT if button == MOUSE_BUTTON_LEFT else MOUSE_BUTTON_MASK_MIDDLE
+	_press_at(a, true, button)
+	# 移動到終點時鍵是壓著的——`button_mask` 少了這一位，平移那條分支就進不去。
+	var mm := InputEventMouseMotion.new()
+	mm.position = b
+	mm.global_position = b
+	mm.relative = b - a
+	mm.button_mask = mask
+	Input.parse_input_event(mm)
+	_press_at(b, false, button)
+
+
+## 一顆按鍵事件（前面附一次移動，GUI 的滑鼠路由要先知道游標在哪）。
+## `pressed=true` 而不送對應的放開，就是「手指還沒鬆開」那一幀。
+func _press_at(at: Vector2, pressed: bool, button: int = MOUSE_BUTTON_LEFT) -> void:
+	Input.use_accumulated_input = false
+	var mask := MOUSE_BUTTON_MASK_LEFT if button == MOUSE_BUTTON_LEFT else MOUSE_BUTTON_MASK_MIDDLE
+	var mm := InputEventMouseMotion.new()
+	mm.position = at
+	mm.global_position = at
+	Input.parse_input_event(mm)
+	var ev := InputEventMouseButton.new()
+	ev.button_index = button
+	ev.pressed = pressed
+	ev.button_mask = mask if pressed else 0
+	ev.position = at
+	ev.global_position = at
+	Input.parse_input_event(ev)
 
 
 ## 像素座標版。**加粗要點的是兩個節點「之間」**，那不是任何一格的中心。
@@ -525,9 +586,16 @@ func _process(delta: float) -> void:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
-		# ★ 平移模式：按著左鍵拖。**用一個模式鈕而不是右鍵或中鍵**——手機移植
-		#   預留條款 P3「操作不得只靠 hover／右鍵／鍵盤」，而拖曳在觸控上就是拖曳。
-		if _mode == Mode.PAN and (mm.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
+		# ★ 平移：**按住滑鼠中鍵拖**（B1.3.1，使用者指定）。
+		#   ⚠ 手機移植預留條款 P3：觸控沒有中鍵，移植時要補一個雙指拖曳手勢
+		#   （已登記在 `40_PRODUCTION_PLAN.md` 的風險表）。放大只由底欄的
+		#   ＋／−／全景三顆鈕與滾輪進入，而 fit 倍率下平移恆被夾成 0，
+		#   所以在桌面版之外「完全平移不了」不會發生。
+		#
+		#   判斷用**自己記的 `_panning`，不讀 `mm.button_mask`**：那個位元是
+		#   Input 單例從實體滑鼠狀態填的，合成事件填進去的值不保證留得住——
+		#   驗不到的輸入路徑就是遲早會壞掉的輸入路徑（B0.7.2 的教訓）。
+		if _panning:
 			_pan += mm.relative
 			_clamp_pan()
 			queue_redraw()
@@ -539,6 +607,9 @@ func _gui_input(event: InputEvent) -> void:
 		return
 	var mb := event as InputEventMouseButton
 	if mb == null:
+		return
+	if mb.button_index == MOUSE_BUTTON_MIDDLE:
+		_panning = mb.pressed
 		return
 	if not mb.pressed:
 		if mb.button_index == MOUSE_BUTTON_LEFT:
@@ -558,7 +629,7 @@ func _gui_input(event: InputEvent) -> void:
 	#   不用每一步都往返左欄切模式——第 1 關的參考解就是 6 蓋 6 接交替，
 	#   舊路徑要切 10 次模式，而那 10 次沒有任何一次是決策。
 	var c := _cell_at(mb.position)
-	if (_mode == Mode.BUILD or _mode == Mode.CONNECT) and not s.node_at(c).is_empty():
+	if _mode == Mode.BUILD and not s.node_at(c).is_empty():
 		_drag_from = c
 		queue_redraw()
 		_refresh_hint()
@@ -576,20 +647,12 @@ func _release(pos: Vector2) -> void:
 	var to := _cell_at(pos)
 	if to != from and not s.node_at(to).is_empty():
 		_message = _text_of(BuildController.lay_conduit(s, from, to))
-		_connect_from = Vector2i(-1, -1)   # 拖曳成功就當這一輪連線結束
-	elif _mode == Mode.CONNECT:
-		_act(from, Vector2(from))          # 退回兩次點擊：這一下是在選起點／終點
 	else:
-		# 建造模式點在既有節點上。**不要回「這一格已經有東西了」**——
+		# 在既有節點上點一下就放開。**不要回「這一格已經有東西了」**——
 		# 那句話對玩家沒有下一步；這裡正是教會拖曳這個手勢最好的時機。
-		_message = "從這個節點按住往另一個節點拖，就能拉一條導管（不用切「連線」）。"
+		_message = "從這個節點按住往另一個節點拖，就能拉一條導管。"
 	_refresh_hint()
 	queue_redraw()
-
-
-## 目前這條「待連線」的起點：拖曳中以拖曳起點為準，否則是連線模式選好的起點。
-func _line_from() -> Vector2i:
-	return _drag_from if _drag_from.x >= 0 else _connect_from
 
 
 ## `point` 是**格為單位的浮點座標**（整數＝格中心）。加粗與拆除要用它才點得準：
@@ -600,15 +663,6 @@ func _act(cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> void:
 	match _mode:
 		Mode.BUILD:
 			_message = _text_of(BuildController.place(s, _build_type, cell))
-		Mode.CONNECT:
-			if s.node_at(cell).is_empty():
-				_message = "連線模式：請點節點（先起點、後終點）"
-			elif _connect_from.x < 0:
-				_connect_from = cell
-				_message = "起點已選：%s。再點一個節點拉線。" % _label_at(cell)
-			else:
-				_message = _text_of(BuildController.lay_conduit(s, _connect_from, cell))
-				_connect_from = Vector2i(-1, -1)
 		Mode.UPGRADE:
 			var ci: int = s.conduit_near(p)
 			if ci < 0:
@@ -617,10 +671,6 @@ func _act(cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> void:
 				_message = _text_of(BuildController.upgrade(s, ci))
 		Mode.DEMOLISH:
 			_message = _text_of(BuildController.demolish(s, cell, p))
-		Mode.PAN:
-			# 拖曳在 `_gui_input` 處理；單擊在這個模式下刻意什麼都不做——
-			# 平移模式最重要的性質是「不會誤蓋東西」。
-			_message = "移動模式：按著左鍵拖動地圖。要蓋東西請先切回左欄。"
 
 
 func _text_of(code: String) -> String:
@@ -1154,7 +1204,7 @@ func _draw_hover() -> void:
 			)
 	else:
 		draw_rect(Rect2(p, g), Palette.BORDER_STRONG, false, 2.0)
-	var cf := _line_from()
+	var cf := _drag_from
 	if cf.x >= 0:
 		draw_rect(Rect2(_world(cf), g), Palette.ORDER_BRIGHT, false, 2.0)
 		_draw_connect_guides(cf)
@@ -1252,13 +1302,9 @@ func _build_ui() -> void:
 	#   一局之內這份清單不會變，所以鈕的位置仍然是固定的（R-15 的同一條理由）。
 	for type: String in _buildable():
 		# TL_NAKED 連造價都遮：它的語意是「隱藏所有數值標籤」，不是「隱藏狀態數值」。
-		var b := _tool_button(group, (
-			NodeDefs.label(type) if Hooks.naked
-			else "%s %d%s" % [
-				NodeDefs.label(type), NodeDefs.cost(type),
-				"+%d合" % NodeDefs.alloy_cost(type) if NodeDefs.alloy_cost(type) > 0 else ""
-			]
-		))
+		# 鈕上**只有名字**（使用者指定，B1.3.1）：價牌在提示列的第一行，
+		# 而滑鼠移到鈕上時圖鑑浮層也會寫一次。同一個數字印三遍只是把鈕撐長。
+		var b := _tool_button(group, NodeDefs.label(type))
 		b.pressed.connect(_on_build_type.bind(type))
 		# ★ 角色簡介：滑鼠停在鈕上就浮出來，移開就消失（可用底欄「圖鑑」關掉）。
 		b.mouse_entered.connect(_on_codex_show.bind(type, b))
@@ -1268,19 +1314,18 @@ func _build_ui() -> void:
 	(_build_buttons[_build_type] as Button).button_pressed = true
 
 	col.add_child(_spacer(4))
-	# ★ 四個動作鈕改**兩欄兩列**（B1.2.2）。加上「移動」之後單欄會滿：
-	#   第 5 關的 10 顆建造鈕 ＋ 4 顆動作鈕 × 44px 觸控高度（手機移植前提，
-	#   不能縮）＝ 646px，從 y=56 起算會撞到 y=668 的底欄。
-	#   鈕被擠出畫面時 `_draw()` 完全不會抱怨——這正是 RG-47 在守的事。
+	# ★ 動作鈕只剩兩顆（B1.3.1，使用者指定）：
+	#   **「連線」拿掉**——B1.6.2 的拖曳已經完全取代它，留著一顆進去只能點兩次
+	#   的模式鈕，等於在教一個比較慢的做法。
+	#   **「移動」拿掉**——改成滑鼠中鍵按住拖。平移是一個持續性的動作，
+	#   把它做成模式代表玩家每次看完別的地方都要記得切回來，而忘記切回來的
+	#   代價是「點地圖沒反應」。
 	var modes := GridContainer.new()
 	modes.columns = 2
 	modes.add_theme_constant_override("h_separation", 2)
 	modes.add_theme_constant_override("v_separation", 2)
 	col.add_child(modes)
-	for pair: Array in [
-		[Mode.CONNECT, "連線"], [Mode.UPGRADE, "加粗"],
-		[Mode.DEMOLISH, "拆除"], [Mode.PAN, "移動"],
-	]:
+	for pair: Array in [[Mode.UPGRADE, "加粗"], [Mode.DEMOLISH, "拆除"]]:
 		var b := _tool_button(group, String(pair[1]))
 		b.custom_minimum_size = Vector2(54, 0)   # 兩欄要塞進 112px 的欄寬
 		b.pressed.connect(_on_mode.bind(int(pair[0])))
@@ -1426,12 +1471,12 @@ func _build_help_panel() -> void:
 	var col := UiKit.vbox(3)
 	box.add_child(col)
 	for line: String in [
-		"操作　全部只用滑鼠左鍵，沒有鍵盤、沒有右鍵",
+		"操作　左鍵做事、中鍵移動視野、滾輪縮放。沒有鍵盤、沒有右鍵",
 		"　蓋節點：左欄選一種 → 左鍵點地圖上的一格",
 		"　拉導管：從一個節點按住左鍵，拖到另一個節點放開（隨時都能拖，不用切模式）",
-		"　　　　　也可以：「連線」→ 點起點節點 → 點終點節點",
 		"　加　粗：「加粗」→ 點導管的中間（不是兩端的節點）",
 		"　拆　除：「拆除」→ 點節點或導管，返還 75%",
+		"　移　動：按住滑鼠中鍵拖動地圖（放大之後才需要）",
 		"",
 		"規則",
 		"　導管只能走 水平／垂直／45°，要轉彎先放一個「中繼」",
@@ -1693,7 +1738,6 @@ func _spacer(h: int) -> Control:
 func _on_build_type(type: String) -> void:
 	_mode = Mode.BUILD
 	_build_type = type
-	_connect_from = Vector2i(-1, -1)
 	_drag_from = Vector2i(-1, -1)
 	_message = ""
 	_refresh_hint()
@@ -1701,7 +1745,6 @@ func _on_build_type(type: String) -> void:
 
 func _on_mode(mode: int) -> void:
 	_mode = mode
-	_connect_from = Vector2i(-1, -1)
 	_drag_from = Vector2i(-1, -1)
 	_message = ""
 	_refresh_hint()
@@ -1931,13 +1974,6 @@ func _refresh_hint() -> void:
 				parts.append_array(BuildController.preview_place(s, _build_type, _hover)["lines"])
 			else:
 				parts.append("建造 %s：左鍵點一格放下；從既有節點按住拖到另一個節點＝拉導管。" % NodeDefs.label(_build_type))
-		Mode.CONNECT:
-			if _connect_from.x >= 0 and _in_map(_hover):
-				# 起點選好之後就逐格回報「這一條連不連得成、為什麼」，
-				# 不必點下去才知道（八條導引線同時畫在地圖上）。
-				parts.append(_connect_hint())
-			else:
-				parts.append("連線：從一個節點按住拖到另一個節點（或點兩次）。只能走水平／垂直／45°，轉彎要先放中繼；過敵人路徑只能走橋。")
 		Mode.UPGRADE:
 			# 上限寫成算出來的：科技「導管擴容」會把基礎值推到 16（滿配 34），
 			# 寫死「→28」在買過科技之後就是錯的（B1.3）。
@@ -1995,7 +2031,7 @@ func _next_step() -> String:
 func _connect_hint() -> String:
 	if s.node_at(_hover).is_empty():
 		return "終點也要是一個節點（先在那裡蓋一個「中繼」）。"
-	var cf := _line_from()
+	var cf := _drag_from
 	var code: String = Build.can_connect(
 		s.sets, s.conduit_keys(), cf, _hover, s.conduit_cells()
 	)
