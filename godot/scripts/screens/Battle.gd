@@ -74,6 +74,9 @@ var _zoom_button: Button = null
 var _mode: int = Mode.BUILD
 var _build_type: String = "extractor"
 var _connect_from: Vector2i = Vector2i(-1, -1)
+## ★ 拖曳拉線的起點（B1.6.2）。**和 `_connect_from` 分開放**：兩者共用一個
+## 變數的話，「連線模式已經選好起點 A、玩家又從 B 開始拖」會把 A 悄悄蓋掉。
+var _drag_from: Vector2i = Vector2i(-1, -1)
 var _hover: Vector2i = Vector2i(-999, -999)
 var _accum: float = 0.0
 var _message: String = ""
@@ -293,6 +296,21 @@ func _click_selftest() -> void:
 		await get_tree().process_frame
 	var short_diag: int = s.conduit_near(Vector2(6.5, 12.5))
 	var upgraded: bool = short_diag >= 0 and int((s.conduits[short_diag])["level"]) == 1
+
+	# ★ 拖曳拉線（B1.6.2）：**全程停在建造模式**，一次都不碰「連線」鈕。
+	#   會壞的地方有兩個——按下時沒把起點記起來、放開的事件沒被路由到——
+	#   而兩個都只有真的送出「按下 → 移動 → 放開」三顆事件才驗得出來。
+	_press(_build_buttons["relay"])
+	_click(Vector2i(3, 8))
+	_click(Vector2i(3, 11))
+	for _i in 3:
+		await get_tree().process_frame
+	var wires_before: int = s.conduits.size()
+	_drag(Vector2i(3, 8), Vector2i(3, 11))
+	for _i in 3:
+		await get_tree().process_frame
+	var dragged: bool = s.conduits.size() == wires_before + 1 and _mode == Mode.BUILD
+
 	_press(_mode_buttons[Mode.CONNECT])
 
 	# 留一個懸而未決的起點，讓八條方向導引與「連不成」的橙色預覽線入鏡。
@@ -322,7 +340,12 @@ func _click_selftest() -> void:
 		_energy_panel.visible and (_energy_rows["net"] as Label).text != ""
 		and _energy_rows.has("smelt")
 	)
-	var codex_ok: bool = _codex_panel.visible and _codex_label.text.contains("熔爐")
+	# 圖鑑與能量是兩顆各自獨立的開關 → 玩家可以同時開。所以「不互相蓋掉」
+	# 和優先權面板一樣是斷言，不是希望（B1.6.2 的截圖上抓到它們疊在一起）。
+	var codex_ok: bool = (
+		_codex_panel.visible and _codex_label.text.contains("熔爐")
+		and _codex_panel.position.x + _codex_panel.size.x <= _energy_panel.position.x
+	)
 	# 優先權面板 9 列雙欄：整張表要留在畫面內，且不得蓋掉能量面板。
 	var prio_ok: bool = (
 		_prio_panel.size.y > 0.0
@@ -336,12 +359,12 @@ func _click_selftest() -> void:
 	var view_ok := await _view_selftest()
 
 	var ok: bool = (
-		placed and rejected and diag_placed and wired and upgraded
+		placed and rejected and diag_placed and wired and upgraded and dragged
 		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
 		and view_ok
 	)
-	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s → %s" % [
-		placed, rejected, diag_placed, wired, upgraded, reachable, alloy_gated,
+	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s → %s" % [
+		placed, rejected, diag_placed, wired, upgraded, dragged, reachable, alloy_gated,
 		energy_ok, codex_ok, prio_ok, view_ok, "PASS" if ok else "FAIL"
 	])
 	# 同時給 `TL_SHOT` 時不退出，把畫面交給截圖鉤子——**有些狀態只有互動才到得了**
@@ -414,6 +437,27 @@ func _press(b: Button) -> void:
 ## 這支自檢會點到旁邊那一格去，而畫面上一切看起來都正常。
 func _click(cell: Vector2i) -> void:
 	_click_at(_to_screen(_center(cell)))
+
+
+## 合成一次拖曳：在 `a` 按下、移動到 `b`、在 `b` 放開。
+func _drag(a: Vector2i, b: Vector2i) -> void:
+	Input.use_accumulated_input = false
+	for step: Array in [[_to_screen(_center(a)), true], [_to_screen(_center(b)), false]]:
+		var at: Vector2 = step[0]
+		var down: bool = step[1]
+		var mm := InputEventMouseMotion.new()
+		mm.position = at
+		mm.global_position = at
+		# 按下前那一次移動還沒有人壓著鍵；移動到終點時鍵是壓著的。
+		mm.button_mask = 0 if down else MOUSE_BUTTON_MASK_LEFT
+		Input.parse_input_event(mm)
+		var ev := InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_LEFT
+		ev.pressed = down
+		ev.button_mask = MOUSE_BUTTON_MASK_LEFT if down else 0
+		ev.position = at
+		ev.global_position = at
+		Input.parse_input_event(ev)
 
 
 ## 像素座標版。**加粗要點的是兩個節點「之間」**，那不是任何一格的中心。
@@ -490,7 +534,11 @@ func _gui_input(event: InputEvent) -> void:
 			_refresh_hint()
 		return
 	var mb := event as InputEventMouseButton
-	if mb == null or not mb.pressed:
+	if mb == null:
+		return
+	if not mb.pressed:
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			_release(mb.position)
 		return
 	# 滾輪縮放是桌面的便利，不是唯一的路：底欄有 ＋／−／全景 三顆鈕（P3）。
 	if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -501,8 +549,43 @@ func _gui_input(event: InputEvent) -> void:
 		return
 	if mb.button_index != MOUSE_BUTTON_LEFT:
 		return
-	_act(_cell_at(mb.position), _point_at(mb.position))
+	# ★ 從節點上按下先不動作，等放開才決定（B1.6.2）：放開在同一格＝一次普通點擊，
+	#   放開在另一個節點上＝拉一條導管。這樣「蓋一個 → 接一條 → 蓋一個 → 接一條」
+	#   不用每一步都往返左欄切模式——第 1 關的參考解就是 6 蓋 6 接交替，
+	#   舊路徑要切 10 次模式，而那 10 次沒有任何一次是決策。
+	var c := _cell_at(mb.position)
+	if (_mode == Mode.BUILD or _mode == Mode.CONNECT) and not s.node_at(c).is_empty():
+		_drag_from = c
+		queue_redraw()
+		_refresh_hint()
+		return
+	_act(c, _point_at(mb.position))
 	_refresh_hint()
+
+
+## 左鍵放開。只有「按下時停在某個節點上」的那條路徑會走到這裡。
+func _release(pos: Vector2) -> void:
+	if _drag_from.x < 0:
+		return
+	var from := _drag_from
+	_drag_from = Vector2i(-1, -1)
+	var to := _cell_at(pos)
+	if to != from and not s.node_at(to).is_empty():
+		_message = _text_of(BuildController.lay_conduit(s, from, to))
+		_connect_from = Vector2i(-1, -1)   # 拖曳成功就當這一輪連線結束
+	elif _mode == Mode.CONNECT:
+		_act(from, Vector2(from))          # 退回兩次點擊：這一下是在選起點／終點
+	else:
+		# 建造模式點在既有節點上。**不要回「這一格已經有東西了」**——
+		# 那句話對玩家沒有下一步；這裡正是教會拖曳這個手勢最好的時機。
+		_message = "從這個節點按住往另一個節點拖，就能拉一條導管（不用切「連線」）。"
+	_refresh_hint()
+	queue_redraw()
+
+
+## 目前這條「待連線」的起點：拖曳中以拖曳起點為準，否則是連線模式選好的起點。
+func _line_from() -> Vector2i:
+	return _drag_from if _drag_from.x >= 0 else _connect_from
 
 
 ## `point` 是**格為單位的浮點座標**（整數＝格中心）。加粗與拆除要用它才點得準：
@@ -1066,17 +1149,18 @@ func _draw_hover() -> void:
 			)
 	else:
 		draw_rect(Rect2(p, g), Palette.BORDER_STRONG, false, 2.0)
-	if _connect_from.x >= 0:
-		draw_rect(Rect2(_world(_connect_from), g), Palette.ORDER_BRIGHT, false, 2.0)
-		_draw_connect_guides()
+	var cf := _line_from()
+	if cf.x >= 0:
+		draw_rect(Rect2(_world(cf), g), Palette.ORDER_BRIGHT, false, 2.0)
+		_draw_connect_guides(cf)
 		# ★ 預覽線依**合法性**上色。B0.7.2 之前不管連不連得成都畫一條亮線，
 		#   那是在畫一條不可能存在的導管——玩家只能點下去才知道不行。
 		var code: String = Build.can_connect(
-		s.sets, s.conduit_keys(), _connect_from, _hover, s.conduit_cells()
+		s.sets, s.conduit_keys(), cf, _hover, s.conduit_cells()
 	)
 		var legal: bool = code == Build.OK and not s.node_at(_hover).is_empty()
 		draw_line(
-			_center(_connect_from), _center(_hover),
+			_center(cf), _center(_hover),
 			Palette.alpha(Palette.OK_GREEN if legal else Palette.WARN_ORANGE, 0.7), 2.0
 		)
 
@@ -1087,18 +1171,18 @@ func _draw_hover() -> void:
 ## 網格上找出正斜角**（要 |dx| 恰好等於 |dy|）。一條規則如果只能靠試錯才知道
 ## 自己有沒有踩中，那它在體感上就等於壞掉。把八條合法方向直接畫出來，
 ## 「45°」從一句文字變成畫面上看得到的四條斜線。
-func _draw_connect_guides() -> void:
-	var from := _center(_connect_from)
+func _draw_connect_guides(anchor: Vector2i) -> void:
+	var from := _center(anchor)
 	var col := Palette.alpha(Palette.ORDER_DIM, 0.5)
 	var size: Vector2i = s.map["size"]
 	for d: Vector2i in [
 		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
 		Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)
 	]:
-		var end := _connect_from
+		var end := anchor
 		while _in_map(end + d):
 			end += d
-		if end != _connect_from:
+		if end != anchor:
 			draw_line(from, _center(end), col, 1.0)
 
 
@@ -1339,7 +1423,8 @@ func _build_help_panel() -> void:
 	for line: String in [
 		"操作　全部只用滑鼠左鍵，沒有鍵盤、沒有右鍵",
 		"　蓋節點：左欄選一種 → 左鍵點地圖上的一格",
-		"　拉導管：「連線」→ 點起點節點 → 點終點節點",
+		"　拉導管：從一個節點按住左鍵，拖到另一個節點放開（隨時都能拖，不用切模式）",
+		"　　　　　也可以：「連線」→ 點起點節點 → 點終點節點",
 		"　加　粗：「加粗」→ 點導管的中間（不是兩端的節點）",
 		"　拆　除：「拆除」→ 點節點或導管，返還 75%",
 		"",
@@ -1500,6 +1585,10 @@ func _build_codex_panel() -> void:
 	var box := UiKit.panel(0.88)
 	box.visible = false
 	_codex_label = UiKit.label("", 14, Palette.TEXT_PRIMARY, false)
+	# ★ 不設寬度的話它會長到最長那一行那麼寬（熔爐那一行 850px），
+	#   從 x=124 一路蓋掉 x=870 的能量面板——兩個浮層同時開就疊在一起。
+	_codex_label.custom_minimum_size.x = 640.0
+	_codex_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(_codex_label)
 	add_child(box)
 	_codex_panel = box
@@ -1600,6 +1689,7 @@ func _on_build_type(type: String) -> void:
 	_mode = Mode.BUILD
 	_build_type = type
 	_connect_from = Vector2i(-1, -1)
+	_drag_from = Vector2i(-1, -1)
 	_message = ""
 	_refresh_hint()
 
@@ -1607,6 +1697,7 @@ func _on_build_type(type: String) -> void:
 func _on_mode(mode: int) -> void:
 	_mode = mode
 	_connect_from = Vector2i(-1, -1)
+	_drag_from = Vector2i(-1, -1)
 	_message = ""
 	_refresh_hint()
 
@@ -1822,19 +1913,26 @@ func _refresh_hint() -> void:
 	# B0.7 原本讓預覽「取代」下一步，於是玩家把滑鼠移到地圖上——正是最需要
 	# 指引的那一刻——指引就消失了。使用者實玩後的第一句話是「你沒教我怎麼操作」。
 	var parts: Array[String] = []
+	# 拖曳中就只講這一條線連不連得成——這時玩家問的問題只有那一個。
+	if _drag_from.x >= 0:
+		_hint.text = "▶ %s\n%s" % [
+			"放開在另一個節點上就拉出一條導管；放開在空地／原地則取消。",
+			_connect_hint() if _in_map(_hover) else "",
+		]
+		return
 	match _mode:
 		Mode.BUILD:
 			if _in_map(_hover):
 				parts.append_array(BuildController.preview_place(s, _build_type, _hover)["lines"])
 			else:
-				parts.append("建造 %s：把滑鼠移到地圖上，左鍵點一格放下。" % NodeDefs.label(_build_type))
+				parts.append("建造 %s：左鍵點一格放下；從既有節點按住拖到另一個節點＝拉導管。" % NodeDefs.label(_build_type))
 		Mode.CONNECT:
 			if _connect_from.x >= 0 and _in_map(_hover):
 				# 起點選好之後就逐格回報「這一條連不連得成、為什麼」，
 				# 不必點下去才知道（八條導引線同時畫在地圖上）。
 				parts.append(_connect_hint())
 			else:
-				parts.append("連線：左鍵點「起點節點」，再點「終點節點」。只能走水平／垂直／45°，轉彎要先放中繼；過敵人路徑只能走橋。")
+				parts.append("連線：從一個節點按住拖到另一個節點（或點兩次）。只能走水平／垂直／45°，轉彎要先放中繼；過敵人路徑只能走橋。")
 		Mode.UPGRADE:
 			parts.append("加粗：左鍵點一段導管的「中間」（不是兩端的節點）。每級 +6 吞吐，上限 3 級（→28）。1 級 20 礦砂；2 級 40 礦砂＋20 合金；3 級 60 礦砂＋50 合金。")
 		Mode.DEMOLISH:
@@ -1860,13 +1958,13 @@ func _next_step() -> String:
 	if s.count_of("extractor") == 0:
 		return "左欄點「採集器」→ 左鍵點地圖上任一個青色空心圓（礦點）。這是所有東西的源頭。"
 	if float(s.rates["ore_in"]) <= 0.0:
-		return "礦砂要「送達核心」才入帳：左欄點「連線」→ 點採集器 → 點下一個節點，一路接到右下角的核心。"
+		return "礦砂要「送達核心」才入帳：從採集器按住左鍵，拖到下一個節點放開，一路接到右下角的核心。"
 	if s.count_of("generator") == 0:
-		return "有礦砂了（看頂欄 ▲/秒）。左欄點「發電機」蓋一台，再用「連線」把礦砂線接給它：4 礦砂/秒 → 20 能量/秒。"
+		return "有礦砂了（看頂欄 ▲/秒）。左欄點「發電機」蓋一台，再從採集器拖一條線給它：4 礦砂/秒 → 20 能量/秒。"
 	if _towers() == 0:
 		return "電有了。左欄點「錨」（最便宜的塔）蓋在「離紫色路徑 2 格以上」的地方——貼太近會被走過的敵人打壞。"
 	if _unpowered_tower():
-		return "那座塔還沒接進電網，交戰時一發都打不出：左欄點「連線」，把它接到發電機那一側。"
+		return "那座塔還沒接進電網，交戰時一發都打不出：從那座塔按住拖到發電機那一側的節點。"
 	# 合金是第三資源，但它排在「防線先站得住」之後才提——B0.7 的教訓是
 	# 提示列一次只能給一件事做，塞第二條路線只會讓玩家兩件都不做。
 	#
@@ -1877,7 +1975,7 @@ func _next_step() -> String:
 			"、或蓋「碎浪」" if _buildable().has("breaker") else ""
 		)
 	if s.count_of("smelter") > 0 and float(s.rates["alloy_in"]) <= 0.0:
-		return "熔爐產的合金也要「送達核心」才入帳：用「連線」把熔爐一路接到核心，同時它的礦砂與電也都要接得到。"
+		return "熔爐產的合金也要「送達核心」才入帳：從熔爐拖一條線出去，一路接到核心；同時它的礦砂與電也都要接得到。"
 	if s.phase == "prep":
 		return "都齊了。等倒數跑完自動開波，或按「提前召喚」提早開——倒數剩越多，這一波掉落倍率越高。"
 	return "波次進行中：盯著頂端能量條，橙色那截就是餵不飽的部分；節點上的橙色倒三角＝這個缺料。"
@@ -1888,20 +1986,21 @@ func _next_step() -> String:
 func _connect_hint() -> String:
 	if s.node_at(_hover).is_empty():
 		return "終點也要是一個節點（先在那裡蓋一個「中繼」）。"
+	var cf := _line_from()
 	var code: String = Build.can_connect(
-		s.sets, s.conduit_keys(), _connect_from, _hover, s.conduit_cells()
+		s.sets, s.conduit_keys(), cf, _hover, s.conduit_cells()
 	)
 	if code == Build.NOT_STRAIGHT:
-		var d: Vector2i = _hover - _connect_from
+		var d: Vector2i = _hover - cf
 		return "✕ 不是直線：橫 %d 直 %d。要走 45° 兩邊得一樣長；否則先放一個「中繼」轉彎。" % [
 			absi(d.x), absi(d.y)
 		]
 	if code != Build.OK:
 		return "✕ " + BuildController.reason_text(code)
-	var cost := Build.conduit_cost(_connect_from, _hover)
+	var cost := Build.conduit_cost(cf, _hover)
 	var afford := "" if s.ore >= float(cost) else "　（礦砂不夠）"
 	return "✔ 可連：%s → %s，%d 礦砂%s" % [
-		_label_at(_connect_from), _label_at(_hover), cost, afford
+		_label_at(cf), _label_at(_hover), cost, afford
 	]
 
 
