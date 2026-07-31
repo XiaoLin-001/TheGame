@@ -20,7 +20,8 @@ const REASONS := {
 	Build.SAME_NODE: "起點與終點是同一個節點",
 	Build.CROSSES_PATH: "導管要過敵人路徑，只能走跨越點（橋）",
 	Build.DUPLICATE: "這兩個節點之間已經有一條導管了",
-	Build.MAX_LEVEL: "這條導管已經是最高級（cap 28）",
+	# 不寫死 28：科技「導管擴容」會把基礎值推上去（B1.3），寫死的數字會變成謊話。
+	Build.MAX_LEVEL: "這條導管已經加粗到最高級了",
 	Build.NO_ORE: "礦砂不夠",
 	Build.NO_ALLOY: "合金不夠——合金要蓋熔爐、而且熔爐要接到核心才入帳",
 	Build.LOCKED: "這一關還沒解鎖這種節點",
@@ -184,7 +185,8 @@ static func preview_place(s: RefCounted, type: String, cell: Vector2i) -> Dictio
 	var lines: Array[String] = [price_text(type)]
 
 	if def.has("ore_out"):
-		lines.append("＋%.0f 礦砂/秒（要接到核心才入帳）" % float(def["ore_out"]))
+		var bonus := float(s.mods["extractor_ore"]) if type == "extractor" else 0.0
+		lines.append("＋%.0f 礦砂/秒（要接到核心才入帳）" % (float(def["ore_out"]) + bonus))
 	if def.has("ore_in"):
 		lines.append("−%.0f 礦砂/秒（燃料）" % float(def["ore_in"]))
 	if def.has("power_out"):
@@ -202,13 +204,18 @@ static func preview_place(s: RefCounted, type: String, cell: Vector2i) -> Dictio
 	# 射程／射速／傷害不寫進來：提示列是一行，塞進去只會把上面那些擠掉，
 	# 而且射程在滑鼠底下已經畫成一個圈了（`screens/Battle.gd` 的放置預覽）。
 	if def.has("engage_power"):
-		lines.append("交戰時 −%.0f 能量/秒（待機 0）" % float(def["engage_power"]))
+		# 科技「能量效率」買的就是這一個數字（B1.3）——預覽不跟著變的話，
+		# 玩家會從最重要的那條資訊上讀到未打折的舊值。
+		lines.append(
+			"交戰時 −%.1f 能量/秒（待機 0）"
+			% (float(def["engage_power"]) * float(s.mods["engage_mult"]))
+		)
 
 	# 總供需變化：本作最重要的資訊通道，**在花錢之前**就要看得到（§3.1）。
 	var supply_now := float(s.rates.get("power_supply", 0.0))
 	var demand_now := float(s.rates.get("power_demand", 0.0))
 	var d_supply := float(def.get("power_out", 0.0))
-	var d_demand := _power_demand_of(type)
+	var d_demand := _power_demand_of(type, float(s.mods["cap_bonus"]), float(s.mods["engage_mult"]))
 	if not is_zero_approx(d_supply):
 		lines.append("總能量供給 %.0f → %.0f /秒" % [supply_now, supply_now + d_supply])
 	if not is_zero_approx(d_demand):
@@ -244,8 +251,11 @@ static func price_text(type: String) -> String:
 ## 儲槽的充能需求不是固定值——它受**自己那條導管的 cap** 約束（§3.1），
 ## 線還沒拉之前只能以基礎 cap 估。
 ## 塔給的是**交戰時**的峰值：本作的約束是峰值電力，不是平均電力（§3.3）。
-static func _power_demand_of(type: String) -> float:
+static func _power_demand_of(type: String, cap_bonus := 0.0, engage_mult := 1.0) -> float:
 	var def := NodeDefs.of(type)
 	if def.has("capacity"):
-		return Build.CAP_BASE
-	return float(def.get("power_in", 0.0)) + float(def.get("engage_power", 0.0))
+		return Build.CAP_BASE + cap_bonus
+	return (
+		float(def.get("power_in", 0.0))
+		+ float(def.get("engage_power", 0.0)) * engage_mult
+	)

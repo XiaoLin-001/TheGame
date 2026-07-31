@@ -87,7 +87,7 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（8 支：flow / build / combat / tide / save / determinism / hud / campaign）
+# 自動化測試（9 支：flow / build / combat / tide / save / determinism / hud / tech / campaign）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 戰役五關的參考解實跑（最慢的一支，約 3 分鐘）——「這一關過得了」的唯一證據
@@ -105,6 +105,10 @@ TL_SHOT="C:/tmp/first.png" TL_DEMO_TICKS=0 TL_PANEL=battle <godot> --path godot 
 # ⚠ TL_DEMO_TICKS 是**從參考解跑完那一刻起算**的（參考解的 wait 已經推掉一批 tick）。
 TL_SHOT="C:/tmp/lv.png" TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> --path godot --rendering-driver opengl3
 
+# ★ 科技樹（B1.3）：TL_PANEL=tech。存檔在有鉤子時是預設值（研究數據 0），
+# 所以 clicktest 會自己先塞一筆數據進去再點——不寫檔，玩家進度碰不到。
+TL_SHOT="C:/tmp/tech.png" TL_PANEL=tech <godot> --path godot --rendering-driver opengl3
+
 # ★ 拍特效近照（B1.6）：TL_FOCUS="x,y,zoom" 把鏡頭對到某一格並放大。
 # 特效是 0.2 秒、十幾個像素的東西——在 fit 倍率的全圖截圖上判不出好壞，
 # 沒有這個鉤子就會變成「宣稱做好了但沒真的看過」。
@@ -115,6 +119,8 @@ TL_SHOT="C:/tmp/fx.png" TL_PANEL=campaign TL_LEVEL=5 TL_DEMO_TICKS=581 TL_FOCUS=
 TL_CLICKTEST=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 關卡選擇畫面的同一件事（那個畫面的全部價值就是「一顆鈕點得到」）
 TL_CLICKTEST=1 TL_PANEL=campaign TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
+# 科技樹（解鎖鈕點得到、真的扣款、捲到底最後一顆鈕還在畫面內）
+TL_CLICKTEST=1 TL_PANEL=tech TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 
 # 拍「只有互動才到得了」的狀態：驅動完 UI 之後不退出，交給 TL_SHOT
 TL_CLICKTEST=1 TL_SHOT="C:/tmp/panels.png" TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
@@ -168,9 +174,9 @@ TheGame/
     ├── scripts/screens/       各畫面
     ├── scripts/render/        Palette / Shapes / Motion（美術 token 實作）
     ├── scripts/ui/            UiKit
-    ├── scripts/meta/          TechTree / RosterData / TycoonSim
-    ├── data/                  角色、敵人、關卡、訂單資料表
-    ├── tests/                 flow / build / combat / tide / save / determinism / hud
+    ├── scripts/meta/          RosterData / TycoonSim（尚未建立；科技樹是 data/Tech.gd）
+    ├── data/                  節點、角色、敵人、地圖、戰役、**科技**資料表
+    ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / campaign
     └── assets/audio/
 ```
 

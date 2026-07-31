@@ -10,6 +10,7 @@ extends Control
 const CampaignData := preload("res://data/Campaign.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const BattleScreen := preload("res://scripts/screens/Battle.gd")
+const TechScreen := preload("res://scripts/screens/Tech.gd")
 
 ## 卡片寬度。五張 ＋ 四道間距要放進 1280 的設計基準。
 const CARD := Vector2(228, 300)
@@ -91,13 +92,18 @@ func _build() -> void:
 	col.add_child(UiKit.label(
 		"研究數據 %s" % UiKit.commas(data), 15, Palette.ENERGY_AMBER, false
 	))
+	var back_row := UiKit.hbox(8)
+	col.add_child(back_row)
 	if on_exit.is_valid():
 		var back := Button.new()
 		back.text = "返回標題"
 		back.pressed.connect(on_exit)
-		var back_row := UiKit.hbox(0)
 		back_row.add_child(UiKit.touchable(back))
-		col.add_child(back_row)
+	# ★ 研究數據是在這個畫面上賺到的，花掉它的地方就該在同一個畫面上到得了（B1.3）。
+	var tech := Button.new()
+	tech.text = "科技樹"
+	tech.pressed.connect(_enter_tech)
+	back_row.add_child(UiKit.touchable(tech))
 
 	var row := UiKit.hbox(12)
 	col.add_child(row)
@@ -182,6 +188,13 @@ func _new_unlocks(index: int) -> String:
 		if not prev.has(type):
 			names.append(NodeDefs.label(type))
 	return "・".join(names)
+
+
+func _enter_tech() -> void:
+	_clear()
+	var screen := TechScreen.new()
+	screen.on_exit = _build
+	add_child(screen)
 
 
 func _enter(index: int) -> void:

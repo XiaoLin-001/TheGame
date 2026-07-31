@@ -6,13 +6,15 @@ extends Control
 
 const BattleScreen := preload("res://scripts/screens/Battle.gd")
 const CampaignScreen := preload("res://scripts/screens/Campaign.gd")
+const TechScreen := preload("res://scripts/screens/Tech.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 
 ## TL_PANEL 目前認得的畫面。其餘由後續批次補進來。
 ## `sandbox` ＝ 局內畫面但換成沙盤「靜水」（`data/Maps.gd`）：
 ## 沒有敵人，只有三種資源在跑，用來驗合金那一列流動珠（B1.1）。
 ## `campaign` ＝ 戰役關卡選擇；配 `TL_LEVEL=1..5` 直接進那一關（B1.2）。
-const KNOWN_PANELS := ["title", "battle", "sandbox", "campaign"]
+## `tech` ＝ 科技樹（B1.3）。
+const KNOWN_PANELS := ["title", "battle", "sandbox", "campaign", "tech"]
 
 
 func _ready() -> void:
@@ -22,6 +24,9 @@ func _ready() -> void:
 		return
 	if Hooks.panel == "campaign":
 		_enter_campaign()
+		return
+	if Hooks.panel == "tech":
+		_enter_tech()
 		return
 	_build()
 	_route_panel()
@@ -45,6 +50,14 @@ func _enter_campaign() -> void:
 	add_child(screen)
 	if Hooks.level >= 1 and Hooks.level <= CampaignData.count():
 		screen._enter.call_deferred(Hooks.level - 1)
+
+
+func _enter_tech() -> void:
+	for c: Node in get_children():
+		c.queue_free()
+	var screen := TechScreen.new()
+	screen.on_exit = _back_to_title
+	add_child(screen)
 
 
 func _back_to_title() -> void:
@@ -77,6 +90,13 @@ func _build() -> void:
 	campaign.text = "戰役　五關"
 	campaign.pressed.connect(_enter_campaign)
 	col.add_child(UiKit.touchable(campaign))
+
+	var tech := Button.new()
+	tech.text = "科技樹　%s 研究數據" % UiKit.commas(
+		int(float((GameState.data.get("tech", {}) as Dictionary).get("data", 0)))
+	)
+	tech.pressed.connect(_enter_tech)
+	col.add_child(UiKit.touchable(tech))
 
 	var start := Button.new()
 	start.text = "進入測試圖　淺灘"

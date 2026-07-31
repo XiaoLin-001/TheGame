@@ -140,10 +140,14 @@ func _ready() -> void:
 
 ## 一局的起手。戰役關卡帶著自己的地圖與解鎖清單；沒有關卡就是測試圖／沙盤。
 func _setup_session() -> void:
+	# ★ 局外科技（B1.3）。有測試鉤子時 `SaveService.persist=false` → 存檔是預設值
+	#   → `unlocked` 為空 → mods 全中性，所以 `TL_*` 的任何一張截圖與任何一支自檢
+	#   都不會因為這台機器上玩家買了什麼科技而改變（RG-61 的同一條紀律）。
+	var tech: Array = (GameState.data.get("tech", {}) as Dictionary).get("unlocked", [])
 	if not level.is_empty():
-		s.setup(level["map"], level["unlocked"])
+		s.setup(level["map"], level["unlocked"], tech)
 	else:
-		s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL)
+		s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL, [], tech)
 	_reset_view()
 
 
@@ -765,7 +769,8 @@ func _draw_conduits() -> void:
 	var flows: Dictionary = s.rates["conduit_flow"]
 	var sat: Dictionary = s.rates["satisfaction"]
 	for c: Dictionary in s.conduits:
-		var cap := Build.conduit_cap(int(c["level"]))
+		var bonus := float(s.mods["cap_bonus"])
+		var cap := Build.conduit_cap(int(c["level"]), bonus)
 		var flow := float(flows.get(c["id"], 0.0))
 		var to_node: Dictionary = s.node_at(c["b"])
 		var starving := (
@@ -773,7 +778,7 @@ func _draw_conduits() -> void:
 		)
 		# 線寬的分母是**全遊戲的最大 cap**，不是這條線自己的——粗細因此在
 		# 全圖上可以互相比較，而且加粗一條線之後它會真的變粗（B1.1 使用者回報）。
-		var w := Shapes.conduit_width(flow, Build.conduit_cap(Build.CAP_MAX_LEVEL))
+		var w := Shapes.conduit_width(flow, Build.conduit_cap(Build.CAP_MAX_LEVEL, bonus))
 		# 受損：先鋪一圈 warn.orange 光暈。**線被打斷之前要先看得出它在挨打**，
 		# 否則產能中斷對玩家來說會是憑空發生的。
 		if float(c["hp"]) < 40.0:
@@ -1934,7 +1939,11 @@ func _refresh_hint() -> void:
 			else:
 				parts.append("連線：從一個節點按住拖到另一個節點（或點兩次）。只能走水平／垂直／45°，轉彎要先放中繼；過敵人路徑只能走橋。")
 		Mode.UPGRADE:
-			parts.append("加粗：左鍵點一段導管的「中間」（不是兩端的節點）。每級 +6 吞吐，上限 3 級（→28）。1 級 20 礦砂；2 級 40 礦砂＋20 合金；3 級 60 礦砂＋50 合金。")
+			# 上限寫成算出來的：科技「導管擴容」會把基礎值推到 16（滿配 34），
+			# 寫死「→28」在買過科技之後就是錯的（B1.3）。
+			parts.append("加粗：左鍵點一段導管的「中間」（不是兩端的節點）。每級 +6 吞吐，上限 3 級（→%d）。1 級 20 礦砂；2 級 40 礦砂＋20 合金；3 級 60 礦砂＋50 合金。" % int(
+				Build.conduit_cap(Build.CAP_MAX_LEVEL, float(s.mods["cap_bonus"]))
+			))
 		Mode.DEMOLISH:
 			parts.append("拆除：左鍵點節點或導管，返還 75%%。")
 	if _message != "":

@@ -30,8 +30,12 @@ const OVERLAPS := "overlaps"        # 這條線會和既有導管疊在同一排
 
 
 ## 導管吞吐上限。局內升級每級 +6，上限 3 級 → 28（§7.2）。
-static func conduit_cap(level: int) -> float:
-	return CAP_BASE + CAP_PER_LEVEL * float(clampi(level, 0, CAP_MAX_LEVEL))
+##
+## `base_bonus` 是**局外科技「導管擴容」**加在基礎值上的（B1.3，§7.2 註）：
+## 三級全開 10 → 16，與局內加粗疊加，滿配 34。加在**基礎**而不是乘在總量上，
+## 是 B1「加法為主、乘法為輔」的直接落地。
+static func conduit_cap(level: int, base_bonus: float = 0.0) -> float:
+	return CAP_BASE + base_bonus + CAP_PER_LEVEL * float(clampi(level, 0, CAP_MAX_LEVEL))
 
 
 ## 升到「下一級」的造價：20 × 級數（1→20、2→40、3→60）。

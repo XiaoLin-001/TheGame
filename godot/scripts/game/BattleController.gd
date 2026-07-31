@@ -209,8 +209,11 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 					targets = [t]
 		for i: int in targets:
 			var edef := Enemies.of(String((s.enemies[i] as Dictionary)["type"]))
+			# 科技「校準」（§7.8）乘在**原始傷害**上，在減傷／破甲之前——
+			# 乘在最後結果上會讓它對高護甲敵人的效益憑空變小，而玩家買的是
+			# 「塔傷害 +6%」，不是「對軟目標 +6%」。
 			damage[i] += Combat.hit_damage(
-				float(def.get("dmg", 0.0)) * float(count),
+				float(def.get("dmg", 0.0)) * float(count) * float(s.mods["damage_mult"]),
 				String(def.get("dmg_type", "physical")), edef, aura[i].y
 			)
 			s.shots.append({"from": n["cell"], "to": cells[i], "ttl": SHOT_TTL})
@@ -298,7 +301,10 @@ static func _solve_ore(s: RefCounted, edges: Array) -> Dictionary:
 	var demand_total := 0.0
 	for n: Dictionary in s.nodes:
 		var def := NodeDefs.of(String(n["type"]))
-		var supply := float(def.get("ore_out", 0.0)) * TICK
+		# 科技「採集精煉」只加採集器（§7.8）。用 `ore_out > 0` 當條件會在日後
+		# 出現第二種產礦節點時靜靜地一起加上去——那不是這個科技買的東西。
+		var out_bonus := float(s.mods["extractor_ore"]) if n["type"] == "extractor" else 0.0
+		var supply := (float(def.get("ore_out", 0.0)) + out_bonus) * TICK
 		var demand := float(def.get("ore_in", 0.0)) * TICK
 		supply_total += supply
 		demand_total += demand
@@ -364,7 +370,9 @@ static func _solve_power(
 		var demand := float(def.get("power_in", 0.0)) * TICK
 		# ★ 交戰耗能：**射程內有敵人才扣，待機 0**（§7.4）。全案的心臟就在這一行。
 		if engaged.get(int(n["id"]), false):
-			demand += float(def.get("engage_power", 0.0)) * TICK
+			# 科技「能量效率」（§7.8）。**它作用在交戰耗能上，不是待機耗能**——
+			# 待機早就是 0，乘在那上面是空操作（v0.3 定案第 ⑬ 條）。
+			demand += float(def.get("engage_power", 0.0)) * float(s.mods["engage_mult"]) * TICK
 		var sn := _sim_node(n, supply, demand)
 		if type == "silo":
 			# 儲槽是能量專用緩衝（§7.3）。charge 是**絕對量**，不乘 TICK；
@@ -444,7 +452,7 @@ static func _edges(s: RefCounted) -> Array:
 		var b: Dictionary = s.node_at(c["b"])
 		if a.is_empty() or b.is_empty():
 			continue
-		var cap := Build.conduit_cap(int(c["level"])) * TICK
+		var cap := Build.conduit_cap(int(c["level"]), float(s.mods["cap_bonus"])) * TICK
 		# `dir` 只給回寫用：讓 `_write_rates()` 算得出**淨流向**（渲染層的流動珠
 		# 要靠它決定珠子往哪邊跑）。解算器本身不看這個欄位。
 		edges.append({
