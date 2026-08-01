@@ -200,13 +200,53 @@ def bgm_perc():
 
 
 def bgm_menu():
+    """主選單。
+
+    ★ 第一版是「drone ＋ 每 6 拍一顆鐘」，使用者回報「不好，要再帶感一點點」。
+    **「一點點」是規格的一部分**：它是選單曲，不是戰鬥曲——把打擊層搬過來就
+    等於每次回主選單都被催一次。所以加的是**脈動與行進感**，不是鼓：
+      ① 走一條八分音符的低音撥弦（A–A–C–E 循環），它給的是「有東西在走」
+      ② 每小節第一拍一個很輕的低頻脈衝當骨架，不是 kick
+      ③ 鐘留著但退到後面——它現在是點綴，不是唯一在動的東西
+    """
     out = buf(LOOP)
-    lfo = lambda t: 0.34 + 0.08 * math.sin(2.0 * math.pi * (1.0 / LOOP) * t)
+    lfo = lambda t: 0.30 + 0.07 * math.sin(2.0 * math.pi * (1.0 / LOOP) * t)
     tone(out, ROOT, 0, LOOP, lfo, loop=LOOP)
-    tone(out, ROOT * 2, 0, LOOP, lambda t: lfo(t) * 0.22, loop=LOOP, phase=1.7)
-    # 每 6 拍一顆長尾的鐘。留白多 ＝ 大部分時間只有嗡鳴。
-    for k, b in enumerate([0, 6, 12, 18]):
-        f = [440.0, 659.25, 523.25, 329.63][k]
+    tone(out, ROOT * 2, 0, LOOP, lambda t: lfo(t) * 0.20, loop=LOOP, phase=1.7)
+
+    # ① 八分音符的低音撥弦。音高走 A–A–C–E，四拍一循環。
+    steps = [110.0, 110.0, 130.81, 164.81]
+    for k in range(48):                      # 24 拍 × 2 ＝ 48 個八分音符
+        t0 = k * BEAT * 0.5
+        if t0 > LOOP - 0.35:
+            break
+        f = steps[(k // 2) % 4]
+        pluck = buf(0.32)
+        for i in range(len(pluck)):
+            t = i / RATE
+            e = env_exp(t, 0.32, 9.0)
+            pluck[i] = (
+                math.sin(2.0 * math.pi * f * t) * e
+                + 0.35 * math.sin(2.0 * math.pi * f * 2.0 * t) * e * e
+            )
+        # 反拍輕一點：那個強弱差就是「行進」的感覺，音量一樣大只會變節拍器。
+        mix(out, fade_edges(pluck, 2.0), t0, 0.30 if k % 2 == 0 else 0.17)
+
+    # ② 每小節第一拍的低頻脈衝。很輕，只給骨架。
+    for b in range(0, 24, 4):
+        if b * BEAT > LOOP - 0.4:
+            break
+        pulse = buf(0.3)
+        for i in range(len(pulse)):
+            t = i / RATE
+            pulse[i] = math.sin(
+                2.0 * math.pi * (95.0 * math.exp(-10.0 * t) + 55.0) * t
+            ) * env_exp(t, 0.3, 6.0)
+        mix(out, pulse, b * BEAT, 0.30)
+
+    # ③ 鐘：退到 0.14，並且只留兩顆——它現在是點綴。
+    for k, b in enumerate([0, 12]):
+        f = [880.0, 659.25][k]
         bell = buf(2.4)
         for i in range(len(bell)):
             t = i / RATE
@@ -215,8 +255,8 @@ def bgm_menu():
                 math.sin(2.0 * math.pi * f * t) * e
                 + 0.30 * math.sin(2.0 * math.pi * f * 2.01 * t) * e * e
             )
-        mix(out, fade_edges(bell, 3.0), b * BEAT, 0.20)
-    return normalize(out, 0.62)
+        mix(out, fade_edges(bell, 3.0), b * BEAT, 0.14)
+    return normalize(out, 0.68)
 
 
 # ── SFX ───────────────────────────────────────────────────────────────
@@ -275,9 +315,21 @@ def _fire(dur, body, peak=0.78):
 
 
 def sfx_fire_anchor():
-    """錨：低頻實心的一擊。"""
-    return _fire(0.18, lambda t: math.sin(
-        2.0 * math.pi * (200.0 * math.exp(-14.0 * t) + 80.0) * t) * env_exp(t, 0.18, 8.0))
+    """錨：短促結實的一擊。
+
+    ★ 第一版是 200→80Hz、0.18 秒的低頻，使用者回報「太沉重」——錨是**射得最快的
+    那一座塔**，一秒好幾發的東西不能用重擊的音色，聽久了像有人在敲牆。
+    改成高一個八度、短一半，收尾帶一點乾的木質敲擊，讓它退回背景。
+    """
+    out = buf(0.10)
+    for i in range(len(out)):
+        t = i / RATE
+        out[i] = math.sin(
+            2.0 * math.pi * (520.0 * math.exp(-26.0 * t) + 240.0) * t
+        ) * env_exp(t, 0.10, 15.0)
+    tap = highpass(noise(0.03, 617), 2200)
+    mix(out, [v * env_exp(i / RATE, 0.03, 16.0) for i, v in enumerate(tap)], 0.0, 0.35)
+    return fade_edges(normalize(out, 0.52), 2.0)
 
 
 def sfx_fire_prism():

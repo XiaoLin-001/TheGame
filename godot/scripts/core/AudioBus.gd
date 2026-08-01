@@ -43,6 +43,8 @@ var _perc_target: float = 0.0
 var _perc_now: float = 0.0
 var _flow: AudioStreamPlayer = null
 var _flow_level: float = 0.0
+## 累計播了幾次一次性音效。自檢用——「局結束之後還在響嗎」只有這個數字答得出來。
+var plays: int = 0
 
 
 func _ready() -> void:
@@ -146,6 +148,7 @@ func play(key: String, db: float = 0.0) -> void:
 	var st := _stream(SFX_DIR + "tl_sfx_%s.wav" % key, false)
 	if st == null:
 		return
+	plays += 1
 	var p := _voices[_next_voice]
 	_next_voice = (_next_voice + 1) % _voices.size()
 	p.stream = st

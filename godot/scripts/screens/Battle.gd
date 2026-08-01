@@ -467,6 +467,39 @@ func _click_selftest() -> void:
 			voice_ok = true
 	var audio_ok: bool = music_ok and layer_prep and layer_rising and voice_ok and AudioBus.muted
 
+	# ★ **局結束之後不得有東西還在動**（使用者回報：「音效還在，他們也還在射擊」）。
+	#   根因是 `step()` 在 won/lost 直接 return → 開火線的 `ttl` 不再遞減 →
+	#   拿 `ttl` 當「剛剛才開火」的判定就每一幀都成立。這裡塞一條假的開火線，
+	#   讓局結束，然後量兩件事：線有沒有被收掉、還會不會繼續發出聲音。
+	# ⚠ 開火線的起點**必須是一座真的塔**，否則 `fire_<type>` 找不到檔案、
+	#   `play()` 直接 return，這一段就變成一個永遠會過的空測試。
+	_press(_build_buttons["anchor"])
+	var tower_cell := Vector2i(22, 12)
+	_click(tower_cell)
+	for _i in 3:
+		await get_tree().process_frame
+	var tower_built: bool = String(s.node_at(tower_cell).get("type", "")) == "anchor"
+
+	s.phase = "won"
+	for _i in 4:
+		await get_tree().process_frame
+	# ① 局末面板出現的那一刻，凍住的開火線與碎片要被收乾淨。
+	var over_cleared: bool = s.shots.is_empty() and _over_panel != null
+	# ② 面板已經在了（`_refresh_over` 之後不會再清一次），這時再塞一條滿 `ttl` 的
+	#    開火線——**舊版會每一幀重播一次它的開火音**，新版因為 tick 沒有前進而不播。
+	s.shots.append({
+		"from": tower_cell, "to": Vector2i(22, 4), "ttl": BattleController.SHOT_TTL,
+	})
+	var plays_before: int = AudioBus.plays
+	for _i in 12:
+		await get_tree().process_frame
+	var over_silent: bool = AudioBus.plays == plays_before
+	s.shots.clear()
+	s.phase = phase_before
+	for _i in 2:
+		await get_tree().process_frame
+	var over_ok: bool = tower_built and over_cleared and over_silent
+
 	# ★ 最後才留一個懸而未決的拖曳起點（按下不放開），讓八條方向導引與
 	#   「連不成」的橙色預覽線入鏡——**這是玩家真的會看到的那一幀**（手指還沒鬆開）。
 	#   一定要放在所有斷言之後：懸著的起點會讓下一次點擊被當成拖曳的終點。
@@ -481,14 +514,16 @@ func _click_selftest() -> void:
 	var ok: bool = (
 		placed and rejected and diag_placed and wired and upgraded and dragged and panned
 		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
-		and view_ok and menu_ok and audio_ok
+		and view_ok and menu_ok and audio_ok and over_ok
 	)
-	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s → %s" % [
+	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s → %s" % [
 		placed, rejected, diag_placed, wired, upgraded, dragged, panned, reachable, alloy_gated,
-		energy_ok, codex_ok, prio_ok, view_ok, menu_ok, audio_ok, "PASS" if ok else "FAIL"
+		energy_ok, codex_ok, prio_ok, view_ok, menu_ok, audio_ok, over_ok,
+		"PASS" if ok else "FAIL"
 	])
-	print("[TL_CLICKTEST/audio] two_layers=%s prep_silent=%s wave_fade_in=%s voice=%s muted=%s" % [
-		music_ok, layer_prep, layer_rising, voice_ok, AudioBus.muted
+	print("[TL_CLICKTEST/audio] two_layers=%s prep_silent=%s wave_fade_in=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s" % [
+		music_ok, layer_prep, layer_rising, voice_ok, AudioBus.muted, tower_built, over_cleared,
+		over_silent
 	])
 	print("[TL_CLICKTEST/menu] esc_open=%s scrim_blocks=%s settings=%s settings_back=%s esc_close=%s cell_buildable=%s button=%s fits=%s" % [
 		menu_open, menu_blocks, settings_open, settings_back, menu_closed, buildable_after,
@@ -685,7 +720,7 @@ func _process(delta: float) -> void:
 func _audio_reset() -> void:
 	_audio_prev = {
 		"kills": s.kills, "nodes": s.nodes.size(), "core": s.core_hp(),
-		"warn_at": -99.0, "core_at": -99.0,
+		"warn_at": -99.0, "core_at": -99.0, "tick": s.tick_count,
 	}
 
 
@@ -695,8 +730,25 @@ func _audio_reset() -> void:
 func _audio_tick() -> void:
 	if _audio_prev.is_empty():
 		return
+	var over: bool = s.phase == "won" or s.phase == "lost"
 	AudioBus.combat_layer(s.phase == "wave")
-	AudioBus.flow(clampf(float(s.rates["ore_in"]) / 30.0, 0.0, 1.0))
+	# 局結束就停掉生產的循環音。它是「東西正在跑」的聲音，而東西已經不跑了。
+	AudioBus.flow(0.0 if over else clampf(float(s.rates["ore_in"]) / 30.0, 0.0, 1.0))
+
+	# ★★ **一次性音效只在模擬真的往前走了一格時才判定。**
+	#
+	# 少了這一條會出兩件事，而且兩件都出過：
+	#   ① 畫面 60fps、tick 10Hz → 同一發開火線會被連續 6 幀看到「ttl 還是滿的」，
+	#      於是一發子彈播六次音。
+	#   ② **局結束後 `BattleController.step()` 直接 return，`ttl` 從此不再遞減**
+	#      → 最後那一 tick 的開火線永遠停在「剛剛才生出來」的狀態，
+	#      音效就每一幀重放一次，聽起來像卡住了（使用者回報）。
+	#
+	# 用「差值偵測」的東西，就要確定自己是在**變化的那一刻**被呼叫的。
+	var advanced: bool = s.tick_count != int(_audio_prev["tick"])
+	_audio_prev["tick"] = s.tick_count
+	if not advanced:
+		return
 	var now := float(s.tick_count) * BattleController.TICK
 
 	# 開火：`ttl` 還是滿的就是這一 tick 才生出來的那幾發。
@@ -2043,6 +2095,12 @@ func _refresh_over() -> void:
 		return
 	if _over_panel != null:
 		return
+	# ★ 局一結束 `BattleController.step()` 就直接 return，開火線與碎片的 `ttl`
+	#   從此不再遞減——它們會**永遠停在畫面上**，看起來像每一座塔都卡在開火的
+	#   那一幀（使用者回報「他們還在射擊」）。兩者都是純渲染、不進 `state_hash()`，
+	#   由畫面層在這裡收乾淨。
+	s.shots.clear()
+	s.bursts.clear()
 	var won: bool = s.phase == "won"
 	var waves: int = s.wave_index if won else maxi(0, s.wave_index - 1)
 	var score := Score.throughput(s.delivered_total, s.tick_count, BattleController.TICK)
