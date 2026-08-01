@@ -30,6 +30,15 @@ func _ready() -> void:
 		_click_selftest.call_deferred()
 
 
+## ESC ＝ 返回上一層（B1.4.1）。
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not event.is_action_pressed("ui_cancel") or not on_exit.is_valid():
+		return
+	get_viewport().set_input_as_handled()
+	AudioBus.play("ui_back")   # ESC ＝ 取消手勢，全遊戲同一個音（B1.5）
+	on_exit.call()
+
+
 ## ★ 輸入層自檢（`TL_CLICKTEST=1 TL_PANEL=tech`）。
 ##
 ## 和關卡選擇同一個理由：這個畫面的全部價值就是「一顆鈕點得到、而且真的扣款」。
@@ -79,13 +88,30 @@ func _click_selftest() -> void:
 		and last.global_position.y >= 0.0
 	)
 
+	# ★ ESC ＝ 返回（B1.4.1）。**不能真的呼叫 `on_exit`**（那會把這個畫面拆掉，
+	#   後面的 print 就落在一個正在被釋放的節點上），所以暫時換成一個只翻旗標的
+	#   Callable：要驗的是「事件到不到得了這支處理器」，不是返回本身。
+	var real_exit := on_exit
+	var escaped := [false]
+	on_exit = func() -> void: escaped[0] = true
+	for pressed: bool in [true, false]:
+		var ev := InputEventKey.new()
+		ev.keycode = KEY_ESCAPE
+		ev.physical_keycode = KEY_ESCAPE
+		ev.pressed = pressed
+		Input.parse_input_event(ev)
+	for _i in 3:
+		await get_tree().process_frame
+	var esc_back: bool = escaped[0]
+	on_exit = real_exit
+
 	var ok: bool = (
 		twelve and all_broke and first_open and tier2_locked
-		and bought and charged and tier2_open and reachable
+		and bought and charged and tier2_open and reachable and esc_back
 	)
-	print("[TL_CLICKTEST/tech] twelve=%s broke=%s first_open=%s tier2_locked=%s bought=%s charged=%s tier2_open=%s last_reachable=%s → %s" % [
+	print("[TL_CLICKTEST/tech] twelve=%s broke=%s first_open=%s tier2_locked=%s bought=%s charged=%s tier2_open=%s last_reachable=%s esc_back=%s → %s" % [
 		twelve, all_broke, first_open, tier2_locked, bought, charged, tier2_open, reachable,
-		"PASS" if ok else "FAIL"
+		esc_back, "PASS" if ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)
@@ -214,6 +240,7 @@ func _card(n: Dictionary, by_id: Dictionary) -> Control:
 ## 鈕的 `disabled` 是畫面狀態，不是規則；只信它的話，任何一條讓鈕變成可按的路
 ## （自檢、日後的鍵盤操作）都會繞過檢查。
 func _unlock(id: String) -> void:
+	AudioBus.play("ui_unlock")
 	var tech: Dictionary = GameState.data["tech"]
 	var unlocked: Array = tech["unlocked"]
 	if Tech.can_unlock(id, unlocked, float(tech.get("data", 0))) != Tech.OK:

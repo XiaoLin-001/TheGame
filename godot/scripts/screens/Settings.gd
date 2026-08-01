@@ -4,7 +4,7 @@ extends Control
 ## 三條紀律：
 ##   ① **改了當場生效**，不要「套用」鈕。滑桿拉到一半才知道結果的音量沒有意義。
 ##   ② **當場存檔**。改完設定又忘了存的那一個玩家，下次開遊戲會以為設定壞了。
-##   ③ **不做鍵位設定**。這款遊戲一顆鍵都沒有綁（局內說明就寫著「沒有鍵盤」），
+##   ③ **不做鍵位設定**。這款遊戲只綁了一顆鍵（ESC ＝ 選單／返回），
 ##      做一個空的鍵位表只是把「還沒有的東西」畫出來給人看。B1.4 的 DoD 列了
 ##      鍵位，這裡誠實地不做，理由記在 `40_PRODUCTION_PLAN.md` 的完工證據。
 
@@ -35,8 +35,20 @@ func _ready() -> void:
 	theme = UiKit.theme()
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_build()
-	if Hooks.click_test:
+	# ★ `and Hooks.panel == "settings"`：本畫面也會被**局內選單**當浮層開起來
+	#   （B1.4.1）。少了這一條，`TL_CLICKTEST=1`（局內）一開設定就會跑到這支
+	#   自檢的 `get_tree().quit()`，把別人的自檢從中間打斷成「PASS」。
+	if Hooks.click_test and Hooks.panel == "settings":
 		_click_selftest.call_deferred()
+
+
+## ESC ＝ 返回上一層。全遊戲每個有「返回」的畫面都接同一條（B1.4.1）。
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not event.is_action_pressed("ui_cancel") or not on_exit.is_valid():
+		return
+	get_viewport().set_input_as_handled()
+	AudioBus.play("ui_back")   # ESC ＝ 取消手勢，全遊戲同一個音（B1.5）
+	on_exit.call()
 
 
 func _settings() -> Dictionary:
@@ -97,13 +109,29 @@ func _click_selftest() -> void:
 	var last: Control = _col.get_child(_col.get_child_count() - 1)
 	var fits: bool = last.global_position.y + last.size.y <= float(size.y)
 
+	# ⑥ ★ ESC ＝ 返回（B1.4.1）。暫時把 `on_exit` 換成一個只翻旗標的 Callable：
+	#    真的返回會把這個畫面拆掉，後面的 print 就落在正在被釋放的節點上。
+	var real_exit := on_exit
+	var escaped := [false]
+	on_exit = func() -> void: escaped[0] = true
+	for pressed: bool in [true, false]:
+		var ev := InputEventKey.new()
+		ev.keycode = KEY_ESCAPE
+		ev.physical_keycode = KEY_ESCAPE
+		ev.pressed = pressed
+		Input.parse_input_event(ev)
+	for _i in 3:
+		await get_tree().process_frame
+	var esc_back: bool = escaped[0]
+	on_exit = real_exit
+
 	var ok: bool = (
 		vol_saved and mute_wins and buses_exist and reduce_live and reduce_off
-		and resized and restored and no_write and fits
+		and resized and restored and no_write and fits and esc_back
 	)
-	print("[TL_CLICKTEST/settings] vol=%s buses=%s mute_wins=%s reduce_on=%s reduce_off=%s resize=%s restore=%s no_write=%s fits=%s → %s" % [
+	print("[TL_CLICKTEST/settings] vol=%s buses=%s mute_wins=%s reduce_on=%s reduce_off=%s resize=%s restore=%s no_write=%s fits=%s esc_back=%s → %s" % [
 		vol_saved, buses_exist, mute_wins, reduce_live, reduce_off, resized, restored, no_write,
-		fits, "PASS" if ok else "FAIL"
+		fits, esc_back, "PASS" if ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)
@@ -148,9 +176,8 @@ func _build() -> void:
 	col.add_child(UiKit.label("音訊", 22, Palette.ORDER_CYAN, false))
 	for v: Array in VOLUMES:
 		col.add_child(_volume_row(String(v[0]), String(v[1])))
-	# 誠實標記：B1.5 之前這兩軌沒有東西可播。**不寫的話玩家會以為滑桿壞了。**
 	col.add_child(UiKit.label(
-		"※ 音樂與音效的音源排在下一批，目前拉了聽不出差別——滑桿本身已經接到真的匯流排。",
+		"※ 音樂分兩層：準備期只有底層，開打時打擊層淡入——是同一首曲子，不換曲。",
 		13, Palette.TEXT_DISABLED, false
 	))
 
@@ -182,7 +209,7 @@ func _build() -> void:
 		res_row.add_child(UiKit.touchable(b))
 
 	col.add_child(UiKit.label(
-		"※ 沒有鍵位設定：這款遊戲一顆鍵都沒有綁（左鍵做事、中鍵移動視野、滾輪縮放）。",
+		"※ 沒有鍵位設定：這款遊戲只綁了一顆鍵（ESC ＝ 選單／返回），其餘全在滑鼠上。",
 		13, Palette.TEXT_DISABLED, false
 	))
 

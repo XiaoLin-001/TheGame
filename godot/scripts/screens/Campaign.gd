@@ -31,6 +31,16 @@ func _ready() -> void:
 		_click_selftest.call_deferred()
 
 
+## ESC ＝ 返回上一層（B1.4.1）。已經進了關卡（`Battle` 掛在底下）時不處理——
+## 那時 ESC 是局內選單的，`Battle` 自己會消費掉。
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not event.is_action_pressed("ui_cancel") or not on_exit.is_valid():
+		return
+	get_viewport().set_input_as_handled()
+	AudioBus.play("ui_back")   # ESC ＝ 取消手勢，全遊戲同一個音（B1.5）
+	on_exit.call()
+
+
 ## ★ 輸入層自檢（`TL_CLICKTEST=1 TL_PANEL=campaign`）。
 ##
 ## 這個畫面的全部價值就是**一顆鈕點得到**，而 B0.7.2 教過的事情是：
@@ -57,13 +67,31 @@ func _click_selftest() -> void:
 	for _i in 4:
 		await get_tree().process_frame
 	# 真的進了局內畫面嗎？（卡片被清掉、Battle 掛上來了）
-	var entered: bool = false
+	var battle: Node = null
 	for c: Node in get_children():
 		if c.get_script() == BattleScreen:
-			entered = true
-	var ok: bool = five and first_open and second_locked and says_why and entered
-	print("[TL_CLICKTEST/campaign] cards=%s first_open=%s second_locked=%s says_why=%s entered=%s → %s" % [
-		five, first_open, second_locked, says_why, entered, "PASS" if ok else "FAIL"
+			battle = c
+	var entered: bool = battle != null
+
+	# ★ ESC 的歸屬（B1.4.1）。局內畫面是**這個節點的子節點**，兩邊都接了 ESC——
+	#   誰先拿到就決定了「戰鬥中按 ESC」是開選單還是被踢回關卡選擇。
+	#   Godot 的 `_unhandled_key_input` 由深到淺傳遞，所以應該是 Battle 先吃掉；
+	#   但這種「應該」正是 B0.7.2 那個 `mouse_filter` 教訓的形狀，**量一次**。
+	var esc_to_battle: bool = false
+	if entered:
+		for pressed: bool in [true, false]:
+			var ev := InputEventKey.new()
+			ev.keycode = KEY_ESCAPE
+			ev.physical_keycode = KEY_ESCAPE
+			ev.pressed = pressed
+			Input.parse_input_event(ev)
+		for _i in 3:
+			await get_tree().process_frame
+		esc_to_battle = is_instance_valid(battle) and battle._menu_layer != null
+
+	var ok: bool = five and first_open and second_locked and says_why and entered and esc_to_battle
+	print("[TL_CLICKTEST/campaign] cards=%s first_open=%s second_locked=%s says_why=%s entered=%s esc_to_battle=%s → %s" % [
+		five, first_open, second_locked, says_why, entered, esc_to_battle, "PASS" if ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)
@@ -79,6 +107,8 @@ func _clear() -> void:
 
 func _build() -> void:
 	_clear()
+	# 從局內回來時要換回選單曲（B1.5）。局內／選單是兩首，不是兩層。
+	AudioBus.music("menu")
 
 	var col := UiKit.vbox(14)
 	col.position = Vector2(24, 40)

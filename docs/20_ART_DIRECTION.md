@@ -246,6 +246,25 @@ Windows 先行，但事後補觸控支援極痛，故以下四條在每批 UI �
 
 **BGM 分層設計**：準備期與戰鬥期用同一首曲子的不同層，切換時**只淡入淡出音軌層**，不換曲。理由：頻繁換曲會讓 15–30 分鐘的一局變得吵雜疲勞。
 
+### 5.1b 實作狀態（★ B1.5）
+
+**已交**（`assetgen/gen_audio.py` 程序生成，`godot/assets/audio/`）：
+
+| 檔案 | 對應 §5.1 |
+|---|---|
+| `tl_bgm_battle_base` / `tl_bgm_battle_perc` / `tl_bgm_menu` | 準備期／戰鬥期／主選單，**同長度 16.0s、90 BPM、A 小調** |
+| `tl_sfx_build_place` / `build_wire` / `build_destroyed` | 建造（放置／連接／損毀） |
+| `tl_sfx_prod_flow` | 生產的低頻循環（音量隨總流量 0.15–0.55 線性） |
+| `tl_sfx_fire_{anchor,prism,knell,reclaimer,breaker}` | **每一座塔一個**（§5.1 寫 4 種，實際有 5 座塔） |
+| `tl_sfx_enemy_hit` / `warn_power` / `core_hit` | 戰鬥與警示 |
+| `tl_sfx_ui_click` / `ui_back` / `ui_unlock` | UI（點擊／取消＝ESC／解鎖） |
+
+**尚未**：BGM tycoon（M2，隨 B2.5 進來）。
+
+**切層的實作條件**（`audio_test` 逐條守著）：兩層**同幀數**、**兩層從第一個取樣就一起播**
+（戰鬥層靜音待命，切換只動音量）、**循環接點的跳幅不得大於鄰近取樣步幅的 4 倍**。
+最後一條是「無縫」在資料上唯一量得到的樣子——耳朵最容易漏掉，量起來最便宜。
+
 ### 5.2 音量層級
 
 | 匯流排 | 預設 |
@@ -253,7 +272,10 @@ Windows 先行，但事後補觸控支援極痛，故以下四條在每批 UI �
 | Master | 80% |
 | BGM | 60% |
 | SFX | 80% |
-| UI | 70% |
+
+**★ B1.5 修正：沒有 UI 軌，UI 音走 SFX。** 原本列的第四軌會變成設定畫面的第四條滑桿，
+而它買到的只是「點擊聲可以單獨調小」——那要玩家先意識到有這回事。
+tycoon 的兩畫面上限是同一種紀律：UI 深度不是免費的。
 
 ### 5.3 全域靜音路徑（硬性要求）
 
@@ -276,7 +298,13 @@ Windows 先行，但事後補觸控支援極痛，故以下四條在每批 UI �
 4. exe 體積可控（目標 < 80MB），且無授權疑慮。
 5. 調色只需改一處 token，全遊戲同步。
 
-**例外**：字型（SystemFont，系統提供）、音訊檔案。
+**例外**：字型（SystemFont，系統提供）。
+
+**★ B1.5：音訊也走同一條。** 音源不是外部素材，是 `assetgen/gen_audio.py`（純 Python
+標準庫，零相依）算出來的——**那支腳本才是音源的原始碼，`.wav` 是它的輸出**。
+要調音色改腳本再跑一次，不要去修 wav。
+匯入一律 `compress/mode=0`（PCM）：Godot 預設的 QOA 是有損壓縮，壓過之後連
+「這個檔案有幾個取樣」都問不到，循環接點更無從驗起。
 
 ### 6.2 命名與目錄慣例
 
@@ -284,7 +312,7 @@ Windows 先行，但事後補觸控支援極痛，故以下四條在每批 UI �
 godot/
   assets/
     audio/
-      bgm/       tl_bgm_<場景>_<層>.ogg      例：tl_bgm_battle_perc.ogg
+      bgm/       tl_bgm_<場景>_<層>.wav      例：tl_bgm_battle_perc.wav
       sfx/       tl_sfx_<類別>_<動作>.wav    例：tl_sfx_build_place.wav
   scripts/
     render/      Palette.gd    ← 本文件 §1 的 token 實作，唯一色值來源

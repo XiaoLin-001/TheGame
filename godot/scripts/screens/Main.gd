@@ -45,6 +45,8 @@ func _enter_battle() -> void:
 	for c: Node in get_children():
 		c.queue_free()
 	var battle := BattleScreen.new()
+	# 測試圖也要有回頭路：局內選單的「退出」就是這個 `on_exit`（B1.4.1）。
+	battle.on_exit = _back_to_title
 	add_child(battle)
 
 
@@ -84,6 +86,7 @@ func _back_to_title() -> void:
 
 
 func _build() -> void:
+	AudioBus.music("menu")
 	# 全部走容器與錨點，不寫死像素位置 —— 手機移植預留條款 P1。
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)

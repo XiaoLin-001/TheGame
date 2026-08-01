@@ -274,9 +274,12 @@ TL_SHOT="C:/tmp/shot.png" TL_PANEL=battle TL_SEED=42 <godot> --path godot --rend
 | `tests/save_test.gd` | 存檔往返、缺欄位預設、各版本遷移分支 |
 | `tests/determinism_test.gd` | ★ 同 `(seed, ops)` 兩次跑出相同狀態雜湊 |
 | `tests/hud_test.gd` | 節點三態（`缺料`／`滿溢`／`正常`）、提前召喚倍率與它鎖給哪一波、局末結算三個數字、`won` 階段的終止條件 |
+| `tests/tech_test.gd` | 科技成本表、前置鏈、B2 增幅上限，★ **每一種效果都在跑過的 tick 上量到差異** |
+| `tests/audio_test.gd` | ★ 音源的設計條件：檔案齊（開火音清單由 `NodeDefs` 推導）、三首 BGM 同幀數、**循環接點的跳幅不得大於鄰近取樣步幅的 4 倍**、格式統一 PCM 16-bit 單聲道、不削頂不靜音 |
+| `tests/campaign_test.gd` | 五關參考解 headless 實跑必勝、可讀性地板、星等門檻 |
 | **`TL_SIM` 本身** | 平衡調校就走它——跑標準關卡 N 個 tick，輸出經濟曲線 JSON 供人工核對。B0.1 建的 `tests/balance_probe.gd` 只是這件事的空殼（斷言 JSON 能往返），B1.1 刪掉；真的需要多場次批跑時再寫 |
 
-**GDScript 測試地雷**：`--script` 模式**不載入 autoload**。因此 `tests/*.gd` 不得 `preload` 任何引用 autoload 的腳本。這反過來要求 `scripts/sim/` 的核心邏輯必須是**自足的純函式**——正好與 §2.4 的確定性要求一致。
+**GDScript 測試地雷**：`--script` 模式**不載入 autoload**（所以 `audio_test` 驗的是 wav 資源本身，播放那一半由 `TL_CLICKTEST` 的 `audio=` 那一組守）。因此 `tests/*.gd` 不得 `preload` 任何引用 autoload 的腳本。這反過來要求 `scripts/sim/` 的核心邏輯必須是**自足的純函式**——正好與 §2.4 的確定性要求一致。
 
 ### 4.3 GDScript 已知地雷（照抄，全部炸過真專案）
 

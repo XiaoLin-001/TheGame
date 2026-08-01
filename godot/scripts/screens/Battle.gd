@@ -17,6 +17,7 @@ const Combat := preload("res://scripts/sim/Combat.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
+const SettingsScreen := preload("res://scripts/screens/Settings.gd")
 
 ## 地圖左上角。36×19 格 ×32px = 1152×608；左側 120px 留給建造欄，
 ## 浮層與地圖**不重疊**（RG-20 的先行實踐，正式驗收在 B0.6）。
@@ -105,9 +106,19 @@ var _codex_panel: Control = null
 var _codex_label: Label = null
 var _codex_on: bool = true
 var _prio_labels: Dictionary = {}
+## 局內選單（ESC 或左上角「選單」鈕）。`null` ＝ 沒開。
+var _menu_layer: Control = null
+var _menu_button: Button = null
+var _menu_buttons: Array[Button] = []
+## 從局內選單開出來的設定浮層。開著時 ESC 由它自己處理（回到選單）。
+var _settings_layer: Control = null
 ## 本幀交戰中的塔 `{id: Array}`。繪圖層自己算——它要畫的是「誰正在吃電」，
 ## 而模擬只留了一個座數（`rates.engaged`）。
 var _engaged: Dictionary = {}
+## ★ 音訊（B1.5）。上一幀的幾個數字，用來推導「這一幀發生了什麼」。
+## **音效一律從畫面層推導，模擬層維持零副作用**（`CLAUDE.md` 技術慣例）：
+## 在 `scripts/sim/` 裡塞一行 `AudioBus.play()` 就等於讓每日挑戰的重播會出聲。
+var _audio_prev: Dictionary = {}
 ## 本幀「正在被啃」的格（敵人相鄰 1 格內）。**純渲染推導，不新增任何狀態**
 ## ——同一份判定模擬層每 tick 都在做（`Tide.in_blast`），這裡只是把它畫出來。
 var _threat: Dictionary = {}
@@ -151,6 +162,9 @@ func _setup_session() -> void:
 	else:
 		s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL, [], tech)
 	_reset_view()
+	_audio_reset()
+	# 兩層一起起跑，戰鬥層先靜音（`AudioBus.music()` 的無縫切層前提）。
+	AudioBus.music("battle")
 
 
 # ── 視野：框架、fit、縮放、平移（B1.2.2）─────────────────────────────
@@ -380,6 +394,79 @@ func _click_selftest() -> void:
 	#   所以最後再用合成點擊蓋一個節點，確認放大後點到的還是同一格。
 	var view_ok := await _view_selftest()
 
+	# ★ 局內選單（B1.4.1）。會壞的地方有四個，每一個都只有真的送出事件才驗得到：
+	#   ESC 到不到得了、遮罩擋不擋得住地圖、設定回不回得到選單、
+	#   以及**左上角那顆鈕是不是同一件事**（P3：不能只有鍵盤那條路）。
+	_press(_build_buttons["relay"])
+	var free_cell := Vector2i(20, 12)
+	_escape()
+	for _i in 3:
+		await get_tree().process_frame
+	var menu_open: bool = _menu_layer != null and _menu_buttons.size() == 4
+	var nodes_before: int = s.nodes.size()
+	_click(free_cell)
+	for _i in 3:
+		await get_tree().process_frame
+	var menu_blocks: bool = s.nodes.size() == nodes_before
+
+	_press(_menu_buttons[2])          # 設定
+	for _i in 3:
+		await get_tree().process_frame
+	var settings_open: bool = _settings_layer != null
+	_escape()                          # 設定的 ESC ＝ 回選單，**不是**回戰場
+	for _i in 3:
+		await get_tree().process_frame
+	var settings_back: bool = _settings_layer == null and _menu_layer != null
+	_escape()
+	for _i in 3:
+		await get_tree().process_frame
+	var menu_closed: bool = _menu_layer == null
+	# 同一格在選單關掉之後蓋得起來 → 上面那個「蓋不起來」才證明得了是遮罩擋的，
+	# 而不是那一格本來就不能蓋。
+	_click(free_cell)
+	for _i in 3:
+		await get_tree().process_frame
+	var buildable_after: bool = s.nodes.size() == nodes_before + 1
+	_press(_menu_button)
+	for _i in 3:
+		await get_tree().process_frame
+	var menu_by_button: bool = _menu_layer != null
+	# 選單面板整個要留在畫面內。`CenterContainer` 幾乎不會出錯，但科技樹那張
+	# 掉出畫面的卡片與設定畫面溢出的最後一行都是「`_draw()` 一個字都不會說」
+	# 的同一類缺陷——量一次比相信便宜。
+	var panel: Control = _menu_buttons[0].get_parent().get_parent() as Control
+	var menu_fits: bool = (
+		panel.global_position.y >= 0.0
+		and panel.global_position.y + panel.size.y <= float(size.y)
+	)
+	_close_menu()
+
+	# ★ 音訊（B1.5）。四件事，全部只有真的跑起來才問得到：
+	#   ① 兩層 BGM **都在播**（perc 靜音待命）——這是「無縫切層」的實作前提。
+	#      等到要打了才 `play()` 那一層，接進去的會是曲子的中間。
+	#   ② 準備期時戰鬥層是 0（`_audio_tick()` 每幀從 `phase` 推目標）。
+	#   ③ ★ **一進入波次，戰鬥層真的開始爬。** 第一版的自檢直接呼叫
+	#      `combat_layer(true)`，結果下一幀就被 `_audio_tick()` 從 `phase` 蓋回 0——
+	#      量到的是自己的呼叫，不是遊戲真正的那條路。改成推 `phase`。
+	#   ④ 播一個音效之後真的有聲道在響（檔案讀得到、`play()` 有生效）。
+	#      ⚠ 有鉤子時是**匯流排靜音**，不是不播，所以這些狀態問得到。
+	var music_ok: bool = AudioBus.music_playing("base") and AudioBus.music_playing("perc")
+	var layer_prep: bool = AudioBus.layer_level() <= 0.0
+	var phase_before: String = s.phase
+	s.phase = "wave"
+	for _i in 8:
+		await get_tree().process_frame
+	var layer_rising: bool = AudioBus.layer_level() > 0.0
+	s.phase = phase_before
+	AudioBus.play("build_place")
+	await get_tree().process_frame
+	var voice_ok: bool = false
+	for child: Node in AudioBus.get_children():
+		var pl := child as AudioStreamPlayer
+		if pl != null and pl.playing:
+			voice_ok = true
+	var audio_ok: bool = music_ok and layer_prep and layer_rising and voice_ok and AudioBus.muted
+
 	# ★ 最後才留一個懸而未決的拖曳起點（按下不放開），讓八條方向導引與
 	#   「連不成」的橙色預覽線入鏡——**這是玩家真的會看到的那一幀**（手指還沒鬆開）。
 	#   一定要放在所有斷言之後：懸著的起點會讓下一次點擊被當成拖曳的終點。
@@ -387,14 +474,25 @@ func _click_selftest() -> void:
 	_hover = from + Vector2i(4, 3)     # 橫 4 直 3：正好不是 45°
 	_refresh_hint()
 
+	var menu_ok: bool = (
+		menu_open and menu_blocks and settings_open and settings_back and menu_closed
+		and buildable_after and menu_by_button and menu_fits
+	)
 	var ok: bool = (
 		placed and rejected and diag_placed and wired and upgraded and dragged and panned
 		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
-		and view_ok
+		and view_ok and menu_ok and audio_ok
 	)
-	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s → %s" % [
+	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s → %s" % [
 		placed, rejected, diag_placed, wired, upgraded, dragged, panned, reachable, alloy_gated,
-		energy_ok, codex_ok, prio_ok, view_ok, "PASS" if ok else "FAIL"
+		energy_ok, codex_ok, prio_ok, view_ok, menu_ok, audio_ok, "PASS" if ok else "FAIL"
+	])
+	print("[TL_CLICKTEST/audio] two_layers=%s prep_silent=%s wave_fade_in=%s voice=%s muted=%s" % [
+		music_ok, layer_prep, layer_rising, voice_ok, AudioBus.muted
+	])
+	print("[TL_CLICKTEST/menu] esc_open=%s scrim_blocks=%s settings=%s settings_back=%s esc_close=%s cell_buildable=%s button=%s fits=%s" % [
+		menu_open, menu_blocks, settings_open, settings_back, menu_closed, buildable_after,
+		menu_by_button, menu_fits
 	])
 	# 同時給 `TL_SHOT` 時不退出，把畫面交給截圖鉤子——**有些狀態只有互動才到得了**
 	# （浮層要按鈕才會開、簡介要 hover 才會浮），沒有這條就永遠拍不到它們。
@@ -468,6 +566,18 @@ func _view_selftest() -> bool:
 func _press(b: Button) -> void:
 	b.button_pressed = true
 	b.pressed.emit()
+
+
+## 合成一次 ESC。走 `Input.parse_input_event()` 的完整輸入管線，才驗得到
+## 「`ui_cancel` 這個 action 真的對得上 ESC 鍵」與「事件真的傳到 `_unhandled_key_input`」
+## ——直接呼叫 `_toggle_menu()` 兩件都驗不到。
+func _escape() -> void:
+	for pressed: bool in [true, false]:
+		var ev := InputEventKey.new()
+		ev.keycode = KEY_ESCAPE
+		ev.physical_keycode = KEY_ESCAPE
+		ev.pressed = pressed
+		Input.parse_input_event(ev)
 
 
 ## GUI 的滑鼠路由要先有「游標在這裡」才認得出按下的是誰，所以**先送一個移動事件**。
@@ -566,7 +676,61 @@ func _process(delta: float) -> void:
 	_refresh_hint()
 	_refresh_energy()
 	_refresh_over()
+	_audio_tick()
 	queue_redraw()
+
+
+# ── 音訊（B1.5）────────────────────────────────────────────────────────
+
+func _audio_reset() -> void:
+	_audio_prev = {
+		"kills": s.kills, "nodes": s.nodes.size(), "core": s.core_hp(),
+		"warn_at": -99.0, "core_at": -99.0,
+	}
+
+
+## 這一幀發生了什麼？全部從狀態的差值推出來——**不在模擬層留任何一個
+## 「順便播個音」的呼叫**。代價是要自己記上一幀，換到的是 `sim/` 仍然
+## 可以在 headless 重播一萬次而不出聲。
+func _audio_tick() -> void:
+	if _audio_prev.is_empty():
+		return
+	AudioBus.combat_layer(s.phase == "wave")
+	AudioBus.flow(clampf(float(s.rates["ore_in"]) / 30.0, 0.0, 1.0))
+	var now := float(s.tick_count) * BattleController.TICK
+
+	# 開火：`ttl` 還是滿的就是這一 tick 才生出來的那幾發。
+	# **一種塔一幀只出一個音**——五座錨同時開火時要聽到「一發」，
+	# 不是五個同相位的正弦疊起來爆掉。
+	var fired: Dictionary = {}
+	for sh: Dictionary in s.shots:
+		if int(sh["ttl"]) != BattleController.SHOT_TTL:
+			continue
+		var n: Dictionary = s.node_at(sh["from"])
+		if not n.is_empty():
+			fired[String(n["type"])] = true
+	for type: String in fired:
+		AudioBus.play("fire_%s" % type, -4.0)
+
+	if s.kills > int(_audio_prev["kills"]):
+		AudioBus.play("enemy_hit")
+	# 節點變少＝被啃掉或被玩家拆掉。兩件事共用一個音是刻意的：
+	# 玩家自己拆的那一次他知道自己在做什麼，不需要另一個音來告訴他。
+	if s.nodes.size() < int(_audio_prev["nodes"]):
+		AudioBus.play("build_destroyed", -2.0)
+	# ★ 核心受擊與能量不足都要**節流**。核心每 tick 都在掉血，照實播就是
+	#   每秒十次 0.9 秒的爆炸；警報響個不停等於沒有警報。
+	if s.core_hp() < float(_audio_prev["core"]) - 0.01 and now - float(_audio_prev["core_at"]) >= 0.8:
+		AudioBus.play("core_hit")
+		_audio_prev["core_at"] = now
+	var short: bool = float(s.rates["power_demand"]) > float(s.rates["power_supply"]) + 0.01
+	if short and s.phase == "wave" and now - float(_audio_prev["warn_at"]) >= 4.0:
+		AudioBus.play("warn_power", -5.0)
+		_audio_prev["warn_at"] = now
+
+	_audio_prev["kills"] = s.kills
+	_audio_prev["nodes"] = s.nodes.size()
+	_audio_prev["core"] = s.core_hp()
 
 
 # ── 輸入 ──────────────────────────────────────────────────────────────
@@ -645,7 +809,10 @@ func _release(pos: Vector2) -> void:
 	_drag_from = Vector2i(-1, -1)
 	var to := _cell_at(pos)
 	if to != from and not s.node_at(to).is_empty():
-		_message = _text_of(BuildController.lay_conduit(s, from, to))
+		var code := BuildController.lay_conduit(s, from, to)
+		if code == Build.OK:
+			AudioBus.play("build_wire")
+		_message = _text_of(code)
 	else:
 		# 在既有節點上點一下就放開。**不要回「這一格已經有東西了」**——
 		# 那句話對玩家沒有下一步；這裡正是教會拖曳這個手勢最好的時機。
@@ -659,17 +826,32 @@ func _release(pos: Vector2) -> void:
 ## 省略時退回格中心，`_click()` 那條合成輸入的路徑走這個預設。
 func _act(cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> void:
 	var p := Vector2(cell) if point.x < -900.0 else point
+	# 音效只在**真的做成了**的時候響（`Build.OK` ＝ 空字串）。失敗有提示列說原因，
+	# 再配一個音只是把「你做錯了」講兩次。
+	# ⚠ `match` 的各分支共享作用域，變數名不能重複（`CLAUDE.md` 嚴格型別地雷）。
 	match _mode:
 		Mode.BUILD:
-			_message = _text_of(BuildController.place(s, _build_type, cell))
+			var code_b := BuildController.place(s, _build_type, cell)
+			if code_b == Build.OK:
+				AudioBus.play("build_place")
+			_message = _text_of(code_b)
 		Mode.UPGRADE:
 			var ci: int = s.conduit_near(p)
 			if ci < 0:
 				_message = "加粗模式：請點一段導管（不是節點）"
 			else:
-				_message = _text_of(BuildController.upgrade(s, ci))
+				var code_u := BuildController.upgrade(s, ci)
+				if code_u == Build.OK:
+					AudioBus.play("build_wire")
+				_message = _text_of(code_u)
 		Mode.DEMOLISH:
-			_message = _text_of(BuildController.demolish(s, cell, p))
+			var before_d: int = s.nodes.size()
+			var code_d := BuildController.demolish(s, cell, p)
+			# 拆**節點**的音由 `_audio_tick()` 的「節點變少」那條負責（敵人啃掉的
+			# 走同一條）。這裡只補拆導管——導管不算在節點數裡，那條看不到。
+			if code_d == Build.OK and s.nodes.size() == before_d:
+				AudioBus.play("build_destroyed", -4.0)
+			_message = _text_of(code_d)
 
 
 func _text_of(code: String) -> String:
@@ -1264,6 +1446,18 @@ func _build_ui() -> void:
 	for i in 7:
 		_top.add_child(UiKit.label("", 15, Palette.TEXT_PRIMARY, false))
 
+	# ★ 選單（B1.4.1）。ESC 是快捷，**不是唯一的路**（P3：操作不得只靠鍵盤）。
+	#   放左上角 x<120、y<56 那塊角落——頂欄從 x=120 起、建造欄從 y=56 起，
+	#   全畫面只剩這裡是空的，而它也正好是選單的慣例位置。
+	var menu_bar := UiKit.hbox(0)
+	menu_bar.position = Vector2(8, 6)
+	add_child(menu_bar)
+	_menu_button = Button.new()
+	_menu_button.text = "選單"
+	_menu_button.custom_minimum_size.x = 104
+	_menu_button.pressed.connect(_toggle_menu)
+	menu_bar.add_child(UiKit.touchable(_menu_button))
+
 	# ★ 縮放（B1.2.2）。放在頂欄右端那片空白——建造欄與底欄都已經滿了，
 	#   而地圖右上角是縮放控制的慣例位置。**三顆鈕都是可點的**：滾輪只是
 	#   桌面的便利，手機移植預留條款 P3 不許任何操作只有滾輪／右鍵一條路。
@@ -1470,7 +1664,7 @@ func _build_help_panel() -> void:
 	var col := UiKit.vbox(3)
 	box.add_child(col)
 	for line: String in [
-		"操作　左鍵做事、中鍵移動視野、滾輪縮放。沒有鍵盤、沒有右鍵",
+		"操作　左鍵做事、中鍵移動視野、滾輪縮放、ESC 開選單。沒有右鍵",
 		"　蓋節點：左欄選一種 → 左鍵點地圖上的一格",
 		"　拉導管：從一個節點按住左鍵，拖到另一個節點放開（隨時都能拖，不用切模式）",
 		"　加　粗：「加粗」→ 點導管的中間（不是兩端的節點）",
@@ -1922,9 +2116,117 @@ func _star_lines(stars: int, score: float) -> Array[String]:
 	return out
 
 
+# ── 局內選單（B1.4.1）────────────────────────────────────────────────
+#
+# ★ **不暫停**（`10_GDD.md` B5「不可暫停，但可跳過等待」）。選單開著的這幾秒
+#   敵人仍然在走、電仍然在流。這不是偷懶：可暫停的選單就是一個「隨時可以停下來
+#   慢慢想」的按鍵，而那正是 B5 要擋掉的東西。面板上直接寫出來，玩家才不會
+#   以為是遊戲壞了——**沒說出口的規則會被當成 bug**。
+
+## ESC。**鍵盤不是唯一的路**（手機移植預留條款 P3）：左上角有一顆「選單」鈕
+## 做完全同一件事，`_toggle_menu()` 是兩者共用的那一個入口。
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not event.is_action_pressed("ui_cancel"):
+		return
+	# 設定浮層開著時**不消費事件**，交給它自己的 ESC（它會回到選單）。
+	# 這樣兩邊誰先被呼叫都不影響結果——不必賭 Godot 的輸入傳遞順序。
+	if _settings_layer != null:
+		return
+	get_viewport().set_input_as_handled()
+	AudioBus.play("ui_back")   # ESC ＝ 取消手勢，全遊戲同一個音（B1.5）
+	_toggle_menu()
+
+
+func _toggle_menu() -> void:
+	if _menu_layer != null:
+		_close_menu()
+		return
+	_open_menu()
+
+
+## 半透明遮罩。它做兩件事：把戰場壓暗讓選單讀得到，以及**吃掉滑鼠**——
+## 選單開著的時候點下去不該蓋出一個節點來（`mouse_filter` 預設 STOP）。
+func _scrim() -> Control:
+	var layer := ColorRect.new()
+	layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.color = Palette.alpha(Palette.BG_DEEP, 0.82)
+	layer.mouse_filter = Control.MOUSE_FILTER_STOP   # 明寫：擋滑鼠是它一半的工作
+	return layer
+
+
+func _open_menu() -> void:
+	_close_menu()
+	_menu_layer = _scrim()
+	add_child(_menu_layer)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_menu_layer.add_child(center)
+	var box := UiKit.panel()
+	box.mouse_filter = Control.MOUSE_FILTER_PASS   # 面板不吃滑鼠，但鈕要點得到
+	center.add_child(box)
+	var col := UiKit.vbox(8)
+	box.add_child(col)
+	col.add_child(UiKit.label("選單", 28, Palette.ORDER_BRIGHT))
+	col.add_child(UiKit.label("時間仍在走——這款遊戲不能暫停。", 13, Palette.WARN_ORANGE))
+	_menu_buttons.clear()
+	# 「重來」與「退出」的代價寫在鈕上。**不做二次確認**：R1 說失敗只花時間，
+	# 而一句括號比一個確認框省一次點擊，也省一整個對話框元件。
+	var entries: Array = [
+		["繼續", _close_menu],
+		["重來（本局歸零）", _restart],
+		["設定", _open_settings],
+	]
+	if on_exit.is_valid():
+		entries.append(["退出（放棄本局）", on_exit])
+	for entry: Array in entries:
+		var b := Button.new()
+		b.text = String(entry[0])
+		b.custom_minimum_size.x = 200
+		b.pressed.connect(entry[1] as Callable)
+		_menu_buttons.append(b)
+		col.add_child(UiKit.touchable(b))
+
+
+func _close_menu() -> void:
+	if _menu_layer == null:
+		return
+	# `queue_free()` 要到影格末才生效，中間那一幀遮罩還在畫也還在吃滑鼠——
+	# 先 `remove_child()` 讓它當場離開樹（`Campaign._clear()` 同一條）。
+	remove_child(_menu_layer)
+	_menu_layer.queue_free()
+	_menu_layer = null
+	_menu_buttons.clear()
+
+
+## 局內開設定：整個設定畫面原封不動疊上來，不另做一份「局內版設定」——
+## 兩份設定畫面遲早會有一份漏掉新選項。
+func _open_settings() -> void:
+	_close_menu()
+	_settings_layer = _scrim()
+	add_child(_settings_layer)
+	var screen := SettingsScreen.new()
+	screen.on_exit = _close_settings
+	_settings_layer.add_child(screen)
+
+
+func _close_settings() -> void:
+	if _settings_layer != null:
+		remove_child(_settings_layer)
+		_settings_layer.queue_free()
+		_settings_layer = null
+	_open_menu()
+
+
 func _restart() -> void:
 	for c: Node in get_children():
 		c.queue_free()
+	# 選單／設定浮層是 `get_children()` 的一員，上面那圈已經把它們清掉了；
+	# 這裡要跟著把手上的參照放掉，否則下一次 ESC 會以為選單還開著。
+	_menu_layer = null
+	_settings_layer = null
+	_menu_button = null
+	_menu_buttons.clear()
 	_over_panel = null
 	_top = null
 	_hint = null

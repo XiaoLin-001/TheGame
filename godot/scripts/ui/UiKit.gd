@@ -62,6 +62,12 @@ static func touchable(c: Control) -> Control:
 		maxf(c.custom_minimum_size.x, TOUCH_MIN),
 		maxf(c.custom_minimum_size.y, TOUCH_MIN)
 	)
+	# ★ 點擊音接在這裡（B1.5）。全遊戲每一顆鈕都經過 `touchable()`，所以這是
+	#   唯一一個接得完的地方——逐一在各畫面連 `pressed` 的那條路，漏掉的那幾顆
+	#   鈕會安靜到沒有人發現。
+	var b := c as Button
+	if b != null:
+		b.pressed.connect(func() -> void: AudioBus.play("ui_click"))
 	return c
 
 

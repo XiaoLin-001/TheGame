@@ -49,7 +49,7 @@
 - **不用隱藏係數調難度**：新手餘裕係數已刪除。難度只能用玩家看得見的關卡參數表達（敵人數量、礦點密度、核心距離、跨越點座數、該關宣告的準備期）。本作核心是「學會電力數學」，偷改物理＝教錯模型。
 - **地圖尺度**：**戰役關卡硬性一屏可見**；只有無盡的程序生成圖可大過一屏（小地圖與導引隨之為必需，排 B2.1）。局內 HUD 是**全畫面地圖＋可收合浮層／抽屜**，不是三欄式。
 - **塔＝角色**：全自動開火，射程內即攻擊，玩家不下戰鬥指令。生產與物流是另一套「建築」。
-- **時間流**：純即時**不可暫停**；波與波之間有 45 秒準備期（可 4× 快進）；戰鬥期不可加速也不可減速。
+- **時間流**：純即時**不可暫停**；波與波之間有 45 秒準備期（可 4× 快進）；戰鬥期不可加速也不可減速。**局內選單（ESC）也不暫停**——面板上寫明「時間仍在走」。
 - **自動化模型**：**流量網路**（每 tick 解容量受限比例分配），**不是**實體物品搬運。
   - **供不應求時按比例降速，不停機**（滿足率線性縮放產出與射速）。
   - **不變量：採集器無輸入需求** → 網路結構上不可能全域死鎖。新增節點不得破壞這一點。
@@ -87,8 +87,11 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（9 支：flow / build / combat / tide / save / determinism / hud / tech / campaign）
+# 自動化測試（10 支：flow / build / combat / tide / save / determinism / hud / tech / audio / campaign）
 <godot> --headless --path godot --script res://tests/flow_test.gd
+
+# ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
+python assetgen/gen_audio.py && <godot> --headless --path godot --import
 
 # ★ 戰役五關的參考解實跑（最慢的一支，約 3 分鐘）——「這一關過得了」的唯一證據
 <godot> --headless --path godot --script res://tests/campaign_test.gd
@@ -168,6 +171,7 @@ TheGame/
 │   ├── 40_PRODUCTION_PLAN.md  生產計畫（里程碑、批次、風險、砍案）
 │   ├── 50_QA_PLAN.md          QA（五層梯、bug 登記、回歸清單）
 │   └── agents/                外掛 skill 的設定（見「Agent skills」）
+├── assetgen/gen_audio.py      音源產生器（純 Python 標準庫；**音源的原始碼**）
 ├── tools/godot/               （gitignore）Godot console exe
 └── godot/
     ├── scripts/core/          GameState / SaveService / Hooks / AudioBus / Rng
@@ -178,8 +182,8 @@ TheGame/
     ├── scripts/ui/            UiKit
     ├── scripts/meta/          RosterData / TycoonSim（尚未建立；科技樹是 data/Tech.gd）
     ├── data/                  節點、角色、敵人、地圖、戰役、**科技**資料表
-    ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / campaign
-    └── assets/audio/
+    ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / audio / campaign
+    └── assets/audio/          bgm/ 3 首、sfx/ 15 支（`assetgen/gen_audio.py` 生成）
 ```
 
 ---
