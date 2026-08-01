@@ -122,6 +122,30 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 			supply[nid] = float(supply[nid]) * scale
 
 	# ── 2. 傳播：容量受限的優先權加權分配 ─────────────────────────────
+	#
+	# ★ 效能（B1.7）：下面這三張表是**把每次拜訪都要重算的常數提到迴圈外**，
+	#   不動任何一個算式、不動任何一次運算的順序，所以結果逐位元相同
+	#   （`campaign_test` 406 項與 `TL_SIM` 基準是這件事的證明）。
+	#
+	#   為什麼值得：傳播是 `O(迭代 × (V+E)²)` 級的拜訪次數，而原本**每一次拜訪**
+	#   都要做 `by_id` 查表 → `n.get("type")` → `String(...)` → `priorities` 查表。
+	#   在 GDScript 裡，一次 Variant 轉 String 比整個算式本身還貴——第 5 關量到
+	#   9.2ms/tick（預算是 3ms、上限 8ms），其中大半是這一行在跑。
+	#
+	#   ⚠ `PackedFloat64Array` 不是 `Float32`：後者會把 cap 降成單精度，
+	#   那就不是「一樣的計算跑得比較快」，是**換了一組數字**。
+	var edge_to := PackedInt32Array()
+	var edge_cap := PackedFloat64Array()
+	edge_to.resize(edges.size())
+	edge_cap.resize(edges.size())
+	for i in edges.size():
+		var e: Dictionary = edges[i]
+		edge_to[i] = int(e.get("to", -1))
+		edge_cap[i] = float(e.get("cap", 0.0))
+	var prio_of: Dictionary = {}
+	for nid: int in ids:
+		prio_of[nid] = maxf(1.0, float(priorities.get(String((by_id[nid] as Dictionary).get("type", "")), 1)))
+
 	var flow: Array[float] = []
 	flow.resize(edges.size())
 	flow.fill(0.0)
@@ -175,10 +199,10 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 			var visiting: Dictionary = {nid: true}
 			var reach: Dictionary = {}
 			for ei: int in outs:
-				var tid: int = int((edges[ei] as Dictionary).get("to", -1))
+				var tid: int = edge_to[ei]
 				if not reach.has(tid):
 					reach[tid] = _reach(
-						tid, by_id, out_edges, edges, flow, demand_left, priorities,
+						tid, out_edges, edge_to, edge_cap, flow, demand_left, prio_of,
 						memo, visiting, twin
 					)
 
@@ -189,11 +213,10 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 				var weights: Dictionary = {}
 				var total_w := 0.0
 				for ei: int in outs:
-					var e: Dictionary = edges[ei]
-					var residual := _residual(ei, edges, flow, twin)
+					var residual := _residual(ei, edge_cap, flow, twin)
 					if residual <= EPS:
 						continue
-					var down: Vector2 = reach.get(int(e.get("to", -1)), Vector2.ZERO)
+					var down: Vector2 = reach.get(edge_to[ei], Vector2.ZERO)
 					if down.x <= EPS:
 						continue
 					var deliverable := minf(residual, down.x)
@@ -215,7 +238,7 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 					flow[ei] += push
 					sent[nid] = float(sent[nid]) + push
 					moved += push
-					var to_id: int = int(edges[ei].get("to", -1))
+					var to_id: int = edge_to[ei]
 					carry[to_id] = float(carry[to_id]) + push
 					queue.append(to_id)
 					# 這份下游需求已經被認領，從 reach 扣掉——否則同一份需求會被
@@ -279,12 +302,12 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 ## 綽綽有餘；B2.1 的程序生成大圖若量到瓶頸，再換成不依賴路徑的 reach 估計。
 static func _reach(
 	nid: int,
-	by_id: Dictionary,
 	out_edges: Dictionary,
-	edges: Array,
+	edge_to: PackedInt32Array,
+	edge_cap: PackedFloat64Array,
 	flow: Array[float],
 	demand_left: Dictionary,
-	priorities: Dictionary,
+	prio_of: Dictionary,
 	memo: Dictionary,
 	visiting: Dictionary,
 	twin: Dictionary
@@ -295,20 +318,18 @@ static func _reach(
 		return memo[nid]
 	visiting[nid] = true
 
-	var node: Dictionary = by_id.get(nid, {})
 	var d := float(demand_left.get(nid, 0.0))
-	var prio := maxf(1.0, float(priorities.get(String(node.get("type", "")), 1)))
+	var prio := float(prio_of.get(nid, 1.0))
 	var amt := d
 	var weighted := d * prio
 
 	for ei: int in out_edges.get(nid, []):
-		var e: Dictionary = edges[ei]
-		var residual := _residual(ei, edges, flow, twin)
+		var residual := _residual(ei, edge_cap, flow, twin)
 		if residual <= EPS:
 			continue
 		var down := _reach(
-			int(e.get("to", -1)), by_id, out_edges, edges, flow, demand_left,
-			priorities, memo, visiting, twin
+			edge_to[ei], out_edges, edge_to, edge_cap, flow, demand_left,
+			prio_of, memo, visiting, twin
 		)
 		if down.x <= EPS:
 			continue
@@ -329,8 +350,8 @@ static func _reach(
 ## 資源從幹線推到中繼，中繼看到「經幹線的另一條分支還有需求」，就把一半
 ## 原路推回去，來回彈掉三次迭代（`10_GDD.md` §7.9 第 2 關的正解正是這種
 ## 佈局，B1.2 校準時當場現形）。**管子是一根，容量就該是一份。**
-static func _residual(ei: int, edges: Array, flow: Array[float], twin: Dictionary) -> float:
-	var cap := float((edges[ei] as Dictionary).get("cap", 0.0))
+static func _residual(ei: int, edge_cap: PackedFloat64Array, flow: Array[float], twin: Dictionary) -> float:
+	var cap := edge_cap[ei]
 	var used := flow[ei]
 	if twin.has(ei):
 		used += flow[int(twin[ei])]

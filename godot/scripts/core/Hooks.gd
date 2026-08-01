@@ -21,6 +21,10 @@ var demo_ticks: int = 860
 ## `TL_CLICKTEST=1`：開局內畫面，**用合成的滑鼠事件真的點地圖**，驗證輸入層通了。
 ## 由 `screens/Battle.gd` 執行（它才知道格子在螢幕上的哪裡）。
 var click_test: bool = false
+## ★ `TL_STRESS=1`：局內畫面換成壓力情境（`data/Maps.gd` 的 500 節點／2000 導管），
+## **模擬凍結**、只量渲染，跑完 `STRESS_FRAMES` 幀印出幀時間後退出（B1.7、RG-8）。
+## 模擬那一半量不到這裡（它每 tick 要好幾秒，會把幀時間整個吃掉），走 `perf_test.gd`。
+var stress: bool = false
 ## `TL_LEVEL=1..5`：`TL_PANEL=campaign` 時直接進那一關（1-based，0 ＝ 停在關卡選擇）。
 ## 截圖與 `TL_SIM` 要指定關卡都走這裡。
 var level: int = 0
@@ -41,6 +45,7 @@ func _ready() -> void:
 	sim_ticks = Env.int_of("TL_SIM", 0)
 	demo_ticks = Env.int_of("TL_DEMO_TICKS", 860)
 	click_test = Env.flag("TL_CLICKTEST")
+	stress = Env.flag("TL_STRESS")
 	level = Env.int_of("TL_LEVEL", 0)
 	var f := Env.str_of("TL_FOCUS")
 	if f != "":
@@ -52,6 +57,11 @@ func _ready() -> void:
 	# ——那個畫面的全部價值就是「一顆鈕點得到」）。
 	if click_test and panel == "":
 		panel = "battle"
+	# 壓力情境是局內畫面的事，而且它自己就是佈局——示範佈局要關掉。
+	if stress:
+		if panel == "":
+			panel = "battle"
+		demo_ticks = 0
 	if click_test:
 		# 空地圖才驗得到「點一下有沒有蓋出東西」。但明寫 `TL_DEMO_TICKS` 時尊重它——
 		# 那是「我要的是示範佈局跑到第 N tick 的畫面，只是需要有人幫我開浮層」。

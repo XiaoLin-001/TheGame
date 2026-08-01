@@ -272,13 +272,33 @@ def sfx_build_place():
 
 
 def sfx_build_wire():
-    """導管連接：上升掃頻。"""
-    out = buf(0.28)
+    """導管連接：扣上去的兩段聲。
+
+    ★ 第一版是 0.28 秒的上升掃頻（§5.1 的字面寫法），使用者回報不喜歡——
+    掃頻在這套音色裡聽起來像雷射，而**拉一條管子是機械動作不是能量武器**，
+    而且它是全遊戲按最多次的音之一，尖銳的高頻掃上去幾次就煩了。
+    改成「推進去 → 卡住」：一段短的下行實體聲，接一個乾的金屬扣。
+    """
+    out = buf(0.20)
+    # ① 推進去：320 → 190Hz 的短促身體，帶一點摩擦噪音。
     for i in range(len(out)):
         t = i / RATE
-        f = 220.0 + 1100.0 * (t / 0.28) ** 1.4
-        out[i] = math.sin(2.0 * math.pi * f * t) * (0.35 + 0.65 * t / 0.28) * env_exp(t, 0.28, 2.2)
-    return fade_edges(normalize(out, 0.68))
+        out[i] = math.sin(
+            2.0 * math.pi * (320.0 * math.exp(-22.0 * t) + 190.0) * t
+        ) * env_exp(t, 0.20, 13.0)
+    slide = lowpass(noise(0.07, 313), 2400)
+    mix(out, [v * env_exp(i / RATE, 0.07, 7.0) for i, v in enumerate(slide)], 0.0, 0.30)
+    # ② 卡住：0.075 秒後一個很短的金屬扣。**兩段之間的間隔就是「接上了」**。
+    latch = buf(0.06)
+    for i in range(len(latch)):
+        t = i / RATE
+        e = env_exp(t, 0.06, 18.0)
+        latch[i] = (
+            math.sin(2.0 * math.pi * 1180.0 * t) * e
+            + 0.5 * math.sin(2.0 * math.pi * 1770.0 * t) * e * e
+        )
+    mix(out, fade_edges(latch, 1.5), 0.075, 0.45)
+    return fade_edges(normalize(out, 0.62), 2.0)
 
 
 def sfx_build_destroyed():
@@ -340,10 +360,26 @@ def sfx_fire_prism():
 
 
 def sfx_fire_knell():
-    """潮鳴：帶餘韻的鐘擊（它的名字就是這個音）。"""
-    return _fire(0.42, lambda t: (
-        math.sin(2.0 * math.pi * 587.33 * t) + 0.4 * math.sin(2.0 * math.pi * 880.0 * t)
-    ) * env_exp(t, 0.42, 6.0), peak=0.66)
+    """潮鳴：悶的低頻脈衝 ＋ 一層非諧和的金屬泛音。
+
+    ★ 第一版是 0.42 秒的諧和鐘（587＋880Hz，完全五度），使用者回報不喜歡——
+    那個音**太甜也太長**：五度是協和音程，聽起來像獎勵音而不是武器；0.42 秒
+    在連射時會一直互相疊在一起變成嗡的一片。
+    改成敲一塊悶掉的金屬板：基音壓到 165Hz、泛音改成非整數倍（2.76／5.4，
+    真實金屬板的比例），長度砍到 0.26 秒並讓泛音比基音先死。
+    """
+    out = buf(0.26)
+    for i in range(len(out)):
+        t = i / RATE
+        e = env_exp(t, 0.26, 9.0)
+        out[i] = (
+            math.sin(2.0 * math.pi * 165.0 * t) * e
+            + 0.42 * math.sin(2.0 * math.pi * 165.0 * 2.76 * t) * e * e
+            + 0.18 * math.sin(2.0 * math.pi * 165.0 * 5.40 * t) * e * e * e
+        )
+    thud = lowpass(noise(0.05, 271), 1200)
+    mix(out, [v * env_exp(i / RATE, 0.05, 11.0) for i, v in enumerate(thud)], 0.0, 0.40)
+    return fade_edges(normalize(out, 0.60), 2.0)
 
 
 def sfx_fire_reclaimer():

@@ -21,7 +21,14 @@ const HOOKS := [
 	"TL_NAKED",       # =1　隱藏所有數值標籤（R-3 可讀性驗收專用）
 	"TL_DEMO_TICKS",  # =<ticks>　示範佈局先推幾個 tick 再截圖（預設 860）
 	"TL_CLICKTEST",   # =1　用合成滑鼠事件點地圖，驗證輸入層（B0.7.2 的教訓）
+	"TL_LEVEL",       # =1..5　TL_PANEL=campaign 時直接進那一關
+	"TL_FOCUS",       # ="x,y,zoom"　鏡頭對到某一格並放大（拍特效近照）
+	"TL_STRESS",      # =1　壓力情境，模擬凍結只量渲染（B1.7、RG-8）
 ]
+
+## ⚠ 上面漏掉一個就等於**那個鉤子單獨使用時會寫進玩家的真實存檔**（規則 1）。
+## `TL_LEVEL` 與 `TL_FOCUS` 是 B1.2／B1.6 加的，一直到 B1.7 才補進這張表——
+## 它們實務上都跟 `TL_PANEL` 一起用所以沒出事，但「實務上不會單獨用」不是保護。
 
 
 static func has(name: String) -> bool:

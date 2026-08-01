@@ -209,3 +209,81 @@ static func to_sets(map: Dictionary) -> Dictionary:
 		"ore": ore,
 		"core": map.get("core", Vector2i.ZERO),
 	}
+
+
+# ── 壓力情境（B1.7，`30_TECH_DESIGN.md` §5 ／ RG-8）─────────────────────
+#
+# 500 節點／2000 導管／200 敵人。**它不是一張可以玩的圖**，是效能的量測台：
+# 一片高連通度的節點網（每個節點接右、下、兩條對角 → 平均分支度 ~7.5），
+# 因為解算成本是**邊數**乘迭代數，不是節點數。塔散佈在網裡，讓
+# 「塔 × 敵人」那一圈也一起被量到（60 × 200 ＝ 每 tick 一萬兩千次配對）。
+#
+# 兩條驗證路徑共用這一份：`tests/perf_test.gd`（模擬單 tick 耗時，headless）
+# 與 `TL_STRESS=1`（真的畫出來量幀時間）。**同一個局面，兩個數字才對得起來。**
+
+const STRESS_COLS := 26
+const STRESS_ROWS := 21
+const STRESS_ORIGIN := Vector2i(4, 6)
+const STRESS_STEP := 2
+## 敵人數（RG-8 的 200）。
+const STRESS_ENEMIES := 200
+
+
+static func stress_cell(cx: int, cy: int) -> Vector2i:
+	return STRESS_ORIGIN + Vector2i(cx, cy) * STRESS_STEP
+
+
+## 採集器要站的礦點。每 5 列一個，兼作「網裡有真的供給」。
+static func stress_ore() -> Array:
+	var out: Array = []
+	for cy in STRESS_ROWS:
+		if cy % 5 == 0:
+			out.append(stress_cell(0, cy))
+	return out
+
+
+static func stress_map() -> Dictionary:
+	return {
+		"id": "stress",
+		"name": "壓力情境",
+		"size": Vector2i(60, 52),
+		"core": Vector2i(58, 2),
+		# 路徑走最上緣那一列，離節點網 4 格——它不該影響建造合法性。
+		"waypoints": [Vector2i(0, 2), Vector2i(58, 2)],
+		"waves": [],
+		"start_ore": 9999999,
+		"prep_time": 999999.0,
+		"crossings": [],
+		"ore": stress_ore(),
+	}
+
+
+## 這一格要蓋什麼。**混著放**：只有中繼的話流量解算會退化成「沒有供給也沒有
+## 需求」，量到的是一個不存在的局面。
+static func _stress_type(cx: int, cy: int) -> String:
+	if cx == 0 and cy % 5 == 0:
+		return "extractor"          # 礦點上（`stress_ore()`）
+	var i := cy * STRESS_COLS + cx
+	if i % 9 == 0:
+		return "anchor"             # ~60 座塔 → 塔×敵人那一圈也被量到
+	if i % 7 == 0:
+		return "generator"
+	return "relay"
+
+
+## `cols`／`rows` 留參數是給**規模曲線**用的：同一個形狀縮到 8×8 就是
+## `perf_test` 的哨兵，放到滿就是 RG-8 的壓力情境。兩者形狀一樣，數字才比得起來。
+static func stress_ops(cols: int = STRESS_COLS, rows: int = STRESS_ROWS) -> Array:
+	var ops: Array = []
+	for cy in rows:
+		for cx in cols:
+			ops.append(["place", _stress_type(cx, cy), stress_cell(cx, cy)])
+	# 右、下、右下、右上四個方向。**只往一邊接**，同一條線才不會被排成兩次。
+	for cy in rows:
+		for cx in cols:
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1), Vector2i(1, -1)]:
+				var to := Vector2i(cx, cy) + d
+				if to.x < 0 or to.y < 0 or to.x >= cols or to.y >= rows:
+					continue
+				ops.append(["conduit", stress_cell(cx, cy), stress_cell(to.x, to.y)])
+	return ops

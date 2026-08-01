@@ -17,6 +17,7 @@ const Shapes := preload("res://scripts/render/Shapes.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
+const Combat := preload("res://scripts/sim/Combat.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
 
@@ -33,6 +34,7 @@ func _initialize() -> void:
 	var t := T.new("campaign_test")
 	_geometry(t)
 	_frame_fit(t)
+	_tower_geometry(t)
 	_unlock_ladder(t)
 	_no_hidden_multiplier(t)
 	_locked_is_a_rule(t)
@@ -81,6 +83,53 @@ func _geometry(t: RefCounted) -> void:
 				c.x >= 0 and c.y >= 0 and c.x < size.x and c.y < size.y,
 				"%s 礦點 %s 在圖內" % [name, c]
 			)
+
+
+## ★ RG-56：塔的擺位在幾何上必須成立（B1.7 補上的直接斷言）。
+##
+## 這兩條原本只被「參考解實跑必勝」間接守著——**間接守住的東西，壞掉時
+## 指的是別的地方**：真正壞的是擺位，但失敗訊息會說「第 N 關輸了」。
+##
+##   ① **每一關至少要有一座會開火的塔搆得到核心。** 敵人只在核心駐足
+##      （`10_GDD.md` walk-by），搆不到就代表任何一次漏怪都是必輸——
+##      那不是難度，是關卡設計的漏洞。
+##   ② **稜鏡必須和某一段路徑同排或同列。** 它是貫穿武器（沿軸線打穿一整列），
+##      擺在沒有任何路徑格與它共線的地方 ＝ 一座 130 礦砂的裝飾品。
+##
+## 射程判定直接呼叫 `Combat` 的同一支函式，不在測試裡另寫一份幾何——
+## 另寫的那一份會在某天和真的規則分岔，然後兩邊都「對」。
+func _tower_geometry(t: RefCounted) -> void:
+	for i in Campaign.count():
+		var lv: Dictionary = Campaign.at(i)
+		var m: Dictionary = lv["map"]
+		var name: String = m["name"]
+		var core: Vector2i = m["core"]
+		var path := Maps.path_of(m)
+		var covers_core := false
+		var prisms := 0
+		var prisms_aligned := 0
+		for op: Array in lv["demo"]:
+			if String(op[0]) != "place":
+				continue
+			var def := NodeDefs.of(String(op[1]))
+			if not def.get("tower", false):
+				continue
+			var cell: Vector2i = op[2]
+			var r := float(def.get("range", 0.0))
+			# 不開火的塔（潮鳴 rof=0）搆得到核心也擋不住任何東西。
+			if float(def.get("rof", 0.0)) > 0.0:
+				if not Combat.in_range_indices(cell, [core], r).is_empty():
+					covers_core = true
+			if def.get("pierce", false):
+				prisms += 1
+				for c: Vector2i in path:
+					if (c.x == cell.x or c.y == cell.y) and not Combat.in_range_indices(
+						cell, [c], r
+					).is_empty():
+						prisms_aligned += 1
+						break
+		t.ok(covers_core, "%s 參考解至少一座會開火的塔搆得到核心（RG-56）" % name)
+		t.eq(prisms_aligned, prisms, "%s 每一座稜鏡都和某一段路徑共線且在射程內（RG-56）" % name)
 
 
 ## ★ 地圖框架與自動 fit（B1.2.2，使用者要求）。

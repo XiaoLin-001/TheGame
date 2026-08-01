@@ -87,7 +87,7 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（10 支：flow / build / combat / tide / save / determinism / hud / tech / audio / campaign）
+# 自動化測試（11 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -95,6 +95,10 @@ python assetgen/gen_audio.py && <godot> --headless --path godot --import
 
 # ★ 戰役五關的參考解實跑（最慢的一支，約 3 分鐘）——「這一關過得了」的唯一證據
 <godot> --headless --path godot --script res://tests/campaign_test.gd
+
+# ★ 效能（B1.7）：模擬走 perf_test（五關實測 ＋ 規模哨兵）；渲染走 TL_STRESS。
+# TL_STRESS 的模擬是**凍結**的——那一份佈局單 tick 要 30 秒，不凍結就量不到渲染。
+TL_STRESS=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 
 # 截圖驗證（自動靜音、約 3 秒後存圖並退出）
 # TL_SHOT 存在時模擬凍結在 TL_DEMO_TICKS 那一格 → 同參數在任何機器上拍出同一張圖
@@ -182,7 +186,7 @@ TheGame/
     ├── scripts/ui/            UiKit
     ├── scripts/meta/          RosterData / TycoonSim（尚未建立；科技樹是 data/Tech.gd）
     ├── data/                  節點、角色、敵人、地圖、戰役、**科技**資料表
-    ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / audio / campaign
+    ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign
     └── assets/audio/          bgm/ 3 首、sfx/ 15 支（`assetgen/gen_audio.py` 生成）
 ```
 

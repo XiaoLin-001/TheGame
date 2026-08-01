@@ -39,6 +39,10 @@ const ZOOM_STEP := 1.25
 ## `10_GDD.md` §7.1。**只在準備期可用。**
 const FAST_FORWARD_RATE := 4
 
+## `TL_STRESS`：丟掉的暖身幀數與實際量測幀數。
+const STRESS_WARMUP := 30
+const STRESS_FRAMES := 240
+
 ## 流動珠（`20_ART_DIRECTION.md` §1.4a）：珠距、每單位流率的行進速度（px/秒）、
 ## 低於此流率就完全不畫。20/秒的幹線 ＝ 120 px/秒，一格 32px 約走四分之一秒。
 const BEAD_GAP := 20.0
@@ -119,6 +123,14 @@ var _engaged: Dictionary = {}
 ## **音效一律從畫面層推導，模擬層維持零副作用**（`CLAUDE.md` 技術慣例）：
 ## 在 `scripts/sim/` 裡塞一行 `AudioBus.play()` 就等於讓每日挑戰的重播會出聲。
 var _audio_prev: Dictionary = {}
+## 上一幀看到的 tick 序號（音訊與死因診斷共用的邊緣偵測）。
+var _last_tick: int = -1
+## 死因歸因的累計（B1.7）。純畫面層，模擬層不知道它的存在。
+var _diag: Dictionary = {}
+## `TL_STRESS` 的量測狀態。
+var _stress_frames: int = 0
+var _stress_total: float = 0.0
+var _stress_worst: float = 0.0
 ## 本幀「正在被啃」的格（敵人相鄰 1 格內）。**純渲染推導，不新增任何狀態**
 ## ——同一份判定模擬層每 tick 都在做（`Tide.in_blast`），這裡只是把它畫出來。
 var _threat: Dictionary = {}
@@ -159,6 +171,17 @@ func _setup_session() -> void:
 	var tech: Array = (GameState.data.get("tech", {}) as Dictionary).get("unlocked", [])
 	if not level.is_empty():
 		s.setup(level["map"], level["unlocked"], tech)
+	elif Hooks.stress:
+		# ★ 壓力情境（B1.7、RG-8）：只為了量渲染。模擬在 `_process` 裡凍結——
+		#   這一份佈局的單 tick 要 30 秒（`perf_test.gd` 的說明），不凍結的話
+		#   量到的會是模擬的耗時，而渲染一幀都畫不完。
+		s.setup(MapsData.stress_map(), [], tech)
+		s.ore = 9999999.0
+		s.alloy = 9999999.0
+		BuildController.apply_ops(s, MapsData.stress_ops())
+		for i in MapsData.STRESS_ENEMIES:
+			s.add_enemy(["drifter", "carapace", "ember"][i % 3])
+		s.phase = "wave"
 	else:
 		s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL, [], tech)
 	_reset_view()
@@ -496,9 +519,33 @@ func _click_selftest() -> void:
 	var over_silent: bool = AudioBus.plays == plays_before
 	s.shots.clear()
 	s.phase = phase_before
-	for _i in 2:
+	for _i in 3:
 		await get_tree().process_frame
-	var over_ok: bool = tower_built and over_cleared and over_silent
+
+	# ③ ★ 死因歸因（B1.7）。M1 的驗收句子是「說得出自己為什麼輸」，所以
+	#    **輸掉的那一面板上一定要有那一句**，而且整張面板要留在畫面內
+	#    （多一行會換行的字，正是最容易把面板推出下緣的東西）。
+	_diag["wave_ticks"] = 600
+	_diag["starved"] = 300
+	_diag["leak_wave"] = 3
+	s.phase = "lost"
+	for _i in 4:
+		await get_tree().process_frame
+	var why_shown := false
+	if _over_panel != null:
+		for n: Node in _over_panel.find_children("*", "Label", true, false):
+			if (n as Label).text.begins_with("為什麼輸"):
+				why_shown = true
+	var why_fits: bool = (
+		_over_panel != null
+		and _over_panel.position.y + _over_panel.size.y <= float(size.y)
+	)
+	s.phase = phase_before
+	for _i in 3:
+		await get_tree().process_frame
+	var over_ok: bool = (
+		tower_built and over_cleared and over_silent and why_shown and why_fits
+	)
 
 	# ★ 最後才留一個懸而未決的拖曳起點（按下不放開），讓八條方向導引與
 	#   「連不成」的橙色預覽線入鏡——**這是玩家真的會看到的那一幀**（手指還沒鬆開）。
@@ -521,9 +568,9 @@ func _click_selftest() -> void:
 		energy_ok, codex_ok, prio_ok, view_ok, menu_ok, audio_ok, over_ok,
 		"PASS" if ok else "FAIL"
 	])
-	print("[TL_CLICKTEST/audio] two_layers=%s prep_silent=%s wave_fade_in=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s" % [
+	print("[TL_CLICKTEST/audio] two_layers=%s prep_silent=%s wave_fade_in=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s" % [
 		music_ok, layer_prep, layer_rising, voice_ok, AudioBus.muted, tower_built, over_cleared,
-		over_silent
+		over_silent, why_shown, why_fits
 	])
 	print("[TL_CLICKTEST/menu] esc_open=%s scrim_blocks=%s settings=%s settings_back=%s esc_close=%s cell_buildable=%s button=%s fits=%s" % [
 		menu_open, menu_blocks, settings_open, settings_back, menu_closed, buildable_after,
@@ -690,7 +737,9 @@ func _process(delta: float) -> void:
 	# ★ `TL_SHOT` 下模擬凍結在 `_demo_layout()` 推完的那一格。否則截圖落在第幾
 	# tick 取決於這台機器 3 秒內跑了幾幀——同一份佈局在不同機器上會拍出不同
 	# 數字，截圖就不能拿來做回歸比對，也對不上 `TL_SIM=<同一個 N>` 的輸出。
-	if Hooks.shot_path == "":
+	if Hooks.stress:
+		_stress_frame(delta)
+	if Hooks.shot_path == "" and not Hooks.stress:
 		_accum += delta
 		# 快進＝**多跑幾個 tick**，不是把 tick 拉長。固定時間步不能動，
 		# 否則同一組操作在不同倍率下會跑出不同結果（§2.4 確定性）。
@@ -711,23 +760,96 @@ func _process(delta: float) -> void:
 	_refresh_hint()
 	_refresh_energy()
 	_refresh_over()
-	_audio_tick()
+	# ★ 一個 tick 邊緣偵測，兩個消費者（音訊、死因診斷）。
+	#   兩邊各記一份「上一幀的 tick」的那一天，就會有一邊記錯（B1.5.1 的教訓）。
+	var advanced: bool = s.tick_count != _last_tick
+	_last_tick = s.tick_count
+	_audio_tick(advanced)
+	if advanced:
+		_diag_tick()
 	queue_redraw()
+
+
+## ★ 死因歸因的原始資料（B1.7）。
+##
+## M1 的驗收句子是「**陌生人可以說得出自己為什麼輸**」。局末面板原本只給
+## 「撐過幾波、產能積分多少」——那些是**成績**，不是**原因**。玩家輸掉的時候
+## 要的是下一句「所以我下次該改什麼」。
+##
+## 全部從畫面層累計，模擬層一個欄位都不動（`scripts/sim/` 零副作用）。
+func _diag_tick() -> void:
+	if s.phase != "wave":
+		return
+	_diag["wave_ticks"] = int(_diag["wave_ticks"]) + 1
+	if float(s.rates["power_demand"]) > float(s.rates["power_supply"]) + 0.01:
+		_diag["starved"] = int(_diag["starved"]) + 1
+	# 核心開始掉血的那一波 ＝ 第一次有敵人走到底。
+	if int(_diag["leak_wave"]) < 0 and s.core_hp() < float(_diag["core_hp"]) - 0.01:
+		_diag["leak_wave"] = s.wave_index
+	_diag["core_hp"] = s.core_hp()
+
+
+## 一句話的死因。**只給一句**：三條並列的診斷等於沒有診斷。
+func _diag_line(won: bool) -> String:
+	var ticks: int = maxi(1, int(_diag["wave_ticks"]))
+	var starve := float(_diag["starved"]) / float(ticks)
+	var leak: int = int(_diag["leak_wave"])
+	if not won:
+		if leak >= 0:
+			return "為什麼輸　第 %d 波開始有敵人走到核心。%s" % [
+				leak,
+				"缺電讓塔的射速掉了（%d%% 的戰鬥時間供不應求）——先補發電機或儲槽。" % roundi(starve * 100.0)
+				if starve >= 0.25 else "那條路線上的火力不夠——把塔往敵人的必經之路挪，或多蓋一座。",
+			]
+		return "為什麼輸　核心被相鄰的敵人啃掉了。節點退開敵人路徑 2 格就打不到。"
+	if starve >= 0.25:
+		return "下一次　有 %d%% 的戰鬥時間供不應求，塔是降速在打的——補電力就能拉高產能積分。" % roundi(starve * 100.0)
+	return ""
 
 
 # ── 音訊（B1.5）────────────────────────────────────────────────────────
 
+
+## ★ 渲染壓力量測（`TL_STRESS=1`，B1.7）。
+##
+## **模擬是凍結的**，所以這裡量到的是純粹的「畫 547 個節點 ＋ 2045 條導管 ＋
+## 200 隻敵人要多久」。前 30 幀丟掉（著色器編譯與第一次配置都落在那裡），
+## 之後取平均與最壞值——**最壞值才是玩家感覺得到的那一下卡頓**。
+func _stress_frame(delta: float) -> void:
+	_stress_frames += 1
+	if _stress_frames <= STRESS_WARMUP:
+		return
+	_stress_total += delta
+	_stress_worst = maxf(_stress_worst, delta)
+	var n := _stress_frames - STRESS_WARMUP
+	if n < STRESS_FRAMES:
+		return
+	var avg := _stress_total / float(n)
+	print("[TL_STRESS] 節點 %d／導管 %d／敵人 %d　→　平均 %.2f ms（%.0f FPS）／最壞 %.2f ms　量了 %d 幀" % [
+		s.nodes.size(), s.conduits.size(), s.enemies.size(),
+		avg * 1000.0, 1.0 / maxf(avg, 0.000001), _stress_worst * 1000.0, n
+	])
+	# 60 FPS ＝ 16.7ms；45 FPS（§5 的最低可接受）＝ 22.2ms。
+	print("[TL_STRESS] 60FPS 目標 16.67ms／45FPS 底線 22.22ms → %s" % (
+		"通過（60FPS）" if avg <= 0.01667
+		else ("勉強（45FPS 以上）" if avg <= 0.02222 else "不通過")
+	))
+	get_tree().quit(0)
+
+
 func _audio_reset() -> void:
 	_audio_prev = {
 		"kills": s.kills, "nodes": s.nodes.size(), "core": s.core_hp(),
-		"warn_at": -99.0, "core_at": -99.0, "tick": s.tick_count,
+		"warn_at": -99.0, "core_at": -99.0,
 	}
+	_last_tick = s.tick_count
+	_diag = {"wave_ticks": 0, "starved": 0, "leak_wave": -1, "core_hp": s.core_hp()}
 
 
 ## 這一幀發生了什麼？全部從狀態的差值推出來——**不在模擬層留任何一個
 ## 「順便播個音」的呼叫**。代價是要自己記上一幀，換到的是 `sim/` 仍然
 ## 可以在 headless 重播一萬次而不出聲。
-func _audio_tick() -> void:
+func _audio_tick(advanced: bool) -> void:
 	if _audio_prev.is_empty():
 		return
 	var over: bool = s.phase == "won" or s.phase == "lost"
@@ -745,8 +867,6 @@ func _audio_tick() -> void:
 	#      音效就每一幀重放一次，聽起來像卡住了（使用者回報）。
 	#
 	# 用「差值偵測」的東西，就要確定自己是在**變化的那一刻**被呼叫的。
-	var advanced: bool = s.tick_count != int(_audio_prev["tick"])
-	_audio_prev["tick"] = s.tick_count
 	if not advanced:
 		return
 	var now := float(s.tick_count) * BattleController.TICK
@@ -2143,6 +2263,17 @@ func _refresh_over() -> void:
 	]:
 		if line != "":
 			col.add_child(UiKit.label(line, 15, Palette.TEXT_SECONDARY, false))
+	# ★ 死因歸因（B1.7）。M1 的驗收句子是「說得出自己為什麼輸」——
+	#   上面那幾行是**成績**，這一行才是**原因**。放在按鈕正上方：
+	#   玩家的視線在按「立刻重來」之前一定會經過這裡。
+	var why := _diag_line(won)
+	if why != "":
+		var lbl := UiKit.label(
+			why, 14, Palette.WARN_ORANGE if not won else Palette.ORDER_CYAN, false
+		)
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lbl.custom_minimum_size.x = 400.0
+		col.add_child(lbl)
 	var buttons := UiKit.hbox(8)
 	col.add_child(buttons)
 	var again := Button.new()
