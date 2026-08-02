@@ -23,6 +23,7 @@ const Campaign := preload("res://data/Campaign.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
+const MapGen := preload("res://scripts/sim/MapGen.gd")
 
 ## §5 的兩條線。**斷言掛在「最低可接受」上**，目標值只印出來——
 ## 把目標當紅線會讓一台比較慢的機器把測試變成擲骰子。
@@ -37,10 +38,17 @@ const CANARY := Vector2i(8, 8)
 const CANARY_MAX_MS := 2000.0
 
 
+## ★ 無盡大圖的規模曲線（B2.1b）。節點間隔 2 格，三個規模。
+## 上限**不是預算**，和哨兵一樣只擋數量級——R-17 是已登記、未修的風險。
+const ENDLESS_STEPS := [Vector2i(10, 6), Vector2i(18, 11), Vector2i(31, 19)]
+const ENDLESS_MAX_MS := 20000.0
+
+
 func _initialize() -> void:
 	var t := T.new("perf_test")
 	_campaign_levels(t)
 	_scaling_canary(t)
+	_endless_scale(t)
 	quit(t.report())
 
 
@@ -101,3 +109,49 @@ func _scaling_canary(t: T) -> void:
 	t.ok(ms < CANARY_MAX_MS, "哨兵 < %.0f ms（實際 %.1f）——超過代表解算器的數量級跑掉了" % [
 		CANARY_MAX_MS, ms
 	])
+
+
+## ③ ★ 無盡大圖（B2.1b）。這一層要回答的是 **R-17 到底從幾個節點開始痛**，
+## 所以印的是一條規模曲線，不是單一個數字。
+##
+## 佈局刻意是「玩家真的會蓋出來的形狀」——節點間隔 2 格、**只往右與往下接**
+## （分支度約 4）。壓力情境（RG-8）的分支度是 7.5，那是量測台不是玩法；
+## 拿它來回答「大圖能不能玩」會高估成本，而高估和低估一樣沒有用。
+func _endless_scale(t: T) -> void:
+	for step: Vector2i in ENDLESS_STEPS:
+		var s: RefCounted = SessionState.new()
+		s.setup(MapGen.generate(42))
+		s.ore = 9999999.0
+		s.alloy = 9999999.0
+		var path: Dictionary = s.sets["path"]
+		var size: Vector2i = s.map["size"]
+		var grid: Dictionary = {}
+		var ops: Array = []
+		for gy in step.y:
+			for gx in step.x:
+				var c := Vector2i(2 + gx * 2, 2 + gy * 2)
+				if c.x >= size.x or c.y >= size.y or path.has(c):
+					continue
+				grid[Vector2i(gx, gy)] = c
+				var i := gy * step.x + gx
+				ops.append(["place", "anchor" if i % 9 == 0 else (
+					"generator" if i % 7 == 0 else "relay"
+				), c])
+		for g: Vector2i in grid.keys():
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1)]:
+				if grid.has(g + d):
+					ops.append(["conduit", grid[g], grid[g + d]])
+		BuildController.apply_ops(s, ops)
+		for k in ENEMIES:
+			s.add_enemy(["drifter", "carapace", "ember"][k % 3])
+		s.phase = "wave"
+		var ms := _ms(s, 1 if step.x > 20 else 5)
+		print("[PERF] 無盡大圖 %2d×%2d　節點 %3d／導管 %3d／敵人 %d → %8.1f ms/tick%s" % [
+			step.x, step.y, s.nodes.size(), s.conduits.size(), s.enemies.size(), ms,
+			"" if ms <= MAX_MS else "　⚠ 超出上限 %.0f ms（R-17）" % MAX_MS
+		])
+		t.ok(
+			ms < ENDLESS_MAX_MS,
+			"無盡 %d×%d < %.0f ms（實際 %.1f）——只擋數量級，不是預算"
+				% [step.x, step.y, ENDLESS_MAX_MS, ms]
+		)

@@ -37,10 +37,25 @@ const SWIFT_SPEED := 1.2
 ##
 ## x=120 讓出左側建造欄，y=56 讓出頂欄，下緣停在 660（底欄鈕在 668）。
 const FRAME := Rect2(Vector2(120.0, 56.0), Vector2(1152.0, 604.0))
-## 縮放上限＝ fit 的幾倍。下限就是 fit——比 fit 更小只是把地圖縮進框架裡的
-## 一小塊，那正是這一批要修掉的東西。
+## 縮放上限＝**下限**的幾倍。
+##
+## ★ 下限在 B2.1b 從「就是 fit」改成 `max(fit, 可讀性地板)`：
+##   一屏可見的圖（全部戰役關卡）fit 本來就在地板之上 → 行為完全不變；
+##   大過一屏的圖（無盡）fit 會讓一格掉到 24px 以下，而那正是 RG-59 說
+##   「要重新驗收才能跨過」的線——**縮到看得見全圖但讀不出瓶頸，等於
+##   把 R-3 的驗收轉包給玩家**。所以無盡看全圖的地方是小地圖，不是主畫面。
 const ZOOM_MAX_MULT := 3.0
 const ZOOM_STEP := 1.25
+
+## 小地圖（B2.1b、`20_ART_DIRECTION.md` §1.8）。**只在地圖大過框架時出現**
+## ——戰役全部一屏可見，問題節點就在畫面上，多一個浮層只是多一塊遮擋。
+const MINIMAP_MAX := Vector2(232.0, 140.0)
+const MINIMAP_PAD := 12.0
+## 邊緣箭頭上限。**十個箭頭等於沒有箭頭**（§2 反模式：資訊過載）。
+const ARROW_MAX := 3
+const ARROW_SIZE := 11.0
+## 箭頭的命中半徑。P3 手機移植預留條款要求 ≥ 44×44 px，所以半徑取 22。
+const ARROW_HIT := 22.0
 
 ## `10_GDD.md` §7.1。**只在準備期可用。**
 const FAST_FORWARD_RATE := 4
@@ -211,10 +226,22 @@ func _setup_session() -> void:
 
 # ── 視野：框架、fit、縮放、平移（B1.2.2）─────────────────────────────
 
-## 這張圖剛好填滿框架的倍率。取兩軸的**較小值**——較大值會讓另一軸溢出框架，
-## 而「進場就看得到全貌」是這個框架存在的理由。
+## 縮放下限。一屏可見的圖就是 fit；大過一屏的圖是**可讀性地板**（24px／格）。
+##
+## `_fit` 這個欄位名沿用下來（它是「全景」鈕與縮放夾限共用的那一個值），
+## 但語意在 B2.1b 之後是「看得最遠的倍率」，不一定看得到全圖。
 func _fit_zoom() -> float:
-	return Shapes.fit_zoom(s.map["size"], FRAME.size)
+	return maxf(
+		Shapes.fit_zoom(s.map["size"], FRAME.size),
+		Shapes.MIN_READABLE_CELL / Shapes.GRID
+	)
+
+
+## 地圖在目前倍率下裝不進框架嗎？＝ 需不需要小地圖與邊緣箭頭。
+## **一屏可見的地圖一律 false**，所以戰役關卡不會多出這兩塊遮擋。
+func _oversized() -> bool:
+	var px := Vector2(s.map["size"]) * Shapes.GRID * _zoom
+	return px.x > FRAME.size.x + 0.5 or px.y > FRAME.size.y + 0.5
 
 
 ## 進場（與「全景」鈕）的視野：fit ＋ 居中。
@@ -319,6 +346,9 @@ func _buildable() -> Array:
 func _click_selftest() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
+	if Hooks.panel == "endless":
+		await _guide_selftest()
+		return
 	# 有示範佈局在場時只驗浮層：地圖上的格子被佔走了，建造斷言本來就不成立。
 	if s.nodes.size() > 1:
 		_energy_button.button_pressed = true
@@ -997,6 +1027,10 @@ func _gui_input(event: InputEvent) -> void:
 		return
 	if mb.button_index != MOUSE_BUTTON_LEFT:
 		return
+	# ★ 導引要先問（B2.1b）。小地圖蓋在地圖上面，不先攔的話點它會**在它底下
+	#   那一格蓋出東西來**——而且玩家看不出為什麼，因為節點生在畫面外。
+	if _guide_click(mb.position):
+		return
 	# ★ 從節點上按下先不動作，等放開才決定（B1.6.2）：放開在同一格＝一次普通點擊，
 	#   放開在另一個節點上＝拉一條導管。這樣「蓋一個 → 接一條 → 蓋一個 → 接一條」
 	#   不用每一步都往返左欄切模式——第 1 關的參考解就是 6 蓋 6 接交替，
@@ -1130,7 +1164,266 @@ func _draw() -> void:
 	# ── 回到螢幕座標 ──────────────────────────────────────────────────
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_draw_frame_matte()
+	# 導引畫在遮罩**之後**：它們的職責就是講「框架外面有什麼」，被遮罩蓋掉
+	# 等於整個功能不存在。兩者都只在 `_oversized()` 時出現。
+	_draw_arrows()
+	_draw_minimap()
 	_draw_energy_bar()
+
+
+# ── 大圖導引：小地圖與邊緣箭頭（B2.1b，`20_ART_DIRECTION.md` §1.8）────────
+#
+# 大圖模式的 R-3 驗收是「**瓶頸節點即使不在畫面內也能在 30 秒內被找到**」。
+# 兩個通道分工明確，不是互為備援：
+#   小地圖 → 「全局現在長什麼樣？我在哪？」常駐、靜態。
+#   邊緣箭頭 → 「現在有東西壞了，在畫面外哪一邊？」打斷式。
+# 兩者都可點，點了把視野移過去——這也是大圖平移唯一的**純左鍵**動線
+# （中鍵拖曳在觸控上不存在，R-16）。
+
+
+## 「問題」不新發明判定，就是既有的兩件事，依嚴重度排序：
+##   ① 正在被 walk-by 啃的節點（`_threat`，和主畫面的四角括號同一份判定）
+##   ② `缺料`／`滿溢`（`node_state`，和三態徽章同一份判定）
+## 排序決定 `ARROW_MAX` 砍掉的是哪幾個——被啃的永遠留著。
+func _problem_cells() -> Array[Vector2i]:
+	var hurt: Array[Vector2i] = []
+	var stuck: Array[Vector2i] = []
+	var state: Dictionary = s.rates["node_state"]
+	for n: Dictionary in s.nodes:
+		var c: Vector2i = n["cell"]
+		if _threat.has(c):
+			hurt.append(c)
+		elif int(state.get(int(n["id"]), SessionState.NORMAL)) != SessionState.NORMAL:
+			stuck.append(c)
+	hurt.append_array(stuck)
+	return hurt
+
+
+## 目前看得到的世界座標矩形。小地圖的視野框與「這個問題在不在畫面內」
+## 都從這裡算——**只有一份**，兩者不可能各算各的而對不起來。
+func _view_world_rect() -> Rect2:
+	var o := _map_origin()
+	return Rect2((FRAME.position - o) / _zoom, FRAME.size / _zoom)
+
+
+## 把某一格移到畫面中央（小地圖與箭頭的「一鍵跳」）。
+## 與 `TL_FOCUS` 走同一條算式——兩份會漂掉。
+func _center_view_on(c: Vector2i) -> void:
+	var px := Vector2(s.map["size"]) * Shapes.GRID
+	_pan = (px * 0.5 - _center(c)) * _zoom
+	_clamp_pan()
+	queue_redraw()
+
+
+## 小地圖的位置：框架**右下角**內側——離建造欄（左）與能量列（上）最遠的角。
+## 尺寸依地圖長寬比縮進 `MINIMAP_MAX`，所以它永遠和地圖同比例（不同比例的
+## 縮圖上，「我在哪」那個框會說謊）。
+func _minimap_rect() -> Rect2:
+	var m := Vector2(s.map["size"])
+	var k := minf(MINIMAP_MAX.x / m.x, MINIMAP_MAX.y / m.y)
+	var sz := m * k
+	return Rect2(FRAME.end - sz - Vector2(MINIMAP_PAD, MINIMAP_PAD), sz)
+
+
+func _draw_minimap() -> void:
+	if not _oversized():
+		return
+	var r := _minimap_rect()
+	var box := r.grow(5.0)
+	draw_rect(box, Palette.alpha(Palette.BG_PANEL, 0.96))
+	draw_rect(box, Palette.BORDER_STRONG, false, 1.0)
+	# 世界座標 → 小地圖座標。
+	var k := r.size.x / (float(s.map["size"].x) * Shapes.GRID)
+	var cell := maxf(1.0, Shapes.GRID * k)
+
+	for c: Vector2i in s.path:
+		draw_rect(Rect2(r.position + Vector2(c) * cell, Vector2(cell, cell)), Palette.TIDE_DEEP)
+	# 玩家節點：小地圖上讀的是**產線的形狀**，不是個別節點，所以一律同一個點。
+	for n: Dictionary in s.nodes:
+		draw_rect(
+			Rect2(r.position + Vector2(n["cell"]) * cell, Vector2(cell, cell)),
+			Palette.ORDER_CYAN
+		)
+	# 問題標記：**比節點大一倍** ＋ 脈動。要在一堆青點裡被一眼挑出來，
+	# 只換顏色不夠（§4.3b）。
+	var a := Motion.pulse01(s.tick_count, Motion.BASE * 2.0, 0.45)
+	for c: Vector2i in _problem_cells():
+		var at := r.position + Vector2(c) * cell - Vector2(cell, cell) * 0.5
+		draw_rect(Rect2(at, Vector2(cell, cell) * 2.0), Palette.alpha(Palette.WARN_ORANGE, a))
+	# 視野框：「我在哪」——這是小地圖與一張縮圖的唯一差別。
+	var vw := _view_world_rect()
+	draw_rect(
+		Rect2(r.position + vw.position * k, vw.size * k).intersection(r),
+		Palette.ORDER_BRIGHT, false, 1.0
+	)
+
+
+## 邊緣箭頭：畫在框架內緣，指向畫面外的問題。
+##
+## 只畫**不在畫面內**的——在畫面內的問題本來就看得到，再加一個箭頭是雜訊。
+func _draw_arrows() -> void:
+	if not _oversized():
+		return
+	var a := Motion.pulse01(s.tick_count, Motion.BASE * 2.0, 0.5)
+	for hit: Array in _arrow_hits():
+		var at: Vector2 = hit[0]
+		var dir: Vector2 = hit[1]
+		var perp := Vector2(-dir.y, dir.x)
+		draw_colored_polygon(PackedVector2Array([
+			at + dir * ARROW_SIZE,
+			at - dir * ARROW_SIZE * 0.6 + perp * ARROW_SIZE * 0.75,
+			at - dir * ARROW_SIZE * 0.6 - perp * ARROW_SIZE * 0.75,
+		]), Palette.alpha(Palette.WARN_ORANGE, a))
+
+
+## 箭頭的位置、方向與目標格：`[[螢幕位置, 單位方向, 目標格], ...]`。
+## **繪圖與命中判定共用這一支**——兩份會漂掉，而漂掉的症狀是「看得到但點不到」。
+func _arrow_hits() -> Array:
+	var out: Array = []
+	var vw := _view_world_rect()
+	var mid := FRAME.position + FRAME.size * 0.5
+	# 框架內緣，留出箭頭自己的半徑，否則尖端會被邊緣切掉。
+	var inner := FRAME.grow(-(ARROW_SIZE + 6.0))
+	for c: Vector2i in _problem_cells():
+		if out.size() >= ARROW_MAX:
+			break
+		var w := _center(c)
+		if vw.has_point(w):
+			continue
+		var dir := (_to_screen(w) - mid)
+		if dir.length() < 0.001:
+			continue
+		dir = dir.normalized()
+		# 從框架中心往那個方向射到內緣：兩軸各算一次，取先撞到的那一個。
+		var tx := INF if is_zero_approx(dir.x) else (inner.size.x * 0.5) / absf(dir.x)
+		var ty := INF if is_zero_approx(dir.y) else (inner.size.y * 0.5) / absf(dir.y)
+		out.append([mid + dir * minf(tx, ty), dir, c])
+	return out
+
+
+## 導引的點擊。回傳「有沒有吃掉這一次點擊」——吃掉了就不可以再當成蓋節點，
+## 否則點小地圖會在它底下的那一格蓋出東西來。
+func _guide_click(pos: Vector2) -> bool:
+	if not _oversized():
+		return false
+	for hit: Array in _arrow_hits():
+		if pos.distance_to(hit[0] as Vector2) <= ARROW_HIT:
+			_center_view_on(hit[2] as Vector2i)
+			return true
+	var r := _minimap_rect()
+	if not r.grow(5.0).has_point(pos):
+		return false
+	var k := r.size.x / (float(s.map["size"].x) * Shapes.GRID)
+	_center_view_on(Shapes.to_grid((pos - r.position) / k))
+	return true
+
+
+## ★ 大圖導引自檢（`TL_CLICKTEST=1 TL_PANEL=endless`，B2.1b）。
+##
+## 這一支驗的就是 B2.1b 的 DoD：**瓶頸節點即使不在畫面內也能在 30 秒內被找到**。
+## 「30 秒」對自檢沒有意義，能驗的是它的前提——**問題在畫面外時，畫面上真的
+## 有一個指得到它、而且點得到的東西**。
+##
+## 造問題的方式：在畫面外的礦點上蓋一座採集器、不接任何導管。它的產出推不
+## 出去 → `stuck` → `滿溢`（和三態徽章同一份判定），一個節點就成立，不必
+## 佈一整條產線。
+func _guide_selftest() -> void:
+	var big: bool = _oversized()
+
+	# 找一個**開場看不到**的礦點——大圖的重點就是「畫面外」。
+	var vw := _view_world_rect()
+	var target := Vector2i(-1, -1)
+	for c: Vector2i in (s.map["ore"] as Array):
+		if not vw.has_point(_center(c)):
+			target = c
+			break
+	var found_offscreen: bool = target.x >= 0
+
+	if found_offscreen:
+		# ★ **先把視野移過去才蓋得到**：那一格在畫面外，合成點擊落在框架外
+		#   會被輸入層擋掉（第一版就是這樣紅的——而那個行為是對的，玩家也
+		#   點不到看不見的格子）。蓋完再 `_reset_view()` 把它送回畫面外。
+		_center_view_on(target)
+		for _i in 2:
+			await get_tree().process_frame
+		_press(_build_buttons["extractor"])
+		_click(target)
+		for _i in 3:
+			await get_tree().process_frame
+		# 推幾個 tick，`node_state` 才算得出 `滿溢`。
+		for _i in 6:
+			BattleController.step(s)
+		_reset_view()
+		for _i in 2:
+			await get_tree().process_frame
+	var placed: bool = not s.node_at(target).is_empty()
+	var back_offscreen: bool = placed and not _view_world_rect().has_point(_center(target))
+	var flagged: bool = _problem_cells().has(target)
+
+	# 箭頭：它在畫面外，所以應該有一個指著它的箭頭。
+	var arrows := _arrow_hits()
+	var arrow_at := Vector2(-1, -1)
+	for hit: Array in arrows:
+		if (hit[2] as Vector2i) == target:
+			arrow_at = hit[0]
+	var arrowed: bool = arrow_at.x >= 0
+	# 箭頭要**在框架內**，不然它自己就在畫面外（第一版就是這樣：內縮沒算箭頭
+	# 自己的半徑，尖端被邊緣切掉一半）。
+	var arrow_inside: bool = arrowed and FRAME.has_point(arrow_at)
+
+	# 一鍵跳：點那個箭頭，目標要進到畫面內。
+	var jumped := false
+	if arrowed:
+		_click_at(arrow_at)
+		for _i in 2:
+			await get_tree().process_frame
+		jumped = _view_world_rect().has_point(_center(target))
+
+	# 小地圖：點左上角，視野要往左上走（而且**不可以在那裡蓋出東西**）。
+	#
+	# ★ 先切成「中繼」再點：中繼哪裡都蓋得起來，所以 `mini_safe` 才是真斷言。
+	#   用採集器的那一版是**假通過**——點到非礦點本來就會被擋，攔不攔截都一樣綠。
+	_press(_build_buttons["relay"])
+	var r := _minimap_rect()
+	var pan_before := _pan
+	# ★ 哨兵字串，不是「節點數沒變」。節點數那一版**紅不起來**：那一格剛好
+	#   不能蓋，攔不攔截都是綠的（第一版的假斷言）。`_act()` 在 BUILD 模式下
+	#   **一定**會覆寫 `_message`（成功是空字串、失敗是原因），所以哨兵還在
+	#   ＝ 這次點擊根本沒走到建造層。
+	_message = "＿哨兵＿"
+	_click_at(r.position + Vector2(6.0, 6.0))
+	for _i in 2:
+		await get_tree().process_frame
+	var mini_moved: bool = _pan != pan_before
+	var mini_safe: bool = _message == "＿哨兵＿"
+
+	# 可讀性地板：大圖的縮放下限是 24px／格，不是 fit（RG-59）。
+	var floor_ok: bool = Shapes.GRID * _fit >= Shapes.MIN_READABLE_CELL - 0.001
+
+	# ★ 視野框佔小地圖的比例 ＝ 看得到的比例。**這一條用肉眼判不準**
+	#   （小地圖只有 232px 寬，視野框和外框差幾個像素），所以用數字。
+	#   兩軸都必須 < 1（真的有看不到的部分）也都必須 > 0.3（不然是算錯了，
+	#   而算錯的症狀正是「小地圖上那個框說謊」）。
+	var mp := Vector2(s.map["size"]) * Shapes.GRID
+	var frac := _view_world_rect().size / mp
+	var frac_ok: bool = (
+		frac.x > 0.3 and frac.x < 1.0 and frac.y > 0.3 and frac.y < 1.0
+	)
+
+	var ok: bool = (
+		big and found_offscreen and placed and back_offscreen and flagged and arrowed
+		and arrow_inside and jumped and mini_moved and mini_safe and floor_ok and frac_ok
+	)
+	print(
+		"[TL_CLICKTEST/endless] big=%s offscreen=%s placed=%s back_off=%s flagged=%s arrow=%s"
+		% [big, found_offscreen, placed, back_offscreen, flagged, arrowed]
+		+ " inside=%s jump=%s mini_pan=%s mini_safe=%s floor=%s（%.1f px/格）"
+		% [arrow_inside, jumped, mini_moved, mini_safe, floor_ok, Shapes.GRID * _fit]
+		+ " view=%.0f%%×%.0f%% → %s"
+		% [frac.x * 100.0, frac.y * 100.0, "PASS" if ok else "FAIL"]
+	)
+	if Hooks.shot_path == "":
+		get_tree().quit(0 if ok else 1)
 
 
 ## 放大之後地圖比框架大，多出來的部分要被切掉，否則會爬到頂欄與建造欄底下。
