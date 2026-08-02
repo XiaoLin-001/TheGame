@@ -222,7 +222,7 @@ TheGame/
 |---|---|
 | `TL_SHOT=<png絕對路徑>` | 渲染數秒後截圖存檔並自動退出（截圖驗證的地基） |
 | `TL_SHOT_DELAY=<秒>` | 截圖前等待秒數，讓動效跑完（預設 3） |
-| `TL_PANEL=<畫面名>` | 直接開啟指定畫面，跳過導航（`battle` / `sandbox` / `tech` / `roster` / `tycoon` / `settings`）。**B0.3 起 `battle` 會自動蓋出示範佈局**（`data/Maps.gd` 的 `SHOAL_DEMO`）——空地圖的截圖證明不了任何事。**B1.1 起 `sandbox` ＝ 沙盤「靜水」＋ `SANDBOX_DEMO`**：沒有敵人、只有三種資源同時在跑，是**合金流動珠唯一拍得到的地方**（淺灘的示範佈局沒有熔爐）。`flow_test` 的合金端到端測試用的是同一張圖同一份佈局 |
+| `TL_PANEL=<畫面名>` | 直接開啟指定畫面，跳過導航（`title` / `battle` / `sandbox` / `campaign` / `endless` / `tech` / `settings`；`roster` / `tycoon` 排 M2）。**B2.1a 起 `endless` ＝ 一局程序生成圖**，種子走 `Rng.next_seed()`，所以**同一個 `TL_SEED` 開出的永遠是同一張圖**。⚠ 生成器的幾何**用截圖判不出來**（說明浮層要放下第一個節點才收、格子 32px）——要看路徑／橋／礦點的擺法，寫一支 `--script` 把 `Maps.path_of()` 印成 ASCII（RG-103）。**B0.3 起 `battle` 會自動蓋出示範佈局**（`data/Maps.gd` 的 `SHOAL_DEMO`）——空地圖的截圖證明不了任何事。**B1.1 起 `sandbox` ＝ 沙盤「靜水」＋ `SANDBOX_DEMO`**：沒有敵人、只有三種資源同時在跑，是**合金流動珠唯一拍得到的地方**（淺灘的示範佈局沒有熔爐）。`flow_test` 的合金端到端測試用的是同一張圖同一份佈局 |
 | `TL_MUTE=1` | 全域靜音 |
 | `TL_SEED=<int>` | 覆寫隨機種子，用於重現特定局面 |
 | `TL_DEMO_TICKS=<ticks>` | **`0` ＝ 完全不要示範佈局**（拍玩家真正的第一眼，`50_QA_PLAN.md` §4.4）。其餘：示範佈局先推幾個 tick 再交給畫面（預設 **860** ＝ 60 秒準備期 ＋ 26 秒戰鬥，敵潮剛進射程）。**推的是 tick 不是階段**，所以 `TL_DEMO_TICKS=N` 與 `TL_SIM=N` 是同一個局面；給小一點就拍得到準備期（階段色調、提前召喚倍率要兩張圖才比得出來） |
@@ -277,6 +277,7 @@ TL_SHOT="C:/tmp/shot.png" TL_PANEL=battle TL_SEED=42 <godot> --path godot --rend
 | `tests/tech_test.gd` | 科技成本表、前置鏈、B2 增幅上限，★ **每一種效果都在跑過的 tick 上量到差異** |
 | `tests/audio_test.gd` | ★ 音源的設計條件：檔案齊（開火音清單由 `NodeDefs` 推導）、三首 BGM 同幀數、**循環接點的跳幅不得大於鄰近取樣步幅的 4 倍**、格式統一 PCM 16-bit 單聲道、不削頂不靜音 |
 | `tests/campaign_test.gd` | 五關參考解 headless 實跑必勝、可讀性地板、星等門檻 |
+| `tests/endless_test.gd` | 程序生成的五條不變量掃 300 個種子（含「至少 3 個礦點不必過橋」）、無限波次公式、個人最佳的存檔往返 |
 | **`TL_SIM` 本身** | 平衡調校就走它——跑標準關卡 N 個 tick，輸出經濟曲線 JSON 供人工核對。B0.1 建的 `tests/balance_probe.gd` 只是這件事的空殼（斷言 JSON 能往返），B1.1 刪掉；真的需要多場次批跑時再寫 |
 
 **GDScript 測試地雷**：`--script` 模式**不載入 autoload**（所以 `audio_test` 驗的是 wav 資源本身，播放那一半由 `TL_CLICKTEST` 的 `audio=` 那一組守）。因此 `tests/*.gd` 不得 `preload` 任何引用 autoload 的腳本。這反過來要求 `scripts/sim/` 的核心邏輯必須是**自足的純函式**——正好與 §2.4 的確定性要求一致。

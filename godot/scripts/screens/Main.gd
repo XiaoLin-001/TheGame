@@ -20,10 +20,13 @@ const CampaignData := preload("res://data/Campaign.gd")
 ## 只有三種資源在跑，用來驗合金那一列流動珠（B1.1）。
 ## `campaign` ＝ 戰役關卡選擇；配 `TL_LEVEL=1..5` 直接進那一關（B1.2）。
 ## `title` 不在表上——它的語意就是「什麼都不進」。
+## `endless` ＝ 局內畫面但換成程序生成圖（B2.1a）；種子走 `Rng.next_seed()`，
+## 所以 `TL_SEED` 底下每次拿到的是同一張圖。
 const PANEL_SCREENS := {
 	"battle": BattleScreen,
 	"sandbox": BattleScreen,
 	"campaign": CampaignScreen,
+	"endless": BattleScreen,
 	"tech": TechScreen,
 	"settings": SettingsScreen,
 }
@@ -36,10 +39,15 @@ var _menu_buttons: Array[Button] = []
 func _ready() -> void:
 	theme = UiKit.theme()
 	if PANEL_SCREENS.has(Hooks.panel):
-		_enter(
-			PANEL_SCREENS[Hooks.panel],
-			_campaign_level if Hooks.panel == "campaign" else Callable()
-		)
+		# 有些畫面進去之後還要再指定一件事。**這不是第二份畫面名單**——
+		# 沒對上的 panel 只是沒有後續動作，路由本身仍然只由 `PANEL_SCREENS` 決定。
+		var setup := Callable()
+		match Hooks.panel:
+			"campaign":
+				setup = _campaign_level
+			"endless":
+				setup = _endless
+		_enter(PANEL_SCREENS[Hooks.panel], setup)
 		return
 	_build()
 	# 不當掉、不假裝成功：說清楚它還沒被實作，留在標題畫面。
@@ -59,16 +67,51 @@ func _ready() -> void:
 ## 綁錯位置就是一顆按了沒反應的鈕，而 `_draw()` 一個字都不會說（B0.7.2 同一課）。
 ## 其餘三條 clicktest 全走 `TL_PANEL`，**完全繞過主選單**，所以這條路是零覆蓋。
 ##
-## 驗一圈完整往返：戰役（bind 帶 setup）→ ESC 回標題 → 科技樹（bind 不帶 setup）。
+## 驗一圈完整往返：戰役（bind 帶 setup）→ ESC 回標題 → 科技樹（bind 不帶 setup）
+## → ESC → **無盡**（bind 帶 setup，B2.1a）。
+##
+## ★ 無盡那一顆是這條自檢現在最該守的東西：它和戰役一樣走 `_enter.bind(Screen, setup)`
+## 的兩參數形式，而 `endless_seed` 沒被 setup 指到的話**畫面照樣開得起來**——
+## 只是開出淺灘測試圖。那種缺陷 `_draw()` 一個字都不會說，所以斷言直接看種子。
 func _click_selftest() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
-	var five: bool = _menu_buttons.size() == 5
+	var count: bool = _menu_buttons.size() == 6
 
 	await _press(_menu_buttons[0])                     # 戰役
 	var to_campaign: bool = _child_script() == CampaignScreen
 
-	# ESC ＝ 回標題（`_enter()` 把 `on_exit` 指成 `_back_to_title`）。
+	await _escape()
+	# 回到標題＝六顆鈕**重新長出來**（`_build()` 有跑），不是舊的那六顆還在。
+	var back_home: bool = _child_script() == null and _menu_buttons.size() == 6
+
+	await _press(_menu_buttons[2])                     # 科技樹
+	var to_tech: bool = _child_script() == TechScreen
+
+	await _escape()
+	await _press(_menu_buttons[1])                     # 無盡
+	# ★ **不是看 `endless_seed` 有沒有值**——那個欄位在畫面已經用錯地圖之後
+	#   才被設上一樣是 true（B2.1a 第一版斷言就是這樣綠的，截圖才抓到打開的
+	#   是淺灘）。要問的是「這一局真的用了生成圖嗎」，所以看局面裡的地圖。
+	var seeded := 0
+	var generated := false
+	for c: Node in get_children():
+		if c.get_script() == BattleScreen:
+			seeded = int(c.endless_seed)
+			generated = bool((c.s.map as Dictionary).get("endless", false))
+	var to_endless: bool = seeded != 0 and generated
+
+	var ok: bool = count and to_campaign and back_home and to_tech and to_endless
+	print("[TL_CLICKTEST/title] buttons=%s campaign=%s esc_home=%s tech=%s endless=%s(seed=%d gen=%s) → %s" % [
+		count, to_campaign, back_home, to_tech, to_endless, seeded, generated,
+		"PASS" if ok else "FAIL"
+	])
+	if Hooks.shot_path == "":
+		get_tree().quit(0 if ok else 1)
+
+
+## ESC ＝ 回標題（`_enter()` 把 `on_exit` 指成 `_back_to_title`）。
+func _escape() -> void:
 	for pressed: bool in [true, false]:
 		var ev := InputEventKey.new()
 		ev.keycode = KEY_ESCAPE
@@ -77,18 +120,6 @@ func _click_selftest() -> void:
 		Input.parse_input_event(ev)
 	for _i in 4:
 		await get_tree().process_frame
-	# 回到標題＝五顆鈕**重新長出來**（`_build()` 有跑），不是舊的那五顆還在。
-	var back_home: bool = _child_script() == null and _menu_buttons.size() == 5
-
-	await _press(_menu_buttons[1])                     # 科技樹
-	var to_tech: bool = _child_script() == TechScreen
-
-	var ok: bool = five and to_campaign and back_home and to_tech
-	print("[TL_CLICKTEST/title] buttons=%s campaign=%s esc_home=%s tech=%s → %s" % [
-		five, to_campaign, back_home, to_tech, "PASS" if ok else "FAIL"
-	])
-	if Hooks.shot_path == "":
-		get_tree().quit(0 if ok else 1)
 
 
 ## 合成一次真的滑鼠點擊（不是直接 emit `pressed`）——要驗的是事件路由得到，
@@ -122,14 +153,20 @@ func _child_script() -> Script:
 ## 順手修掉一個不一致：舊的四支只 `queue_free()` 不 `remove_child()`，
 ## 而 `_back_to_title()` 兩個都做。`queue_free()` 要到影格末才生效，中間那一幀
 ## 舊畫面還在畫也還在吃滑鼠——現在四條路都走 `UiKit.clear()` 的同一個順序。
+## ★ **`setup` 要在 `add_child()` 之前跑**（B2.1a 修）。`add_child()` 當下
+## `_ready()` 就跑完了，而 `Battle._ready()` 一進去就 `_setup_session()`——
+## 設在後面的欄位它根本沒看到。`Battle.gd` 的 `level`／`endless_seed` 註解
+## 從 B1.2 就寫著「由呼叫端在 `add_child()` 之前指派」，這裡一直是反的；
+## 沒爆是因為戰役走 `Campaign.gd` 自己指派、而 `_campaign_level` 用的是
+## `call_deferred`（延到 idle，那時已經在樹上了）。**無盡是第一個真的踩到的。**
 func _enter(script: Script, setup: Callable = Callable()) -> void:
 	UiKit.clear(self)
 	var screen: Control = script.new()
 	# 測試圖也要有回頭路：局內選單的「退出」就是這個 `on_exit`（B1.4.1）。
 	screen.on_exit = _back_to_title
-	add_child(screen)
 	if setup.is_valid():
 		setup.call(screen)
+	add_child(screen)
 
 
 ## `TL_LEVEL=N` 直接進第 N 關——**有些畫面只有進去才到得了**
@@ -137,6 +174,11 @@ func _enter(script: Script, setup: Callable = Callable()) -> void:
 func _campaign_level(screen: Control) -> void:
 	if Hooks.level >= 1 and Hooks.level <= CampaignData.count():
 		screen._enter.call_deferred(Hooks.level - 1)
+
+
+## 無盡（B2.1a）：每按一次換一張圖，`TL_SEED` 底下則恆定（`Rng.next_seed()`）。
+func _endless(screen: Control) -> void:
+	screen.endless_seed = Rng.next_seed()
 
 
 func _back_to_title() -> void:
@@ -168,6 +210,7 @@ func _build() -> void:
 	_menu_buttons.clear()
 	for entry: Array in [
 		["戰役　%s" % _campaign_progress(), _enter.bind(CampaignScreen, _campaign_level)],
+		["無盡　%s" % _endless_best(), _enter.bind(BattleScreen, _endless)],
 		["科技樹　%s 研究數據" % UiKit.commas(int(_research_data())), _enter.bind(TechScreen)],
 		["設定", _enter.bind(SettingsScreen)],
 		["測試圖　淺灘", _enter.bind(BattleScreen)],
@@ -203,6 +246,13 @@ func _campaign_progress() -> String:
 		got += int(best.get(id, 0))
 	var total := CampaignData.count() * 3
 	return "%d／%d ★" % [got, total]
+
+
+## 無盡個人最佳。**沒有紀錄時就說沒有**，不顯示「0 波」——
+## 0 波看起來像一個很爛的成績，而事實是還沒玩過（同 `_campaign_progress` 的精神）。
+func _endless_best() -> String:
+	var best := int((GameState.data.get("endless", {}) as Dictionary).get("best_wave", 0))
+	return "尚無紀錄" if best <= 0 else "最高 %d 波" % best
 
 
 func _research_data() -> float:

@@ -15,6 +15,7 @@ const Enemies := preload("res://data/Enemies.gd")
 const Tide := preload("res://scripts/sim/Tide.gd")
 const Combat := preload("res://scripts/sim/Combat.gd")
 const Score := preload("res://scripts/sim/Score.gd")
+const MapGen := preload("res://scripts/sim/MapGen.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
@@ -69,6 +70,11 @@ var s: RefCounted = null
 ## 那條路徑沒有星等、沒有解鎖限制、也不寫存檔。
 ## 由呼叫端在 `add_child()` **之前**指派——`_ready()` 一進來就要用它。
 var level: Dictionary = {}
+## ★ 無盡模式的地圖種子（B2.1a）。**0 ＝ 不是無盡局**。
+## 刻意不塞進 `level`：那個字典的每個讀取端都假設有 `star_throughput`／`reward`，
+## 而無盡沒有星等也沒有關卡獎勵——共用會換來一堆 `if level.has(...)`。
+## 由呼叫端在 `add_child()` 之前指派，同 `level`。
+var endless_seed: int = 0
 ## 回關卡選擇。測試圖沒有上一層，所以是 Callable 而不是寫死的場景切換。
 var on_exit: Callable = Callable()
 
@@ -175,6 +181,10 @@ func _setup_session() -> void:
 	var tech: Array = (GameState.data.get("tech", {}) as Dictionary).get("unlocked", [])
 	if not level.is_empty():
 		s.setup(level["map"], level["unlocked"], tech)
+	elif endless_seed != 0:
+		# 無盡開局就是全建造欄（§7.10）——它沒有解鎖階梯，而**空 `unlocked`
+		# 就是「全部」**（`SessionState.setup()`），不必另外列一份會過期的清單。
+		s.setup(MapGen.generate(endless_seed), [], tech)
 	elif Hooks.stress:
 		# ★ 壓力情境（B1.7、RG-8）：只為了量渲染。模擬在 `_process` 裡凍結——
 		#   這一份佈局的單 tick 要 30 秒（`perf_test.gd` 的說明），不凍結的話
@@ -2306,6 +2316,22 @@ func _refresh_over() -> void:
 	col.add_child(UiKit.label(
 		"通關" if won else "核心已毀", 32, Palette.OK_GREEN if won else Palette.TIDE_MAGENTA
 	))
+	# ★ 無盡的個人最佳（B2.1a、§7.10）。放在星等的位置——無盡沒有星，
+	#   「破了幾項紀錄」就是它的成就感來源。兩欄各自比對（`apply_endless`）。
+	if endless_seed != 0:
+		var e: Dictionary = GameState.data.get("endless", {})
+		var prev_wave := int(e.get("best_wave", 0))
+		var prev_output := float(e.get("best_output", 0.0))
+		var fresh := SaveService.apply_endless(GameState.data, waves, score)
+		SaveService.save_from(GameState.data)
+		for line: Array in [
+			["最高波次　%d 波" % waves, bool(fresh["wave"]), "前次 %d 波" % prev_wave],
+			["最佳產能　%.1f" % score, bool(fresh["output"]), "前次 %.1f" % prev_output],
+		]:
+			col.add_child(UiKit.label(
+				"%s　%s" % [line[0], "★ 新紀錄" if line[1] else line[2]],
+				15, Palette.ENERGY_AMBER if line[1] else Palette.TEXT_SECONDARY, false
+			))
 	# ★ 星等與獎勵只在戰役關卡有（測試圖與沙盤沒有進度可寫）。
 	if not level.is_empty():
 		var stars := Score.stars(

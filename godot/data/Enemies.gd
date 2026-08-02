@@ -154,7 +154,46 @@ static func schedule(waves: Array, index: int) -> Array:
 			t += gap
 	return out
 
-# ★ 無盡模式的縮放公式（§7.6 的 `1.11^波次` 與 `4 + ⌊波次/3⌋`）**刻意不在這裡**：
-#   它從 B0.4 就寫著「B2.1 才會用到」，而唯一的呼叫端一直是測試自己。
-#   數值權威在 `10_GDD.md` §7.6，B2.1 真的做無盡時再從那裡長出來——
-#   一個只有測試在用的公式，測的是它自己還記不記得自己（B1.9 刪除）。
+# ── 無盡模式（B2.1a，`10_GDD.md` §7.10）─────────────────────────────────
+#
+# B1.9 把這幾個公式刪掉過一次，理由是「唯一的呼叫端一直是測試自己」。
+# 現在它們有真的呼叫端了，所以照 §7.6 的原文長回來——**只有這三條曲線**。
+# 出場間隔刻意是常數：壓力已經由血量與隻數表達完了，再給間隔第三條曲線，
+# 玩家就分不出「這波難是因為血厚還是因為密」（§7.10）。
+
+## 每波血量倍率，乘在敵人自己的 `hp` 上。`w` 自 1 起 → 第 1 波是原始強度。
+const ENDLESS_GROWTH := 1.11
+## 出場間隔（秒），固定值。
+const ENDLESS_GAP := 1.0
+## 波次種子的錯開量。質數，讓相鄰波拿到不相干的序列。
+const ENDLESS_STRIDE := 7919
+
+
+static func endless_hp_mult(w: int) -> float:
+	return pow(ENDLESS_GROWTH, float(maxi(1, w) - 1))
+
+
+static func endless_count(w: int) -> int:
+	return 4 + int(floor(float(maxi(1, w)) / 3.0))
+
+
+## 第 `w` 波的敵種池。與戰役同一條登場順序（§7.9）：護甲先教、能量抗性後教。
+static func endless_pool(w: int) -> Array[String]:
+	if w <= 2:
+		return ["drifter"]
+	if w <= 5:
+		return ["drifter", "carapace"]
+	return ["drifter", "carapace", "ember"]
+
+
+## 第 `w` 波的完整出場表（`w` 自 1 起）。**同 `(s, w)` 必得同一張表**。
+static func endless_schedule(s: int, w: int) -> Array:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = s + w * ENDLESS_STRIDE
+	var pool := endless_pool(w)
+	var out: Array = []
+	var t := 0.0
+	for i in endless_count(w):
+		out.append({"type": pool[rng.randi_range(0, pool.size() - 1)], "at": t})
+		t += ENDLESS_GAP
+	return out

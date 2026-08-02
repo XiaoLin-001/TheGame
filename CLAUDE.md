@@ -87,7 +87,7 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（11 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign）
+# 自動化測試（12 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -116,6 +116,13 @@ TL_SHOT="C:/tmp/lv.png" TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> 
 # 所以 clicktest 會自己先塞一筆數據進去再點——不寫檔，玩家進度碰不到。
 TL_SHOT="C:/tmp/tech.png" TL_PANEL=tech <godot> --path godot --rendering-driver opengl3
 
+# ★ 無盡（B2.1a）：TL_PANEL=endless 直接進一局程序生成圖。
+# 種子走 Rng.next_seed()，所以**同一個 TL_SEED 開出的永遠是同一張圖**。
+# ⚠ 生成器的幾何用截圖判不出來（說明浮層要放下第一個節點才收、格子只有 32px）。
+#   要看路徑／橋／礦點的擺法，寫一支 --script 把 Maps.path_of() 印成 ASCII——
+#   B2.1a 的兩個真缺陷（轉角廢橋、路徑貼邊）都是這樣才看到的。
+TL_SHOT="C:/tmp/endless.png" TL_PANEL=endless TL_SEED=42 <godot> --path godot --rendering-driver opengl3
+
 # ★ 拍特效近照（B1.6）：TL_FOCUS="x,y,zoom" 把鏡頭對到某一格並放大。
 # 特效是 0.2 秒、十幾個像素的東西——在 fit 倍率的全圖截圖上判不出好壞，
 # 沒有這個鉤子就會變成「宣稱做好了但沒真的看過」。
@@ -130,6 +137,10 @@ TL_CLICKTEST=1 TL_PANEL=campaign TL_MUTE=1 <godot> --path godot --rendering-driv
 TL_CLICKTEST=1 TL_PANEL=tech TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 設定（音量真的接到匯流排、reduce_motion 當場生效、視窗真的變大再變回來）
 TL_CLICKTEST=1 TL_PANEL=settings TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
+# 主選單（六顆鈕、ESC 往返、無盡那一顆真的開出生成圖）
+# ★ 斷言看的是**局面裡的地圖帶不帶 endless 旗標**，不是 `endless_seed` 有沒有值
+#   ——後者在畫面已經用錯地圖之後才被設上一樣是 true（B2.1a 的假綠燈）
+TL_CLICKTEST=1 TL_PANEL=title TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 
 # 拍「只有互動才到得了」的狀態：驅動完 UI 之後不退出，交給 TL_SHOT
 TL_CLICKTEST=1 TL_SHOT="C:/tmp/panels.png" TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
@@ -186,7 +197,7 @@ TheGame/
     ├── scripts/ui/            UiKit
     ├── scripts/meta/          RosterData / TycoonSim（尚未建立；科技樹是 data/Tech.gd）
     ├── data/                  節點、角色、敵人、地圖、戰役、**科技**資料表
-    ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign
+    ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless
     └── assets/audio/          bgm/ 3 首、sfx/ 14 支（`assetgen/gen_audio.py` 生成）
 ```
 

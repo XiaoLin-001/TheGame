@@ -40,6 +40,10 @@ const DEFAULTS := {
 	# 而同一個事實存兩份遲早會漂移——漂掉的那一天，玩家會看到「這一關通關了
 	# 但下一關還鎖著」，而兩個欄位各自都「對」。
 	"campaign": {"stars": {}},
+	# ★ B2.1a 落地的鍵。**沒有 bump `SAVE_VERSION`**——上面那段註解說的就是
+	# 這個情況：`_fill_defaults()` 在讀檔時補缺鍵，所以舊存檔讀進來自動長出
+	# 這一格 0/0。遷移分支是給「結構改動」用的，加一個新鍵不是結構改動。
+	"endless": {"best_wave": 0, "best_output": 0.0},
 	# `resolution` 是 `RESOLUTIONS` 的索引，不是像素——存像素的話，
 	# 日後刪掉一個選項就會出現一個選不到、也顯示不出來的設定值。
 	"settings": {
@@ -117,6 +121,23 @@ static func apply_result(d: Dictionary, level_id: String, stars: int, reward: in
 	var tech: Dictionary = d.get("tech", {})
 	tech["data"] = float(tech.get("data", 0)) + gain
 	return gain
+
+
+## ★ 無盡的個人最佳（B2.1a、`10_GDD.md` §7.10）。**兩欄各自取最大值**。
+##
+## 刻意不是「波次高的那一局整組蓋過去」：波次與產能積分量的是兩件事
+## （撐得久 vs 產線好），把它們綁成一組會讓一局「波次 +1、積分砍半」
+## 洗掉玩家真正的最佳產線紀錄。回傳哪幾欄破了紀錄，讓局末面板講得出來。
+static func apply_endless(d: Dictionary, wave: int, output: float) -> Dictionary:
+	var e: Dictionary = d.get("endless", {})
+	var new_wave := wave > int(e.get("best_wave", 0))
+	var new_output := output > float(e.get("best_output", 0.0))
+	if new_wave:
+		e["best_wave"] = wave
+	if new_output:
+		e["best_output"] = output
+	d["endless"] = e
+	return {"wave": new_wave, "output": new_output}
 
 
 ## 遞迴補預設值：defaults 有而 target 沒有的鍵才補；兩邊都是 Dictionary 就往下走。

@@ -84,6 +84,9 @@ var phase_time: float = 0.0
 ## 準備期快進倍率（`10_GDD.md` §7.1 `FAST_FORWARD_RATE = 4`）。
 ## **戰鬥期恆為 1**——可跳過空等，不可加速戰鬥（B5）。
 var speed_mult: int = 1
+## 本波敵人的血量倍率（無盡模式，`10_GDD.md` §7.10）。戰役恆為 1.0。
+## 在 `start_wave` 鎖給那一波——出場中途改倍率會讓同一波的敵人血量不一致。
+var hp_mult: float = 1.0
 ## `{id, type, progress, hp}`。`progress` 單位是路徑格。
 var enemies: Array[Dictionary] = []
 ## 本波尚未出場的：`[{type, at}]`，`at` 是距波次開始的秒數。
@@ -177,7 +180,7 @@ func add_enemy(type: String) -> int:
 		"id": id,
 		"type": type,
 		"progress": 0.0,
-		"hp": float(Enemies.of(type).get("hp", 1.0)),
+		"hp": float(Enemies.of(type).get("hp", 1.0)) * hp_mult,
 	})
 	return id
 

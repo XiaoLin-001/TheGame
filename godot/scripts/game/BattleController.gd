@@ -91,7 +91,10 @@ static func _end_of_wave(s: RefCounted) -> void:
 		return
 	# 波次表跑完＝這一關通關。沒有這個分支的話 `start_wave` 會一直排出空波次，
 	# 局面永遠停在「準備期倒數→瞬間結束」的空轉，局末結算永遠等不到。
-	if s.wave_index >= Maps.waves_of(s.map).size():
+	#
+	# ★ 無盡沒有波次表也沒有「通關」（§7.10）——它只會輸。這一句就是分岔點：
+	# 波次由公式長出來，所以 `waves_of()` 恆為空，不擋掉就每一波都判通關。
+	if not bool(s.map.get("endless", false)) and s.wave_index >= Maps.waves_of(s.map).size():
 		# 但駐足在核心的殘敵還在啃就還沒結束——不是它們死，就是核心死。
 		if s.enemies.is_empty():
 			s.phase = "won"
@@ -110,7 +113,13 @@ static func start_wave(s: RefCounted) -> void:
 		return
 	s.wave_bonus = Score.summon_bonus(maxf(0.0, s.prep_time() - s.phase_time), s.prep_time())
 	s.bonus_data += Score.summon_data_bonus(s.wave_bonus)
-	s.spawn_queue = Enemies.schedule(Maps.waves_of(s.map), s.wave_index)
+	if bool(s.map.get("endless", false)):
+		# `wave_index` 是 0-based，§7.10 的公式是 1-based。
+		var w: int = int(s.wave_index) + 1
+		s.spawn_queue = Enemies.endless_schedule(int(s.map.get("seed", 0)), w)
+		s.hp_mult = Enemies.endless_hp_mult(w)
+	else:
+		s.spawn_queue = Enemies.schedule(Maps.waves_of(s.map), s.wave_index)
 	s.wave_index += 1
 	s.phase = "wave"
 	s.phase_time = 0.0
