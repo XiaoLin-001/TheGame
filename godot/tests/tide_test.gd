@@ -215,8 +215,10 @@ func _wave_schedule(t: T) -> void:
 	t.eq(Enemies.schedule(w, 99).size(), 0, "越界的波次索引回空表，不當掉")
 	t.eq(Enemies.schedule(w, 4).size(), 17, "第 5 波：8+5+4 = 17 隻")
 
-	t.near(Enemies.endless_hp_scale(0), 1.0, "無盡：第 0 波血量係數 1.0")
-	t.eq(Enemies.endless_count(9), 7, "無盡：count(9) = 4 + 3")
+	# 無盡模式的縮放公式在 B1.9 從 `data/Enemies.gd` 刪掉了——它從 B0.4 起
+	# 唯一的呼叫端就是這兩行斷言，也就是「測它自己還記不記得自己」。
+	# 數值權威是 `10_GDD.md` §7.6，B2.1 真的做無盡時再連同真的呼叫端一起長出來。
+	t.pending("無盡波次縮放（§7.6）", "B2.1")
 
 
 # ── 時間流（`10_GDD.md` B5、§7.1）────────────────────────────────────

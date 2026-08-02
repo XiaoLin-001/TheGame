@@ -154,11 +154,7 @@ static func schedule(waves: Array, index: int) -> Array:
 			t += gap
 	return out
 
-
-## 無盡模式的縮放（§7.6）。B2.1 才會用到，但公式寫在資料層比散在別處好。
-static func endless_hp_scale(wave: int) -> float:
-	return pow(1.11, float(wave))
-
-
-static func endless_count(wave: int) -> int:
-	return 4 + int(floor(float(wave) / 3.0))
+# ★ 無盡模式的縮放公式（§7.6 的 `1.11^波次` 與 `4 + ⌊波次/3⌋`）**刻意不在這裡**：
+#   它從 B0.4 就寫著「B2.1 才會用到」，而唯一的呼叫端一直是測試自己。
+#   數值權威在 `10_GDD.md` §7.6，B2.1 真的做無盡時再從那裡長出來——
+#   一個只有測試在用的公式，測的是它自己還記不記得自己（B1.9 刪除）。

@@ -23,9 +23,10 @@ const BASE := 0.24      ## 面板開闔、數值補間、狀態切換
 const SLOW := 0.50      ## 畫面轉場、局末結算逐項揭示
 const AMBIENT := 2.0    ## 敵潮脈動、背景呼吸（循環）
 
-## 模擬的固定時間步（`game/BattleController.gd` 的 `TICK`）。
-## 這裡自己寫一份而不 preload 它：`render/` 不該為了一個常數去依賴 `game/`。
-const TICK := 0.1
+const Clock := preload("res://scripts/sim/Clock.gd")
+## 固定時間步。**值的唯一來源是 `sim/Clock.gd`**（B1.9）——這裡只是別名，
+## 讓呼叫端維持讀得懂的 `Motion.TICK`。
+const TICK := Clock.TICK
 
 ## ★ 「減少動態效果」（§4.4）。**全域、由畫面層設定一次。**
 ## 為真時：脈動回靜止值、碎片與閃光不生成、時長階回 0。
@@ -38,23 +39,20 @@ static func ticks(seconds: float) -> int:
 
 
 # ── 緩動（§4.2）────────────────────────────────────────────────────────
+#
+# §4.2 訂了三條曲線，但**只有一條需要是函式**：
+#   `ease-out-cubic`（玩家操作的回饋）── 就是下面這支。
+#   `linear`（系統自動的變化）── **就是「不套緩動」本身**。給它一支
+#     `return clampf(t, 0, 1)` 的函式，呼叫端讀起來反而像套了什麼東西。
+#   `ease-in-out-sine` 循環（敵潮的動態）── 已經實作在 `pulse()` / `pulse01()`
+#     裡面（`sin(TAU × …)` 就是那條曲線）。另開一支獨立入口是第二個真相來源。
+#
+# 兩支都曾經存在、零呼叫端，B1.9 刪除。
 
 ## 玩家操作的回饋：快起慢收＝有回應感。
 static func ease_out_cubic(t: float) -> float:
 	var x := 1.0 - clampf(t, 0.0, 1.0)
 	return 1.0 - x * x * x
-
-
-## 敵潮的動態：有機的呼吸。
-static func ease_in_out_sine(t: float) -> float:
-	return -(cos(PI * clampf(t, 0.0, 1.0)) - 1.0) / 2.0
-
-
-## 系統自動的變化（資源數字、流量粗細）＝機械的誠實，不誇張。
-## 留一支同名函式是為了**呼叫端讀得出「這裡刻意不緩動」**——
-## 沒有它的話那些地方看起來只是忘了套緩動。
-static func linear(t: float) -> float:
-	return clampf(t, 0.0, 1.0)
 
 
 # ── 週期脈動 ──────────────────────────────────────────────────────────

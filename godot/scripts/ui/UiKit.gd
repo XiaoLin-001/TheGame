@@ -89,6 +89,60 @@ static func panel(opacity: float = 0.96) -> PanelContainer:
 	return box
 
 
+## ★ 清空一個節點的子節點（B1.9）。
+##
+## **`remove_child()` 要在 `queue_free()` 之前**：後者要到影格末才生效，中間那一幀
+## 舊畫面還在畫、也還在吃滑鼠——關卡選擇會疊在戰場上（`Campaign._clear()` 的原註）。
+## 這個順序在四個 screens 各寫過一份，而**只要有一份寫反就是一個看得到的閃爍**。
+static func clear(node: Node) -> void:
+	for c: Node in node.get_children():
+		node.remove_child(c)
+		c.queue_free()
+
+
+## ★ ESC ＝ 返回上一層（B1.9）。回傳「我消費掉這個事件了嗎」。
+##
+## 全遊戲每個有「返回」的畫面接的都是同一條（B1.4.1），而它在
+## Settings／Tech／Campaign 三個檔案裡是逐字相同的六行。三份的問題不是行數，
+## 是**其中一份忘了 `set_input_as_handled()` 或忘了播 `ui_back` 也不會有人發現**。
+##
+## 局內畫面（`Battle`）**不走這裡**：它的 ESC 是開選單不是返回，而且要先讓路給
+## 疊在上面的設定浮層——語意不同的東西不該共用一個入口。
+static func esc_returns(node: Node, event: InputEvent, on_exit: Callable) -> bool:
+	if not event.is_action_pressed("ui_cancel") or not on_exit.is_valid():
+		return false
+	node.get_viewport().set_input_as_handled()
+	AudioBus.play("ui_back")   # ESC ＝ 取消手勢，全遊戲同一個音（B1.5）
+	on_exit.call()
+	return true
+
+
+## ★ 自檢：「ESC 到得了這個畫面的處理器嗎」（B1.9）。
+##
+## **不能真的呼叫 `on_exit`**——那會把畫面拆掉，後面的 print 就落在一個正在被
+## 釋放的節點上。所以暫時把它換成一個只翻旗標的 Callable：要驗的是**事件到不到
+## 得了那支處理器**，不是返回本身。驗完換回來。
+##
+## 走 `Input.parse_input_event()` 的完整輸入管線，才驗得到「`ui_cancel` 這個
+## action 真的對得上 ESC 鍵」——直接呼叫處理器兩件都驗不到。
+##
+## Settings 與 Tech 各寫過一份逐字相同的 14 行；`screen` 必須有 `on_exit` 欄位。
+static func esc_reaches(screen: Node) -> bool:
+	var real_exit: Callable = screen.on_exit
+	var escaped := [false]
+	screen.on_exit = func() -> void: escaped[0] = true
+	for pressed: bool in [true, false]:
+		var ev := InputEventKey.new()
+		ev.keycode = KEY_ESCAPE
+		ev.physical_keycode = KEY_ESCAPE
+		ev.pressed = pressed
+		Input.parse_input_event(ev)
+	for _i in 3:
+		await screen.get_tree().process_frame
+	screen.on_exit = real_exit
+	return escaped[0]
+
+
 ## 千分位。資源數字到處都要用，統一在這裡免得各處各寫一份。
 static func commas(n: int) -> String:
 	var s := str(absi(n))

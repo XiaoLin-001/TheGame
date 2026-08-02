@@ -24,24 +24,24 @@ const TMP_PATH := "user://save.json.tmp"
 const RESOLUTIONS := [Vector2i(1280, 720), Vector2i(1600, 900), Vector2i(1920, 1080)]
 
 ## 完整 schema 骨架。**讀取一律走 normalize()**，任何缺失欄位都由此補上安全預設。
+## ★ **只列真的有讀取端的欄位**（B1.9）。
+##
+## 這裡曾經有八個沒有任何人讀的頂層鍵（`company_level` `roster` `endless`
+## `daily` `tycoon` `levels` `entitlements` `blueprints`），讓 schema 看起來
+## 比實作大四倍。**提前宣告買不到任何相容性**：`_fill_defaults()` 本來就在
+## 讀檔時補缺鍵，所以功能落地那一批直接加上那一個鍵，舊存檔照樣讀得進來。
+##
+## 反過來，提前宣告有真的代價：每一個空殼鍵都會被寫進玩家的存檔檔案，
+## 而看到 `"tycoon": {...}` 的人會以為那個系統已經在跑了。
 const DEFAULTS := {
 	"sv": SAVE_VERSION,
-	"company_level": 1,
 	"tech": {"unlocked": [], "data": 0},
-	"roster": {"owned": [], "tokens": 0},
 	# ★ sv2 起**沒有 `cleared`**：它和 `stars` 講的是同一件事（`stars[id] >= 1`），
 	# 而同一個事實存兩份遲早會漂移——漂掉的那一天，玩家會看到「這一關通關了
 	# 但下一關還鎖著」，而兩個欄位各自都「對」。
 	"campaign": {"stars": {}},
-	"endless": {"best_wave": 0, "best_score": 0},
-	# 每日兩榜：{"<日期>": {"unified": {...}, "free": {...}}}（§3）
-	"daily": {},
-	"tycoon": {"level": 1, "credit": 0, "components": 0, "lines": [], "last_seen_unix": 0},
-	"levels": {"towers": {}, "nodes": {}},
-	"entitlements": {"purchases": [], "no_ads": false, "pass_season": 0, "pass_owned": false},
-	"blueprints": [],
-	# `resolution` 是 `screens/Settings.gd` 的 `RESOLUTIONS` 索引，不是像素——
-	# 存像素的話，日後刪掉一個選項就會出現一個選不到、也顯示不出來的設定值。
+	# `resolution` 是 `RESOLUTIONS` 的索引，不是像素——存像素的話，
+	# 日後刪掉一個選項就會出現一個選不到、也顯示不出來的設定值。
 	"settings": {
 		"master": 0.8, "bgm": 0.6, "sfx": 0.8,
 		"reduce_motion": false, "fullscreen": false, "resolution": 0,

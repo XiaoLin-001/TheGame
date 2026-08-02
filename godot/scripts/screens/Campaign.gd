@@ -27,18 +27,17 @@ func _ready() -> void:
 	theme = UiKit.theme()
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_build()
-	if Hooks.click_test and Hooks.level <= 0:
+	# ★ `and Hooks.panel == "campaign"`（B1.9）：本畫面也會被**標題畫面的自檢**
+	#   掛起來。少了這一條，那支自檢一按「戰役」就會跑到這裡的 `get_tree().quit()`，
+	#   把別人的自檢從中間打斷（`Settings` 早就踩過同一個坑）。
+	if Hooks.click_test and Hooks.panel == "campaign" and Hooks.level <= 0:
 		_click_selftest.call_deferred()
 
 
 ## ESC ＝ 返回上一層（B1.4.1）。已經進了關卡（`Battle` 掛在底下）時不處理——
 ## 那時 ESC 是局內選單的，`Battle` 自己會消費掉。
 func _unhandled_key_input(event: InputEvent) -> void:
-	if not event.is_action_pressed("ui_cancel") or not on_exit.is_valid():
-		return
-	get_viewport().set_input_as_handled()
-	AudioBus.play("ui_back")   # ESC ＝ 取消手勢，全遊戲同一個音（B1.5）
-	on_exit.call()
+	UiKit.esc_returns(self, event, on_exit)
 
 
 ## ★ 輸入層自檢（`TL_CLICKTEST=1 TL_PANEL=campaign`）。
@@ -99,14 +98,8 @@ func _click_selftest() -> void:
 
 ## `queue_free()` 要到影格末才生效，中間那一幀舊畫面還在畫——
 ## 先 `remove_child()` 讓它當場離開樹，關卡選擇才不會疊在戰場上。
-func _clear() -> void:
-	for c: Node in get_children():
-		remove_child(c)
-		c.queue_free()
-
-
 func _build() -> void:
-	_clear()
+	UiKit.clear(self)
 	# 從局內回來時要換回選單曲（B1.5）。局內／選單是兩首，不是兩層。
 	AudioBus.music("menu")
 
@@ -221,14 +214,14 @@ func _new_unlocks(index: int) -> String:
 
 
 func _enter_tech() -> void:
-	_clear()
+	UiKit.clear(self)
 	var screen := TechScreen.new()
 	screen.on_exit = _build
 	add_child(screen)
 
 
 func _enter(index: int) -> void:
-	_clear()
+	UiKit.clear(self)
 	var battle := BattleScreen.new()
 	# ★ 指派要在 `add_child()` **之前**——`_ready()` 一進來就會讀 `level`。
 	battle.level = CampaignData.at(index)

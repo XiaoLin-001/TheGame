@@ -18,7 +18,10 @@ const Enemies := preload("res://data/Enemies.gd")
 const Maps := preload("res://data/Maps.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 
-const TICK := 0.1
+const Clock := preload("res://scripts/sim/Clock.gd")
+## 固定時間步。**值的唯一來源是 `sim/Clock.gd`**（B1.9）——這裡只是別名，
+## 讓呼叫端維持讀得懂的 `BattleController.TICK`。
+const TICK := Clock.TICK
 ## 低於這個滿足率就掛 `缺料` 徽章。與導管的飢餓變色同一個門檻，
 ## 兩個編碼講的是同一件事，用不同門檻只會讓玩家以為它們無關。
 const STARVED_BELOW := 0.95

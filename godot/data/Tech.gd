@@ -189,13 +189,6 @@ static func combat_gain(unlocked: Array) -> float:
 	return (float(m["damage_mult"]) - 1.0) + (1.0 - float(m["engage_mult"]))
 
 
-static func all_ids() -> Array[String]:
-	var out: Array[String] = []
-	for n: Dictionary in NODES:
-		out.append(String(n["id"]))
-	return out
-
-
 ## 一支路線的節點（畫面依這個排欄）。
 static func of_branch(branch: String) -> Array:
 	var out: Array = []

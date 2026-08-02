@@ -11,7 +11,10 @@ extends RefCounted
 ## ② **只有核心讓它們駐足**：走到路徑終點就停下來打核心，直到核心歸零。
 ## ③ **橋（含引道）上的導管免疫**：見 `immune_indices()`。
 
-const TICK := 0.1
+const Clock := preload("res://scripts/sim/Clock.gd")
+## 固定時間步。**值的唯一來源是 `sim/Clock.gd`**（B1.9）——這裡只是別名，
+## 讓呼叫端維持讀得懂的 `Tide.TICK`。
+const TICK := Clock.TICK
 ## walk-by 的破壞半徑：相鄰 1 格（Chebyshev 距離）。
 const BLAST := 1
 ## 橋的免疫沿導管向兩側各延伸幾格（＝引道）。見 `immune_indices()`。

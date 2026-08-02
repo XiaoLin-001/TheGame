@@ -15,7 +15,10 @@ extends RefCounted
 const Tide := preload("res://scripts/sim/Tide.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 
-const TICK := 0.1
+const Clock := preload("res://scripts/sim/Clock.gd")
+## 固定時間步。**值的唯一來源是 `sim/Clock.gd`**（B1.9）——這裡只是別名，
+## 讓呼叫端維持讀得懂的 `Combat.TICK`。
+const TICK := Clock.TICK
 ## 全域擊殺回收：任何塔擊殺 → 敵人價值的 25% 變礦砂（§3.3）。
 const SALVAGE := 0.25
 ## 礦砂↔能量匯率（§3.3）。它不是新數字——就是發電機的 4 礦砂→20 能量。

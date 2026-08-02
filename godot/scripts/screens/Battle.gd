@@ -375,7 +375,8 @@ func _click_selftest() -> void:
 	#   先放大（fit 倍率下平移恆被夾成 0，量不到東西）。
 	_on_zoom(ZOOM_STEP * ZOOM_STEP)
 	var pan_before := _pan
-	_middle_drag(Vector2(600, 400), Vector2(540, 360))
+	# 中鍵拖曳＝「移動」模式鈕拿掉之後唯一的平移路徑（B1.3.1），所以它得有自檢。
+	_drag_px(Vector2(600, 400), Vector2(540, 360), MOUSE_BUTTON_MIDDLE)
 	for _i in 3:
 		await get_tree().process_frame
 	var panned: bool = _pan != pan_before
@@ -703,12 +704,6 @@ func _click(cell: Vector2i) -> void:
 ## 合成一次拖曳：在 `a` 按下、移動到 `b`、在 `b` 放開。
 func _drag(a: Vector2i, b: Vector2i) -> void:
 	_drag_px(_to_screen(_center(a)), _to_screen(_center(b)), MOUSE_BUTTON_LEFT)
-
-
-## ★ 中鍵平移（B1.3.1）。**「移動」模式鈕拿掉之後這是唯一的平移路徑**，
-## 所以它得像其他輸入路徑一樣有一條真的走過去的自檢。
-func _middle_drag(a: Vector2, b: Vector2) -> void:
-	_drag_px(a, b, MOUSE_BUTTON_MIDDLE)
 
 
 ## 像素座標的拖曳。按下 → 移動（鍵壓著）→ 放開。

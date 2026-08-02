@@ -286,7 +286,6 @@ static func solve(nodes: Array, edges: Array, priorities: Dictionary) -> Diction
 		"supply_total": base_supply + silo_discharge,
 		"demand_total": base_demand,
 		"silo_demand_total": silo_demand,
-		"silo_supply_total": silo_discharge,
 	}
 
 

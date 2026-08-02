@@ -10,10 +10,6 @@ extends Control
 
 const Motion := preload("res://scripts/render/Motion.gd")
 
-## 可選的視窗尺寸。清單本體在 `SaveService`——存檔存的是它的索引，
-## 兩者放同一個檔案才不會各改各的。
-const RESOLUTIONS := SaveService.RESOLUTIONS
-
 ## `settings` 的三個音量鍵 →（顯示名, 匯流排名）。
 const VOLUMES := [
 	["master", "主音量", "Master"],
@@ -44,11 +40,7 @@ func _ready() -> void:
 
 ## ESC ＝ 返回上一層。全遊戲每個有「返回」的畫面都接同一條（B1.4.1）。
 func _unhandled_key_input(event: InputEvent) -> void:
-	if not event.is_action_pressed("ui_cancel") or not on_exit.is_valid():
-		return
-	get_viewport().set_input_as_handled()
-	AudioBus.play("ui_back")   # ESC ＝ 取消手勢，全遊戲同一個音（B1.5）
-	on_exit.call()
+	UiKit.esc_returns(self, event, on_exit)
 
 
 func _settings() -> Dictionary:
@@ -96,10 +88,10 @@ func _click_selftest() -> void:
 	var before := DisplayServer.window_get_size()
 	_press(_res_buttons[1])
 	await get_tree().process_frame
-	var resized: bool = DisplayServer.window_get_size() == RESOLUTIONS[1]
+	var resized: bool = DisplayServer.window_get_size() == SaveService.RESOLUTIONS[1]
 	_press(_res_buttons[0])
 	await get_tree().process_frame
-	var restored: bool = DisplayServer.window_get_size() == RESOLUTIONS[0] and before == before
+	var restored: bool = DisplayServer.window_get_size() == SaveService.RESOLUTIONS[0] and before == before
 
 	# ④ 存檔沒有被真的寫出去（有鉤子時 persist=false，鐵律 1）。
 	var no_write: bool = not SaveService.persist
@@ -111,19 +103,7 @@ func _click_selftest() -> void:
 
 	# ⑥ ★ ESC ＝ 返回（B1.4.1）。暫時把 `on_exit` 換成一個只翻旗標的 Callable：
 	#    真的返回會把這個畫面拆掉，後面的 print 就落在正在被釋放的節點上。
-	var real_exit := on_exit
-	var escaped := [false]
-	on_exit = func() -> void: escaped[0] = true
-	for pressed: bool in [true, false]:
-		var ev := InputEventKey.new()
-		ev.keycode = KEY_ESCAPE
-		ev.physical_keycode = KEY_ESCAPE
-		ev.pressed = pressed
-		Input.parse_input_event(ev)
-	for _i in 3:
-		await get_tree().process_frame
-	var esc_back: bool = escaped[0]
-	on_exit = real_exit
+	var esc_back: bool = await UiKit.esc_reaches(self)
 
 	var ok: bool = (
 		vol_saved and mute_wins and buses_exist and reduce_live and reduce_off
@@ -142,14 +122,8 @@ func _press(b: Button) -> void:
 	b.pressed.emit()
 
 
-func _clear() -> void:
-	for c: Node in get_children():
-		remove_child(c)
-		c.queue_free()
-
-
 func _build() -> void:
-	_clear()
+	UiKit.clear(self)
 	_sliders.clear()
 	_res_buttons.clear()
 
@@ -198,8 +172,8 @@ func _build() -> void:
 	col.add_child(UiKit.label("視窗大小", 16, Palette.TEXT_SECONDARY, false))
 	var res_row := UiKit.hbox(8)
 	col.add_child(res_row)
-	for i in RESOLUTIONS.size():
-		var size: Vector2i = RESOLUTIONS[i]
+	for i in SaveService.RESOLUTIONS.size():
+		var size: Vector2i = SaveService.RESOLUTIONS[i]
 		var b := Button.new()
 		b.text = "%d × %d" % [size.x, size.y]
 		b.toggle_mode = true
@@ -258,7 +232,7 @@ func _left(c: Control) -> Control:
 
 func _saved_resolution() -> Vector2i:
 	var i := int(_settings().get("resolution", 0))
-	return RESOLUTIONS[clampi(i, 0, RESOLUTIONS.size() - 1)]
+	return SaveService.RESOLUTIONS[clampi(i, 0, SaveService.RESOLUTIONS.size() - 1)]
 
 
 # ── 變更處理：一律「當場生效 → 當場存檔」 ────────────────────────────
@@ -290,7 +264,7 @@ func _on_resolution(index: int) -> void:
 		_res_buttons[i].button_pressed = i == index
 	# 全螢幕時改視窗大小是空操作，但值仍然存起來——切回視窗時要用得到。
 	if not bool(_settings().get("fullscreen", false)):
-		DisplayServer.window_set_size(RESOLUTIONS[index])
+		DisplayServer.window_set_size(SaveService.RESOLUTIONS[index])
 	_save()
 
 

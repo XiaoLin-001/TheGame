@@ -4,6 +4,86 @@
 
 ---
 
+## [0.16.0] — 2026-08-02 — B1.9 消重複
+
+`ponytail-audit` 掃出的十七條，第一條在 B1.8 順手做掉，這一批做掉其餘十五條
+（**跳過 Battle.gd 搬家**：淨行數 0、churn 最大、clicktest 要吃節點私有成員）。
+
+### ★ 先講一個我報錯的數字
+
+我上一輪報「淨 −155 行」。**實際是 −15 行**（去註解去空行，4461 → 4444），
+錯了一個數量級。原因：稽核把被刪的行連同註解算成節省，但沒算 replacement
+也要寫註解，也沒算重構會逼出新的測試涵蓋。
+
+**行數從來不是重點，「改一個值要改幾個地方」才是**：
+
+| 項目 | 之前 | 之後 |
+|---|---|---|
+| `_enter_*` 進畫面 | 4 支 | 1 支 `_enter(script, setup)` |
+| `_clear()` | 3 份 ＋ 5 處內嵌 | 1 支 `UiKit.clear()` |
+| ESC 返回處理器 | 3 份 | 1 支 `UiKit.esc_returns()` |
+| ESC 自檢區塊 | 2 份 ×14 行 | 1 支 `UiKit.esc_reaches()` |
+| `const TICK := 0.1` | 4 份 | 1 份 `scripts/sim/Clock.gd` |
+| 存檔空殼鍵 | 8 個 | 0 |
+| 死函式／死欄位 | 8 個 | 0 |
+
+### 消掉的重複
+
+- **`Main._enter()`**：四支 `_enter_battle` / `_enter_campaign` / `_enter_tech` /
+  `_enter_settings` 收成一支。順手修掉一個不一致——舊的四支只 `queue_free()`
+  不 `remove_child()`，而 `_back_to_title()` 兩個都做。
+- **`KNOWN_PANELS` 刪除**：它是畫面名單的第二份拷貝，唯一工作是印警告。
+  現在名單只有 `PANEL_SCREENS` 一份——**能不能路由，就是認不認得**。
+- **`sim/Clock.gd`**：`TICK` 的唯一來源。四個檔案原本各寫一份，每份還各配一段
+  解釋自己為什麼要再宣告一次的註解。抄四份的代價不是行數，是「有一天有人只改了
+  其中三份」——而這個值改了，每一份存檔、重播、榜單都會對不上。
+
+### 刪掉沒有呼叫端的東西
+
+`Motion.linear()`、`Motion.ease_in_out_sine()`、`Tech.all_ids()`、
+`SessionState.conduit_at()`、`Battle._middle_drag()`、`FlowNetwork` 回傳的
+`silo_supply_total`、`Settings.RESOLUTIONS` 別名、`Enemies.endless_*`。
+
+`§4.2` 訂的三條緩動曲線一條都沒少：`linear` **就是「不套緩動」本身**，
+`ease-in-out-sine` 已經實作在 `pulse()` 裡（`sin(TAU × …)` 就是那條曲線）。
+刪的是重複入口，不是 token。
+
+### 存檔 schema 砍掉八個空殼鍵
+
+`company_level` `roster` `endless` `daily` `tycoon` `levels` `entitlements`
+`blueprints` —— 沒有任何讀取端，卻讓 schema 看起來比實作大四倍。
+**提前宣告買不到相容性**：`_fill_defaults()` 本來就在讀檔時補缺鍵。
+
+反過來它有真的代價：每個空殼鍵都會寫進玩家的存檔檔案，而看到 `"tycoon": {...}`
+的人會以為那個系統已經在跑了。
+
+新增一條斷言證明這樣砍是安全的：**用舊版玩過、存檔裡已經有 `tycoon` 的玩家，
+讀進來不會掉東西**——`normalize()` 只補不刪。
+
+### ★ 重構自己逼出一個漏洞
+
+主選單五顆鈕改走 `_enter.bind(Screen)` 之後，`Callable.bind()` 把參數綁在
+**尾端**，綁錯就是一顆按了沒反應的鈕。而三條既有 clicktest 全走 `TL_PANEL`、
+**完全繞過主選單**——那條路是零覆蓋。
+
+新增第五條 clicktest（`TL_PANEL=title`），驗一圈完整往返：
+戰役（bind 帶 setup）→ ESC 回標題 → 科技樹（bind 不帶 setup）。
+**並且證明它抓得到**：故意把「科技樹」綁成設定畫面 → `tech=false`、exit=1。
+
+順帶修掉一個同類的舊坑：`Campaign` 與 `Tech` 的自檢沒有 panel 守衛，
+從標題畫面掛起來時會跑到自己的 `get_tree().quit()`，把別人的自檢從中間打斷
+（`Settings` 早就踩過並修過同一個坑）。
+
+### 回歸
+
+- 11 支 989 項全過；**五條** clicktest 全 PASS（新增 title）
+- `TL_SIM=5600` 逐欄與 B1.7／B1.8 相同（`won`／1000／41／51.6／4412.8／1017.0／186.0）
+  —— `TICK` 動了確定性地基，這一欄是它的逐位元證明
+- `UiKit.esc_returns()` 也證明會紅：拿掉 `on_exit.call()` → tech／settings 的
+  `esc_back=false`、exit=1
+
+---
+
 ## [0.15.0] — 2026-08-02 — B1.8 潮鳴的場
 
 起因是使用者回報「我不喜歡潮鳴的聲音」。我連續兩次回報「潮鳴不開火，所以那個音

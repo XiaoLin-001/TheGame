@@ -26,17 +26,15 @@ func _ready() -> void:
 	theme = UiKit.theme()
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_build()
-	if Hooks.click_test:
+	# ★ `and Hooks.panel == "tech"`（B1.9）：本畫面同時掛得到標題與關卡選擇兩處，
+	#   只有「它自己是受測對象」時才該跑自己的自檢（`Settings` 的同一條）。
+	if Hooks.click_test and Hooks.panel == "tech":
 		_click_selftest.call_deferred()
 
 
 ## ESC ＝ 返回上一層（B1.4.1）。
 func _unhandled_key_input(event: InputEvent) -> void:
-	if not event.is_action_pressed("ui_cancel") or not on_exit.is_valid():
-		return
-	get_viewport().set_input_as_handled()
-	AudioBus.play("ui_back")   # ESC ＝ 取消手勢，全遊戲同一個音（B1.5）
-	on_exit.call()
+	UiKit.esc_returns(self, event, on_exit)
 
 
 ## ★ 輸入層自檢（`TL_CLICKTEST=1 TL_PANEL=tech`）。
@@ -91,19 +89,7 @@ func _click_selftest() -> void:
 	# ★ ESC ＝ 返回（B1.4.1）。**不能真的呼叫 `on_exit`**（那會把這個畫面拆掉，
 	#   後面的 print 就落在一個正在被釋放的節點上），所以暫時換成一個只翻旗標的
 	#   Callable：要驗的是「事件到不到得了這支處理器」，不是返回本身。
-	var real_exit := on_exit
-	var escaped := [false]
-	on_exit = func() -> void: escaped[0] = true
-	for pressed: bool in [true, false]:
-		var ev := InputEventKey.new()
-		ev.keycode = KEY_ESCAPE
-		ev.physical_keycode = KEY_ESCAPE
-		ev.pressed = pressed
-		Input.parse_input_event(ev)
-	for _i in 3:
-		await get_tree().process_frame
-	var esc_back: bool = escaped[0]
-	on_exit = real_exit
+	var esc_back: bool = await UiKit.esc_reaches(self)
 
 	var ok: bool = (
 		twelve and all_broke and first_open and tier2_locked
@@ -117,12 +103,6 @@ func _click_selftest() -> void:
 		get_tree().quit(0 if ok else 1)
 
 
-func _clear() -> void:
-	for c: Node in get_children():
-		remove_child(c)
-		c.queue_free()
-
-
 func _data() -> float:
 	return float((GameState.data.get("tech", {}) as Dictionary).get("data", 0))
 
@@ -132,7 +112,7 @@ func _unlocked() -> Array:
 
 
 func _build() -> void:
-	_clear()
+	UiKit.clear(self)
 	_buttons.clear()
 
 	# ★ 走容器與錨點，**不寫死像素位置**（P1 手機移植條款）。

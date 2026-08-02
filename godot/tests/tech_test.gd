@@ -52,7 +52,7 @@ func _costs_match_gdd(t: T) -> void:
 	# 全解鎖的總價。戰役滿星全通是 855，**買不完 12 個是刻意的**：
 	# 科技樹要撐過 M2 的無盡與每日，一輪戰役就清空等於它只有一次意義。
 	var total := 0
-	for id: String in Tech.all_ids():
+	for id: String in _all_ids():
 		total += Tech.cost(id)
 	t.eq(total, 1588, "12 節點全解鎖總價")
 
@@ -80,7 +80,7 @@ func _mods_resolve(t: T) -> void:
 	t.near(float(none["engage_mult"]), 1.0, "未解鎖：交戰耗能乘數 1")
 	t.near(float(none["damage_mult"]), 1.0, "未解鎖：傷害乘數 1")
 
-	var full := Tech.mods(Tech.all_ids())
+	var full := Tech.mods(_all_ids())
 	t.near(float(full["cap_bonus"]), 6.0, "導管擴容三級：基礎 cap +6（10 → 16）")
 	t.near(float(full["extractor_ore"]), 2.0, "採集精煉二級：採集器 +2 礦砂/秒")
 	t.near(float(full["engage_mult"]), 0.92 * 0.92 * 0.92, "能量效率三級連乘")
@@ -88,7 +88,7 @@ func _mods_resolve(t: T) -> void:
 	t.near(float(full["blueprint_slots"]), 2.0, "藍圖槽 +2")
 
 	# ★ 順序無關：存檔裡 `unlocked` 的排列不得影響任何一個數字。
-	var reversed_ids := Tech.all_ids()
+	var reversed_ids := _all_ids()
 	reversed_ids.reverse()
 	t.eq(Tech.mods(reversed_ids), full, "★ mods 與解鎖順序無關（確定性前提）")
 
@@ -102,7 +102,7 @@ func _mods_resolve(t: T) -> void:
 ## ★ B2 硬上限（`10_GDD.md` §1 B2）：全解鎖對**戰鬥數值**的總增幅 ≤ +35%。
 ## 這一條是 B1.3 DoD 明列的斷言。日後往防務支加節點時，它會先變紅。
 func _b2_combat_cap(t: T) -> void:
-	var gain := Tech.combat_gain(Tech.all_ids())
+	var gain := Tech.combat_gain(_all_ids())
 	t.ok(gain <= 0.35, "★ B2：全解鎖戰鬥增幅 %.4f ≤ 0.35" % gain)
 	# 也不能離上限太遠——離太遠代表這 12 個節點根本沒把 M1 的預算用掉。
 	t.ok(gain >= 0.30, "全解鎖戰鬥增幅 %.4f 有用掉 M1 的預算" % gain)
@@ -266,3 +266,12 @@ func _save_round_trip(t: T) -> void:
 	SaveService.apply_result(d2, "l1", 3, 30)
 	t.eq(float((d2["tech"] as Dictionary)["data"]), 90.0, "三星第 1 關 → 90 研究數據")
 	t.eq((d2["tech"] as Dictionary)["unlocked"], [], "獎勵不會自動解鎖任何科技")
+
+
+## 全部節點的 id。**住在測試裡，不住在資料表裡**（B1.9）：`Tech.all_ids()`
+## 從來沒有任何遊戲程式碼呼叫過，它是一支測試 helper 借住在數值權威裡面。
+static func _all_ids() -> Array[String]:
+	var out: Array[String] = []
+	for n: Dictionary in Tech.NODES:
+		out.append(String(n["id"]))
+	return out

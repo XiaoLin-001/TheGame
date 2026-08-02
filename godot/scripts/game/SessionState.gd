@@ -261,11 +261,6 @@ static func _point_to_segment(p: Vector2, a: Vector2, b: Vector2) -> float:
 	return p.distance_to(a + ab * t)
 
 
-## 格解析度的版本（測試與非互動呼叫端用）。
-func conduit_at(cell: Vector2i) -> int:
-	return conduit_near(Vector2(cell))
-
-
 ## ★ 局狀態雜湊（`30_TECH_DESIGN.md` §2.4）。**同一組 `(seed, ops)` 跑兩次必得同一個字串。**
 ##
 ## 這是每日挑戰雙榜（B2.2）、重播、可驗證榜單的地基：沒有它，「同種子同地圖」

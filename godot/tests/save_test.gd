@@ -18,34 +18,41 @@ func _initialize() -> void:
 	t.eq(fresh.get("sv"), Save.SAVE_VERSION, "空存檔補上當前 sv")
 	for key: String in Save.DEFAULTS.keys():
 		t.ok(fresh.has(key), "空存檔補上頂層區段 %s" % key)
-	t.eq(fresh["tycoon"]["level"], 1, "巢狀預設值有補到（tycoon.level）")
+	t.eq(fresh["tech"]["data"], 0, "巢狀預設值有補到（tech.data）")
 	t.eq(fresh["settings"]["reduce_motion"], false, "巢狀預設值有補到（settings.reduce_motion）")
 
 	# ── 玩家資料永遠優先，預設值只補不覆蓋 ──
 	# 這是「只增不破」承諾的核心：新版本加欄位，不能動到玩家既有的值。
-	var partial := {"company_level": 7, "settings": {"master": 0.25}}
+	var partial := {"tech": {"data": 7}, "settings": {"master": 0.25}}
 	var merged: Dictionary = Save.normalize(partial)
-	t.eq(merged["company_level"], 7, "既有頂層值不被預設值覆蓋")
+	t.eq(merged["tech"]["data"], 7, "既有值不被預設值覆蓋")
 	t.eq(merged["settings"]["master"], 0.25, "既有巢狀值不被預設值覆蓋")
 	t.eq(merged["settings"]["bgm"], 0.6, "同一區段內缺的鍵仍補上預設")
 
+	# ★ 認不得的區段要原樣留著（B1.9）。這一條就是「B1.9 砍掉八個空殼鍵是安全的」
+	#   的證明：**用舊版玩過、存檔裡已經有 `tycoon` 之類欄位的玩家，讀進來不會掉東西**
+	#   ——`normalize()` 只補不刪。降級或跨版本開檔也走同一條保證。
+	var legacy: Dictionary = Save.normalize({"tycoon": {"credit": 3456}, "blueprints": [1]})
+	t.eq(legacy["tycoon"]["credit"], 3456, "★ 認不得的區段原樣保留（只補不刪）")
+	t.eq(legacy["blueprints"], [1], "★ 認不得的陣列原樣保留")
+
 	# ── 殘缺／損壞的輸入不得炸掉 ──
-	var junk := {"sv": 1, "tech": {}, "roster": {"owned": ["anchor"]}}
+	var junk := {"sv": 1, "campaign": {}, "tech": {"unlocked": ["cap1"]}}
 	var fixed: Dictionary = Save.normalize(junk)
-	t.eq(fixed["tech"]["data"], 0, "空區段補回內部預設")
-	t.eq(fixed["roster"]["owned"], ["anchor"], "既有陣列原樣保留")
-	t.eq(fixed["roster"]["tokens"], 0, "陣列旁缺的鍵仍補上")
+	t.eq(fixed["campaign"]["stars"], {}, "空區段補回內部預設")
+	t.eq(fixed["tech"]["unlocked"], ["cap1"], "既有陣列原樣保留")
+	t.eq(fixed["tech"]["data"], 0, "陣列旁缺的鍵仍補上")
 
 	# ── normalize 不得改動輸入（純函式） ──
-	var src := {"company_level": 3}
+	var src := {"tech": {"data": 3}}
 	Save.normalize(src)
 	t.eq(src.size(), 1, "normalize 不修改傳入的字典")
 
 	# ── 預設值本身是深複製，兩次取得互不干擾 ──
 	var a: Dictionary = Save.defaults()
-	a["tycoon"]["level"] = 99
+	a["tech"]["data"] = 99
 	var b: Dictionary = Save.defaults()
-	t.eq(b["tycoon"]["level"], 1, "defaults() 回傳深複製，不會被上一份污染")
+	t.eq(b["tech"]["data"], 0, "defaults() 回傳深複製，不會被上一份污染")
 
 	# ── 磁碟往返：原子寫入 → 讀回 → 一致 ──
 	_disk_round_trip(t)
@@ -113,19 +120,19 @@ func _disk_round_trip(t: RefCounted) -> void:
 		svc.free()
 		return
 
-	var written := {"company_level": 12, "tycoon": {"credit": 3456}}
+	var written := {"campaign": {"stars": {"shoal": 3}}, "tech": {"data": 12}}
 	t.ok(svc.save_from(written), "save_from 回報成功")
 	t.ok(FileAccess.file_exists(Save.PATH), "主存檔已建立")
 	t.ok(not FileAccess.file_exists(Save.TMP_PATH), "暫存檔已被改名，未留下殘骸")
 
 	var back := {}
 	svc.load_into(back)
-	t.eq(back["company_level"], 12, "讀回頂層值一致")
-	t.eq(back["tycoon"]["credit"], 3456, "讀回巢狀值一致")
-	t.eq(back["tycoon"]["level"], 1, "寫入時未提供的鍵讀回時已補預設")
+	t.eq(back["tech"]["data"], 12, "讀回巢狀值一致")
+	t.eq(back["campaign"]["stars"]["shoal"], 3, "讀回巢狀字典一致")
+	t.eq(back["tech"]["unlocked"], [], "寫入時未提供的鍵讀回時已補預設")
 	t.eq(back["sv"], Save.SAVE_VERSION, "讀回的 sv 為當前版本")
 
-	# 清乾淨：測試不留下假存檔，否則使用者首次啟動會拿到 company_level=12。
+	# 清乾淨：測試不留下假存檔，否則使用者首次啟動會拿到 tech.data=12。
 	var dir := DirAccess.open("user://")
 	if dir != null:
 		dir.remove("save.json")

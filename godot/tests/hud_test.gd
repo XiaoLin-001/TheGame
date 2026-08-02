@@ -306,7 +306,12 @@ func _motion_tokens(t: T) -> void:
 	t.near(Motion.ease_out_cubic(0.0), 0.0, "ease-out-cubic 起點")
 	t.near(Motion.ease_out_cubic(1.0), 1.0, "ease-out-cubic 終點")
 	t.ok(Motion.ease_out_cubic(0.5) > 0.5, "ease-out-cubic 是快起慢收")
-	t.near(Motion.ease_in_out_sine(0.5), 0.5, "ease-in-out-sine 中點對稱")
+	# §4.2 的 `ease-in-out-sine` 循環實作在 `pulse()` 裡（B1.9 刪掉獨立入口），
+	# 所以改驗那條曲線本身：半週期處回到中點，而且對稱。
+	# 週期 2.0 秒 ＝ 20 tick：第 5 tick 是四分之一週期（波峰）、第 10 tick 是
+	# 半週期（回到中點）。兩點一起驗才是在驗那條曲線，不是驗一個數字。
+	t.near(Motion.pulse(5, 2.0, 0.5), 1.5, "pulse 四分之一週期＝波峰")
+	t.near(Motion.pulse(10, 2.0, 0.5), 1.0, "pulse 半週期回到中點（ease-in-out-sine 對稱）")
 	# 效果進度：life 個 tick 走完 0→1，中間用 frac 補到 60Hz。
 	t.near(Motion.progress(2, 2, 0.0), 0.0, "剛生成＝0")
 	t.near(Motion.progress(2, 1, 0.0), 0.5, "過一個 tick＝一半")
