@@ -187,7 +187,7 @@ TheGame/
     ├── scripts/meta/          RosterData / TycoonSim（尚未建立；科技樹是 data/Tech.gd）
     ├── data/                  節點、角色、敵人、地圖、戰役、**科技**資料表
     ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign
-    └── assets/audio/          bgm/ 3 首、sfx/ 15 支（`assetgen/gen_audio.py` 生成）
+    └── assets/audio/          bgm/ 3 首、sfx/ 14 支（`assetgen/gen_audio.py` 生成）
 ```
 
 ---

@@ -119,6 +119,10 @@ var _settings_layer: Control = null
 ## 本幀交戰中的塔 `{id: Array}`。繪圖層自己算——它要畫的是「誰正在吃電」，
 ## 而模擬只留了一個座數（`rates.engaged`）。
 var _engaged: Dictionary = {}
+## 本幀每隻敵人身上的光環 `Vector2(減速, 破甲)`，與 `s.enemies` 同索引。
+## 和 `_engaged` 一樣是**繪圖層自己算的**：模擬層每 tick 都在算同一份，
+## 但它只把結果用在傷害上、沒有留下來，而畫面要畫的是「誰被抓住了」。
+var _auras: Array = []
 ## ★ 音訊（B1.5）。上一幀的幾個數字，用來推導「這一幀發生了什麼」。
 ## **音效一律從畫面層推導，模擬層維持零副作用**（`CLAUDE.md` 技術慣例）：
 ## 在 `scripts/sim/` 裡塞一行 `AudioBus.play()` 就等於讓每日挑戰的重播會出聲。
@@ -503,6 +507,29 @@ func _click_selftest() -> void:
 		await get_tree().process_frame
 	var tower_built: bool = String(s.node_at(tower_cell).get("type", "")) == "anchor"
 
+	# ★ 潮鳴的場（B1.8）。要守的回歸是「**繪圖層真的去讀了光環**」——
+	#   `Combat.auras()` 的數學已經有 `combat_test` 守著（滿電／半電／不疊加），
+	#   這裡缺的那一環是 `_draw()` 有沒有把它算進 `_auras`。少了那一行，
+	#   潮鳴就會安靜地退回 B1.7 之前「每秒吃 9 電、畫面上零回饋」的樣子，
+	#   而 `_draw()` 對此一個字都不會說（B0.7.2 那個 size (0,0) 的同一類缺陷）。
+	_press(_build_buttons["knell"])
+	_click(Vector2i(20, 8))              # 離路徑 (20,4) 四格 → 在 5 格射程內
+	for _i in 3:
+		await get_tree().process_frame
+	var knell: Dictionary = s.node_at(Vector2i(20, 8))
+	s.add_enemy("drifter")
+	(s.enemies[0] as Dictionary)["progress"] = 20.0   # 路徑上的 (20,4)
+	for _i in 3:
+		await get_tree().process_frame
+	var field_ok: bool = (
+		not knell.is_empty()
+		and _auras.size() == s.enemies.size()         # 繪圖層每幀算了它
+		and _engaged.get(int(knell["id"]), false)     # 而且潮鳴確實在交戰
+	)
+	s.enemies.clear()
+	for _i in 2:
+		await get_tree().process_frame
+
 	s.phase = "won"
 	for _i in 4:
 		await get_tree().process_frame
@@ -545,6 +572,7 @@ func _click_selftest() -> void:
 		await get_tree().process_frame
 	var over_ok: bool = (
 		tower_built and over_cleared and over_silent and why_shown and why_fits
+		and field_ok
 	)
 
 	# ★ 最後才留一個懸而未決的拖曳起點（按下不放開），讓八條方向導引與
@@ -568,9 +596,9 @@ func _click_selftest() -> void:
 		energy_ok, codex_ok, prio_ok, view_ok, menu_ok, audio_ok, over_ok,
 		"PASS" if ok else "FAIL"
 	])
-	print("[TL_CLICKTEST/audio] two_layers=%s prep_silent=%s wave_fade_in=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s" % [
+	print("[TL_CLICKTEST/audio] two_layers=%s prep_silent=%s wave_fade_in=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s knell_field=%s" % [
 		music_ok, layer_prep, layer_rising, voice_ok, AudioBus.muted, tower_built, over_cleared,
-		over_silent, why_shown, why_fits
+		over_silent, why_shown, why_fits, field_ok
 	])
 	print("[TL_CLICKTEST/menu] esc_open=%s scrim_blocks=%s settings=%s settings_back=%s esc_close=%s cell_buildable=%s button=%s fits=%s" % [
 		menu_open, menu_blocks, settings_open, settings_back, menu_closed, buildable_after,
@@ -1067,10 +1095,15 @@ func _draw() -> void:
 	# 網格只畫在地圖範圍內：畫到浮層底下會讓「哪裡可以蓋」變得曖昧。
 	Shapes.draw_grid(self, rect)
 
-	_engaged = Combat.engaged(s.nodes, Combat.enemy_cells(s.enemies, s.path))
-	_threat = _threat_cells()
+	# 敵人的格算一次給三個人用（交戰、光環、被啃判定）——同一幀各算一次的那一天，
+	# 就會有一個用到的是上一幀的位置。
+	var cells := Combat.enemy_cells(s.enemies, s.path)
+	_engaged = Combat.engaged(s.nodes, cells)
+	_auras = Combat.auras(s.nodes, cells, s.rates["satisfaction"])
+	_threat = _threat_cells(cells)
 	_draw_path()
 	_draw_ore_cells()
+	_draw_fields()
 	_draw_conduits()
 	_draw_nodes()
 	_draw_enemies()
@@ -1166,6 +1199,41 @@ func _draw_ore_cells() -> void:
 		if occupied.has(c):
 			continue  # 蓋上採集器後由節點填實
 		draw_arc(_center(c), 10.0, 0.0, TAU, 24, Palette.ORDER_DIM, 2.0)
+
+
+## ★ 潮鳴的場（B1.8，`20_ART_DIRECTION.md` §1.6）。
+##
+## **它是全案唯一 `rof = 0` 的塔**：不產生開火線、不播開火音，而每秒吃 9 能量。
+## B1.7 之前它在畫面上一個回饋都沒有——玩家無從確認自己花 90 礦砂買的東西
+## 有沒有在工作，而「塔在交戰時每秒吃電」正是本作的核心取捨（`10_GDD.md` §7.4）。
+##
+## 三個刻意的決定：
+##   ① **只在交戰時畫**。光環本來就只在射程內有敵人時啟動；恆亮的圈會讓
+##      「現在到底有沒有在吃電」這件事反而讀不出來。
+##   ② **透明度跟著能量滿足率走**。電不夠時控場真的比較弱（§7.4），
+##      圈跟著淡下去，因果就在同一個畫面上。
+##   ③ 半徑是**實際射程**（5 格＝160px），和交戰環的 15px 差一個數量級——
+##      「同一個位置上的兩個訊息，換顏色不夠，要換形狀」（§4.3b）。
+func _draw_fields() -> void:
+	for n: Dictionary in s.nodes:
+		var def := NodeDefs.of(String(n["type"]))
+		if not def.has("slow") or not _engaged.get(int(n["id"]), false):
+			continue
+		var k := clampf(
+			float((s.rates["satisfaction"] as Dictionary).get(n["id"], 1.0)), 0.0, 1.0
+		)
+		# ★ 權重是實看調出來的（B1.8）。第一版是 `pulse01(...) * 0.5`，alpha 落在
+		#   0.23–0.50——在 `bg.panel` 上那條線**讀起來是灰的不是青的**，整張全景圖
+		#   上幾乎看不見（第一張驗收截圖當場抓到）。青色要到 0.6 以上才讀得出色相。
+		#
+		#   ★ 調的是**下限**不是振幅：`TL_SHOT` 凍結在單一 tick，而脈動的相位由
+		#     tick 決定——驗收截圖剛好落在波谷（tick 1556 → alpha 0.48）。
+		#     谷底讀得出來，整條曲線就都讀得出來；只拉振幅會讓它一半時間是隱形的。
+		var a := Motion.pulse01(s.tick_count, Motion.AMBIENT, 0.72) * 0.92 * k
+		draw_arc(
+			_center(n["cell"]), float(def.get("range", 0.0)) * Shapes.GRID, 0.0, TAU, 64,
+			Palette.alpha(Palette.ORDER_CYAN, a), 2.0
+		)
 
 
 func _draw_conduits() -> void:
@@ -1424,7 +1492,8 @@ func _draw_shots() -> void:
 ## 敵潮屬於**混沌**側（`20_ART_DIRECTION.md` §0）：不規則凸包、不對齊網格、
 ## 呼吸式脈動。玩家的一切則是正圓正方、嚴格對齊——這個對比就是主題本身。
 func _draw_enemies() -> void:
-	for e: Dictionary in s.enemies:
+	for i in s.enemies.size():
+		var e: Dictionary = s.enemies[i]
 		var def := Enemies.of(String(e["type"]))
 		var p := _enemy_pos(e)
 		var r := float(def.get("radius", 9.0))
@@ -1432,13 +1501,24 @@ func _draw_enemies() -> void:
 		# 相位用 id 錯開，一群敵人才不會像節拍器一起脹縮。
 		var pulse := Motion.pulse(s.tick_count, Motion.AMBIENT, 0.12, float(e["id"]))
 		var pts := PackedVector2Array()
-		for i in 9:
-			var a := TAU * float(i) / 9.0
+		# `k` 而不是 `i`：外圈已經用掉 `i`（敵人索引），而 GDScript 的 for
+		# 迭代變數共享同一個作用域——同名會是 parse error，不是遮蔽。
+		for k in 9:
+			var a := TAU * float(k) / 9.0
 			# 每隻各自的不規則度，由 id 決定（同一隻永遠長同一個樣子）。
 			# 值域收在 0.85–1.15：再寬就會有頂點塌進去，變成尖角旗子而不是水滴。
 			var wobble := 1.0 + 0.15 * sin(float(e["id"]) * 3.7 + a * 2.0)
 			pts.append(p + Vector2(cos(a), sin(a)) * r * pulse * wobble)
 		draw_colored_polygon(pts, Palette.TIDE_MAGENTA)
+		# ★ 被潮鳴抓住的敵人：輪廓描一圈 `order.cyan`（B1.8）。
+		#   **標在敵人身上而不是塔上**——減速 −40%／破甲 −25% 作用在它身上，
+		#   標在這裡因果才讀得出來；標在塔上只說得出「它開著」。
+		#   閉合折線，和血量弧（`tide.deep` 圓弧）一個是線一個是弧，分得開（§4.3b）。
+		var slow := 0.0 if i >= _auras.size() else (_auras[i] as Vector2).x
+		if slow > 0.01:
+			var ring := pts.duplicate()
+			ring.append(pts[0])
+			draw_polyline(ring, Palette.alpha(Palette.ORDER_CYAN, 0.35 + 1.4 * slow), 2.0)
 		var frac := float(e["hp"]) / maxf(1.0, float(def.get("hp", 1.0)))
 		if frac < 1.0:
 			draw_arc(p, r + 4.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 20, Palette.TIDE_DEEP, 2.0)
@@ -1449,9 +1529,9 @@ func _draw_enemies() -> void:
 ## 敵人 walk-by 每 tick 傷害相鄰 1 格（`Tide.BLAST`），但在畫面上**那一刻完全
 ## 沒有表現**——節點的血條會慢慢變短，而玩家不知道「現在」有東西在被吃。
 ## 這裡把模擬層每 tick 都在做的同一份判定畫出來，不新增任何狀態。
-func _threat_cells() -> Dictionary:
+func _threat_cells(cells: Array) -> Dictionary:
 	var out: Dictionary = {}
-	for c: Vector2i in Combat.enemy_cells(s.enemies, s.path):
+	for c: Vector2i in cells:
 		for dx in range(-Tide.BLAST, Tide.BLAST + 1):
 			for dy in range(-Tide.BLAST, Tide.BLAST + 1):
 				out[c + Vector2i(dx, dy)] = true

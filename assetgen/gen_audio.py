@@ -359,29 +359,6 @@ def sfx_fire_prism():
     ) * env_exp(t, 0.14, 13.0), peak=0.62)
 
 
-def sfx_fire_knell():
-    """潮鳴：悶的低頻脈衝 ＋ 一層非諧和的金屬泛音。
-
-    ★ 第一版是 0.42 秒的諧和鐘（587＋880Hz，完全五度），使用者回報不喜歡——
-    那個音**太甜也太長**：五度是協和音程，聽起來像獎勵音而不是武器；0.42 秒
-    在連射時會一直互相疊在一起變成嗡的一片。
-    改成敲一塊悶掉的金屬板：基音壓到 165Hz、泛音改成非整數倍（2.76／5.4，
-    真實金屬板的比例），長度砍到 0.26 秒並讓泛音比基音先死。
-    """
-    out = buf(0.26)
-    for i in range(len(out)):
-        t = i / RATE
-        e = env_exp(t, 0.26, 9.0)
-        out[i] = (
-            math.sin(2.0 * math.pi * 165.0 * t) * e
-            + 0.42 * math.sin(2.0 * math.pi * 165.0 * 2.76 * t) * e * e
-            + 0.18 * math.sin(2.0 * math.pi * 165.0 * 5.40 * t) * e * e * e
-        )
-    thud = lowpass(noise(0.05, 271), 1200)
-    mix(out, [v * env_exp(i / RATE, 0.05, 11.0) for i, v in enumerate(thud)], 0.0, 0.40)
-    return fade_edges(normalize(out, 0.60), 2.0)
-
-
 def sfx_fire_reclaimer():
     """回收者：吸回來的上滑短音（它的動作是回收，不是打擊）。"""
     return _fire(0.22, lambda t: math.sin(
@@ -487,7 +464,6 @@ SFX = {
     "tl_sfx_prod_flow": sfx_prod_flow,
     "tl_sfx_fire_anchor": sfx_fire_anchor,
     "tl_sfx_fire_prism": sfx_fire_prism,
-    "tl_sfx_fire_knell": sfx_fire_knell,
     "tl_sfx_fire_reclaimer": sfx_fire_reclaimer,
     "tl_sfx_fire_breaker": sfx_fire_breaker,
     "tl_sfx_enemy_hit": sfx_enemy_hit,

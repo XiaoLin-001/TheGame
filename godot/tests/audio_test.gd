@@ -49,10 +49,20 @@ func _paths() -> Array[String]:
 	var out: Array[String] = []
 	for key: String in SFX_KEYS:
 		out.append(SFX_DIR + "tl_sfx_%s.wav" % key)
-	# ★ 每一座塔一個開火音（§5.1「各角色開火音，可辨識」）。清單從資料表推導，
-	#   不手抄——手抄的那一份會在加第六座塔的那一天悄悄過關。
+	# ★ 每一座**會開火的**塔一個開火音（§5.1「各角色開火音，可辨識」）。
+	#   清單從資料表推導，不手抄——手抄的那一份會在加第六座塔的那一天悄悄過關。
+	#
+	# ⚠ 篩選條件是 `tower and rof > 0`，**不是只看 `tower`**（B1.8）。
+	#   潮鳴的 `rof` 是 0：`BattleController._fire()` 直接跳過它 → 它永遠不產生
+	#   開火線 → `Battle._audio_tick()` 永遠推導不出 `fire_knell`。
+	#   舊的判準只看 `tower`，於是這支測試**要求一個永遠播不到的 wav 存在**，
+	#   那個檔案就一路過關、一路被打包，還被改過一次音色（B1.5.1）。
+	#
+	#   **這是「斷言存在性」與「斷言可達性」的差別**：檢查資產在不在的測試，
+	#   永遠抓不到「這個資產從來沒被播過」。潮鳴的回饋改走視覺（§1.6）。
 	for type: String in NodeDefs.BUILDABLE:
-		if bool(NodeDefs.of(type).get("tower", false)):
+		var def := NodeDefs.of(type)
+		if bool(def.get("tower", false)) and float(def.get("rof", 0.0)) > 0.0:
 			out.append(SFX_DIR + "tl_sfx_fire_%s.wav" % type)
 	for name: String in ["tl_bgm_battle_base", "tl_bgm_battle_perc", "tl_bgm_menu"]:
 		out.append(BGM_DIR + name + ".wav")
