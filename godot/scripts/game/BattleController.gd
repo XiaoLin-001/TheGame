@@ -205,6 +205,8 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 
 		var r := float(def.get("range", 0.0))
 		var targets: Array[int] = []
+		# 濺射的**圓心**（純渲染）。`-1` ＝ 這一發不濺射。
+		var splash_at := Vector2i(-1, -1)
 		if def.get("pierce", false):
 			targets = Combat.pierce_indices(n["cell"], cells, r)
 		else:
@@ -217,6 +219,7 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 				var splash := float(def.get("splash", 0.0))
 				if splash > 0.0:
 					targets = Combat.in_range_indices(cells[t], cells, splash)
+					splash_at = cells[t]
 				else:
 					targets = [t]
 		for i: int in targets:
@@ -228,7 +231,19 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 				float(def.get("dmg", 0.0)) * float(count) * float(s.mods["damage_mult"]),
 				String(def.get("dmg_type", "physical")), edef, aura[i].y
 			)
-			s.shots.append({"from": n["cell"], "to": cells[i], "ttl": SHOT_TTL})
+			# `by` 是**純渲染**欄位（`shots` 不進 `state_hash()`）：畫的時候要知道
+			# 這一發是誰開的，才畫得出四種開火形態（`20_ART_DIRECTION.md` §1.7）。
+			# 形態本身由 `NodeDefs` 既有的 `dmg_type`／`pierce`／`splash`／`reclaim`
+			# 推導，不新增美術欄位。
+			var rec := {
+				"from": n["cell"], "to": cells[i], "ttl": SHOT_TTL, "by": String(n["type"]),
+			}
+			# ★ 濺射環**只掛在第一發上**。碎浪是「一發濺射打中 N 隻」，不是 N 發：
+			#   每隻各畫一圈會疊出 N 個同心圓，既吵又把機制講錯（實看抓到，B1.6.3）。
+			if splash_at.x >= 0:
+				rec["splash_at"] = splash_at
+				splash_at = Vector2i(-1, -1)
+				s.shots.append(rec)
 
 	# **先把全部傷害算完再結算死亡**：邊打邊結算的話，同一 tick 內誰拿到擊殺
 	# 會由節點在陣列裡的順序決定——那是把 id 順序偷渡成遊戲規則。

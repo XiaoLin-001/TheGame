@@ -37,6 +37,14 @@ const ALLOY_VIOLET := Color("#c8a0ff")
 # ── 混沌側（敵潮）──
 const TIDE_MAGENTA := Color("#ff4d6d")  ## 敵人本體
 const TIDE_DEEP := Color("#7b2d5e")     ## 敵潮陰影、路徑帶、來襲方向指示
+## ★ 混沌側的亮階（B1.6.3）。與 `ORDER_CYAN`／`ORDER_BRIGHT` 對稱——
+## 秩序側一直有明度階可用，混沌側只有本體與陰影兩階。
+##
+## 為什麼需要它：敵人在 fit 倍率下只有 **16–24px**，**輪廓差在這個尺寸會死掉**
+## （B1.6.3 實看 A/B：六邊形勉強讀得到，壓扁幾乎讀不到）。明度差活得下來，
+## 所以三種敵人各有一個明度結構：軟＝單一階、硬＝加暗鎖邊、快＝加亮核心。
+## 仍在品紅色相內，不動用橙（那是「建築受損」的通道，撞了會誤讀）。
+const TIDE_BRIGHT := Color("#ff9aab")
 
 # ── 狀態 ──
 const WARN_ORANGE := Color("#ff8a3d")   ## 能量不足、建築受損、倒數 <10s

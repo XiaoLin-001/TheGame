@@ -20,6 +20,11 @@ const CampaignData := preload("res://data/Campaign.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
 
+## ★ 「快」的門檻（B1.6.3、`20_ART_DIRECTION.md` §1.7）。超過就給拖尾與流線輪廓。
+## 取在 1.2：現行三種是 1.6／1.0／0.6，門檻落在漂蟲（基準 1.0）之上一截，
+## 所以 M3 補敵人時「比基準明顯快」才拿得到這個視覺，不是隨便快一點就有。
+const SWIFT_SPEED := 1.2
+
 ## 地圖左上角。36×19 格 ×32px = 1152×608；左側 120px 留給建造欄，
 ## 浮層與地圖**不重疊**（RG-20 的先行實踐，正式驗收在 B0.6）。
 ## ★ 地圖框架（B1.2.2，使用者要求）。**玩家看到的地圖區域恆定**，不隨關卡
@@ -1485,13 +1490,79 @@ func _draw_energy_bar() -> void:
 
 
 ## 開火線。留 `SHOT_TTL` 個 tick 並隨之淡出——瞬間閃一下的線等於沒畫。
+## ★ 四種開火形態（B1.6.3，`20_ART_DIRECTION.md` §1.7）。
+##
+## 起因是使用者實玩回報「塔的攻擊可以有更多不同的特效嗎」——查證屬實：
+## 五座塔畫的是**同一條 `order.bright` 直線**，濺射半徑玩家完全看不到。
+##
+## **形態由 `NodeDefs` 既有的機制欄位推導，不新增美術欄位**：所以做不出一座
+## 「會濺射但看起來不濺射」的塔，M3 擴到 24 隻角色時也自動正確。
+##
+## **物理 vs 能量用形狀分，不用顏色分**：琥珀專屬於能量這個**資源**（§1.1
+## 配色紀律），拿它去畫「能量傷害」會污染全案最重要的資訊通道——玩家看到
+## 琥珀必須永遠是「跟耗能有關」。所以彈丸＝物理、光束＝能量。回收者那顆
+## 琥珀珠是唯一的例外，而它是對的：那顆珠真的是能量，正在流回電網。
 func _draw_shots() -> void:
+	var frac := _accum / BattleController.TICK
 	for sh: Dictionary in s.shots:
-		var fade := float(sh["ttl"]) / float(BattleController.SHOT_TTL)
-		draw_line(
-			_center(sh["from"]), _center(sh["to"]),
-			Palette.alpha(Palette.ORDER_BRIGHT, 0.25 + 0.6 * fade), 2.0
-		)
+		# 沒有 `by` 的一律當錨（`TL_CLICKTEST` 手塞的那一發）。
+		var def := NodeDefs.of(String(sh.get("by", "anchor")))
+		var a := _center(sh["from"])
+		var b := _center(sh["to"])
+		var t := Motion.progress(BattleController.SHOT_TTL, int(sh["ttl"]), frac)
+		var fade := 1.0 - t
+		if bool(def.get("pierce", false)):
+			_shot_beam(a, b, fade)
+			continue
+		_shot_bolt(a, b, t, fade)
+		# 濺射環只掛在這一發濺射的**第一筆**記錄上（`BattleController`），
+		# 所以這裡畫幾次就是幾發，不會被打中的隻數放大。
+		if sh.has("splash_at"):
+			_shot_splash(_center(sh["splash_at"]), t, fade, float(def.get("splash", 0.0)))
+		if float(def.get("reclaim", 0.0)) > 0.0:
+			_shot_reclaim(a, b, t)
+
+
+## 能量貫穿（稜鏡）：**整條線一次亮到底**，寬度 3→1 衰減。
+## 貫穿本來就是「這條軸線上的都被打到」，光束是它唯一誠實的畫法。
+## 同一 tick 會有多發（每個目標一發）疊在同一條軸線上——那不是缺陷，
+## 疊出來的亮度差正好說明「近的那幾隻被打得比較集中」。
+func _shot_beam(a: Vector2, b: Vector2, fade: float) -> void:
+	draw_line(a, b, Palette.alpha(Palette.ORDER_BRIGHT, 0.10 + 0.18 * fade), 6.0)
+	draw_line(a, b, Palette.alpha(Palette.ORDER_BRIGHT, 0.35 + 0.65 * fade), 1.0 + 2.0 * fade)
+
+
+## 物理彈丸（錨／回收者／碎浪）：**短促實心的一段沿線飛行**，不是整條線亮起。
+## 「有質量的東西飛過去」和「一束光」的差別全在這裡——整條線亮起讀起來
+## 永遠是能量，不管畫成什麼顏色。
+func _shot_bolt(a: Vector2, b: Vector2, t: float, fade: float) -> void:
+	var dir := (b - a)
+	var len := dir.length()
+	if len < 0.001:
+		return
+	dir /= len
+	# 彈丸長度上限 14px：短程時不可以比整條彈道還長，否則它就變回一條線了。
+	var bolt := minf(14.0, len * 0.45)
+	var head := a + dir * (bolt + (len - bolt) * Motion.ease_out_cubic(t))
+	draw_line(head - dir * bolt, head, Palette.alpha(Palette.ORDER_CYAN, 0.45 + 0.55 * fade), 3.0)
+
+
+## 濺射（碎浪）：命中點一圈**擴張環**，半徑就是資料裡的 `splash` 格。
+## ★ 這個範圍原本玩家**完全看不到**——碎浪比錨貴、吃三座錨的電，
+## 而它唯一的賣點（打到一整段隊列）在畫面上沒有任何證據。
+func _shot_splash(at: Vector2, t: float, fade: float, splash: float) -> void:
+	var r := splash * Shapes.GRID * Motion.ease_out_cubic(t)
+	draw_arc(at, r, 0.0, TAU, 28, Palette.alpha(Palette.ORDER_CYAN, 0.15 + 0.45 * fade), 2.0)
+
+
+## 回收（回收者）：命中後一顆 `energy.amber` 珠**回流到塔**。
+## 方向是反的——它送回來的東西才是這座塔存在的理由（§7.4「打破峰值約束
+## 的鑰匙」）。走 `t` 的後半段：先看到打中，才看到收回來，因果順序不能反。
+func _shot_reclaim(a: Vector2, b: Vector2, t: float) -> void:
+	if t < 0.4:
+		return
+	var k := (t - 0.4) / 0.6
+	draw_circle(b.lerp(a, Motion.ease_out_cubic(k)), 3.0, Palette.alpha(Palette.ENERGY_AMBER, 1.0 - k))
 
 
 ## 敵潮屬於**混沌**側（`20_ART_DIRECTION.md` §0）：不規則凸包、不對齊網格、
@@ -1505,16 +1576,29 @@ func _draw_enemies() -> void:
 		# 敵潮的動態是「有機的呼吸」（§4.2 ease-in-out-sine 循環）；
 		# 相位用 id 錯開，一群敵人才不會像節拍器一起脹縮。
 		var pulse := Motion.pulse(s.tick_count, Motion.AMBIENT, 0.12, float(e["id"]))
-		var pts := PackedVector2Array()
-		# `k` 而不是 `i`：外圈已經用掉 `i`（敵人索引），而 GDScript 的 for
-		# 迭代變數共享同一個作用域——同名會是 parse error，不是遮蔽。
-		for k in 9:
-			var a := TAU * float(k) / 9.0
-			# 每隻各自的不規則度，由 id 決定（同一隻永遠長同一個樣子）。
-			# 值域收在 0.85–1.15：再寬就會有頂點塌進去，變成尖角旗子而不是水滴。
-			var wobble := 1.0 + 0.15 * sin(float(e["id"]) * 3.7 + a * 2.0)
-			pts.append(p + Vector2(cos(a), sin(a)) * r * pulse * wobble)
+		var armored: bool = float(def.get("armor", 0.0)) > 0.0
+		var swift: bool = float(def.get("speed", 1.0)) > SWIFT_SPEED
+		# ★ 這裡曾經有兩個殘影當拖尾（B1.6.3 第一版），**實看 A/B 之後砍掉**：
+		#   第 5 波的間距是 0.6 格，任何畫在身後的東西都會壓到後面那一隻——
+		#   一列 11 隻分得開的敵人變成一條連續的香腸，把「看不出差異」修成了
+		#   「看不出有幾隻」。速度線索因此全部收進**本體輪廓**（流線拉長），
+		#   不佔用敵人之間的空隙。
+		var pts := _enemy_shape(e, p, r, pulse, armored, swift)
 		draw_colored_polygon(pts, Palette.TIDE_MAGENTA)
+		# ★ 甲板（B1.6.3）：**同形描邊，不是外圈弧**。血量弧已經是 `tide.deep`
+		#   的圓弧、畫在 `r+4`，再加一圈外弧就是同一個位置上的兩個訊息——
+		#   而 §4.3b 那條規則說「換顏色不夠，要換形狀」。這個專案在這裡踩過
+		#   兩次（B0.6 儲槽充能弧撞血條、B1.6 受擊環撞交戰環）。描邊在輪廓
+		#   **內側**，和任何弧都不會疊。
+		if armored:
+			var plate := pts.duplicate()
+			plate.append(pts[0])
+			draw_polyline(plate, Palette.TIDE_DEEP, 3.0)
+		# ★ 亮核心（B1.6.3）：**快**在 16px 上唯一活得下來的線索。
+		#   輪廓的壓扁在 fit 倍率幾乎讀不到（實看 A/B 抓到），明度差讀得到。
+		#   畫在**中心**而不是外圈：外圈已經有甲板描邊與血量弧兩個訊息了。
+		elif swift:
+			draw_circle(p, r * pulse * 0.45, Palette.TIDE_BRIGHT)
 		# ★ 被潮鳴抓住的敵人：輪廓描一圈 `order.cyan`（B1.8）。
 		#   **標在敵人身上而不是塔上**——減速 −40%／破甲 −25% 作用在它身上，
 		#   標在這裡因果才讀得出來；標在塔上只說得出「它開著」。
@@ -1612,6 +1696,59 @@ func _draw_bursts() -> void:
 			else:
 				# 正方、不自轉：秩序的碎片仍然是軸對齊的方塊。
 				draw_rect(Rect2(p - Vector2(r, r), Vector2(r, r) * 2.0), c)
+
+
+## ★ 敵人的輪廓（B1.6.3，`20_ART_DIRECTION.md` §1.7）。
+##
+## 三種輪廓**全部由既有的機制欄位推導**，不新增美術資料：
+##   預設        9 邊柔性水滴、wobble ±15%          ← 漂蟲
+##   `armor > 0` 6 邊硬稜角、wobble ±7%             ← 甲殼（物理打不動它）
+##   `speed 快`  沿行進方向拉長的尖銳水滴 ＋ 拖尾   ← 熾泳
+##
+## 這樣做的第一個理由不是省事，是**設計上不可能說謊**：沒有辦法做出一隻
+## 「有護甲但看起來不硬」的敵人。M3 擴到 18 種敵人時也自動正確（§5 內容矩陣）。
+##
+## 三者仍然全部屬於**混沌**側（§0）：不規則、脈動、不對齊網格。硬稜角指的是
+## 頂點少、抖動小，不是變成正六邊形——正多邊形是秩序側的語彙。
+func _enemy_shape(
+	e: Dictionary, p: Vector2, r: float, pulse: float, armored: bool, swift: bool
+) -> PackedVector2Array:
+	var sides := 6 if armored else 9
+	var amp := 0.07 if armored else 0.15
+	var pts := PackedVector2Array()
+	# `k` 而不是 `i`：呼叫端已經用掉 `i`（敵人索引），而 GDScript 的 for
+	# 迭代變數共享同一個作用域——同名會是 parse error，不是遮蔽。
+	for k in sides:
+		var a := TAU * float(k) / float(sides)
+		# 每隻各自的不規則度，由 id 決定（同一隻永遠長同一個樣子）。
+		# 值域收在 ±amp：再寬就會有頂點塌進去，變成尖角旗子而不是水滴。
+		var wobble := 1.0 + amp * sin(float(e["id"]) * 3.7 + a * 2.0)
+		var v := Vector2(cos(a), sin(a)) * r * pulse * wobble
+		if swift:
+			# ★ 流線＝**垂直於行進方向壓扁**，不是沿行進方向拉長（B1.6.3 實看修正）。
+			#
+			#   前兩版都往「拉長」的方向做（先加拖尾、再加長本體），A/B 對照
+			#   當場否決：第 5 波的間距是 0.6 格，**任何沿行進軸變長的東西都會
+			#   碰到鄰居**——一列 11 隻分得開的敵人糊成一條連續的香腸，把
+			#   「看不出差異」修成了「看不出有幾隻」。
+			#
+			#   壓扁則相反：footprint 只會變小，結構上不可能製造新的重疊，
+			#   而「薄」在一排圓團與六邊形之間仍然是一眼分得出來的輪廓。
+			var d := _enemy_dir(e)
+			var perp := Vector2(-d.y, d.x)
+			v -= perp * v.dot(perp) * 0.45
+		pts.append(p + v)
+	return pts
+
+
+## 行進方向（單位向量）。路徑是正交的，所以這就是「下一格 − 這一格」。
+func _enemy_dir(e: Dictionary) -> Vector2:
+	var prog := float(e["progress"])
+	var i := clampi(int(floor(prog)), 0, s.path.size() - 1)
+	var j := mini(i + 1, s.path.size() - 1)
+	if i == j:
+		return Vector2.RIGHT
+	return (Vector2(s.path[j] - s.path[i]) as Vector2).normalized()
 
 
 func _enemy_pos(e: Dictionary) -> Vector2:
