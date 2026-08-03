@@ -26,6 +26,7 @@ func _initialize() -> void:
 	var t := T.new("hud_test")
 	_motion_tokens(t)
 	_bursts_are_render_only(t)
+	_every_tower_records_its_shot(t)
 	_summon_bonus_math(t)
 	_bonus_is_locked_to_its_wave(t)
 	_bonus_multiplies_the_drop(t)
@@ -342,6 +343,35 @@ func _bursts_are_render_only(t: T) -> void:
 	t.eq(a["hash"], b["hash"], "★ 開不開碎片爆，局狀態雜湊完全相同")
 	t.ok(int(a["bursts_seen"]) > 0, "關掉 reduce 時真的有碎片生成過（否則上一條是空的）")
 	t.eq(int(b["bursts_seen"]), 0, "★ reduce_motion 時一顆碎片都沒生成")
+
+
+## ★ **每一種塔開火都要留下 `shots` 記錄**（B2.1d 回歸）。
+##
+## B1.6.3 把 `s.shots.append(rec)` 誤縮排進 `if splash_at.x >= 0:` 裡面，
+## 於是**只有濺射（碎浪）畫得出開火**，其餘四座塔整整一批都是啞的。
+## 而全部測試都是綠的——`shots` 是純渲染、不進 `state_hash()`，
+## 沒有任何斷言看過它。這一條就是那個缺口。
+func _every_tower_records_its_shot(t: T) -> void:
+	var s: RefCounted = SessionState.new()
+	s.setup(Maps.SHOAL)
+	s.alloy = Maps.DEMO_ALLOY
+	BuildController.apply_ops(s, Maps.SHOAL_DEMO)
+	var by_type: Dictionary = {}
+	# 3000 tick：淺灘準備期 60s（600 tick）＋敵人走完約 52 格，1200 tick 時
+	# 南段的錨才剛要進入交戰——太短會讓這條斷言變成在驗「敵人走到哪」。
+	for _i in 3000:
+		BattleController.step(s)
+		for sh: Dictionary in s.shots:
+			by_type[String(sh.get("by", ""))] = true
+	# 稜鏡（貫穿／能量）與回收者（回收珠）——**兩座都不是濺射**，
+	# 所以誤縮排的那一版在這兩條上都會紅。
+	#
+	# ⚠ 名單裡沒有潮鳴與錨，兩者原因不同，都不是缺陷：
+	#   潮鳴的 `rof` 是 0（「不造成傷害的建築也值得佔用電力」是它的設計）；
+	#   錨在示範佈局裡**交戰 0 個 tick**——稜鏡在北段就把敵人清光了，
+	#   南段的錨一次都沒開火。拿它當斷言等於在驗「敵人有沒有活著走到南段」。
+	for ty: String in ["prism", "reclaimer"]:
+		t.ok(by_type.has(ty), "★ %s 開火時留下了 shots 記錄（不是只有濺射才留）" % ty)
 
 
 ## 跑一段淺灘的示範佈局，回傳局狀態雜湊與期間出現過的碎片總數。

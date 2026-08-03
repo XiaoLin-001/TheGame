@@ -103,6 +103,16 @@ var _zoom: float = 1.0
 var _fit: float = 1.0
 ## 平移（螢幕像素）。fit 時恆為 0（地圖與框架同大，居中就是全貌）。
 var _pan: Vector2 = Vector2.ZERO
+## ★ 平移的**目標**（B2.1d）。`_pan` 每幀朝它收斂，所以小地圖拖曳與一鍵跳
+## 都是平滑的。**中鍵直接拖地圖不走這條**——直接拖曳加上緩動會變成「黏手」，
+## 手指到哪畫面就該到哪。`reduce_motion` 開啟時一律直接到位（§1.6 的紀律：
+## 動效是裝飾，關掉之後資訊一點都不能少）。
+var _pan_goal: Vector2 = Vector2.ZERO
+## 每秒收斂比率。14 在 60fps 下約 4 幀走完八成——快到不覺得延遲，
+## 又慢到看得出是「滑過去」而不是「跳過去」（使用者要的是後者的反面）。
+const PAN_EASE := 14.0
+## 小地圖拖曳中。按住不放時視野持續跟著游標走。
+var _mini_drag: bool = false
 var _zoom_button: Button = null
 
 var _mode: int = Mode.BUILD
@@ -249,13 +259,13 @@ func _reset_view() -> void:
 	_fit = _fit_zoom()
 	_zoom = _fit
 	_pan = Vector2.ZERO
+	_pan_goal = Vector2.ZERO
 	# ★ `TL_FOCUS="x,y,zoom"`：拍特效的近照（B1.6）。**不會在真實遊玩中生效**
 	#   ——它只在有鉤子時存在，而有鉤子時存檔已經是唯讀的。
 	if Hooks.focus.x >= 0:
 		_zoom = clampf(_fit * Hooks.focus_zoom, _fit, _fit * ZOOM_MAX_MULT)
 		var px := Vector2(s.map["size"]) * Shapes.GRID
-		_pan = (px * 0.5 - _center(Hooks.focus)) * _zoom
-		_clamp_pan()
+		_pan_to((px * 0.5 - _center(Hooks.focus)) * _zoom, true)
 
 
 ## 地圖左上角在螢幕上的位置。**框架內居中**，放大後由 `_pan` 帶著走。
@@ -271,6 +281,25 @@ func _clamp_pan() -> void:
 	var slack := (px - FRAME.size) * 0.5
 	_pan.x = clampf(_pan.x, -maxf(0.0, slack.x), maxf(0.0, slack.x))
 	_pan.y = clampf(_pan.y, -maxf(0.0, slack.y), maxf(0.0, slack.y))
+	_pan_goal.x = clampf(_pan_goal.x, -maxf(0.0, slack.x), maxf(0.0, slack.x))
+	_pan_goal.y = clampf(_pan_goal.y, -maxf(0.0, slack.y), maxf(0.0, slack.y))
+
+
+## 設定平移目標。`immediate` 為真時當場到位——中鍵拖曳、縮放錨定、
+## 以及所有測試斷言都走這條（斷言要驗的是「目標對不對」，不是「補間跑完沒」）。
+func _pan_to(p: Vector2, immediate: bool = false) -> void:
+	_pan_goal = p
+	if immediate or Motion.reduce:
+		_pan = p
+	_clamp_pan()
+	queue_redraw()
+
+
+## 讓補間立刻走完。測試專用——把「動畫還沒到」和「算錯位置」分開。
+func _settle_view() -> void:
+	_pan = _pan_goal
+	_clamp_pan()
+	queue_redraw()
 
 
 ## 縮放。`anchor` 是螢幕上要固定不動的那一點（滑鼠位置或框架中心）——
@@ -296,11 +325,11 @@ func _zoom_by(mult: float, anchor: Vector2) -> void:
 	var m := Vector2(s.map["size"]) * Shapes.GRID
 	var origin_before := FRAME.position + (FRAME.size - m * before) * 0.5 + _pan
 	var k := _zoom / before
-	_pan = (
+	_pan_to(
 		anchor - (anchor - origin_before) * k
-		- (FRAME.position + (FRAME.size - m * _zoom) * 0.5)
+		- (FRAME.position + (FRAME.size - m * _zoom) * 0.5),
+		true
 	)
-	_clamp_pan()
 	_refresh_zoom()
 	queue_redraw()
 
@@ -801,7 +830,27 @@ func _click_at(at: Vector2) -> void:
 		Input.parse_input_event(ev)
 
 
+## 合成一次滑鼠移動（不按鍵）。驗拖曳用——`_click_at()` 按下即放開，
+## 用它驗不到「按住不放的時候會怎樣」。
+func _move_at(at: Vector2) -> void:
+	Input.use_accumulated_input = false
+	var mm := InputEventMouseMotion.new()
+	mm.position = at
+	mm.global_position = at
+	mm.button_mask = MOUSE_BUTTON_MASK_LEFT
+	Input.parse_input_event(mm)
+
+
 func _process(delta: float) -> void:
+	# ★ 視野緩動（B2.1d）。指數收斂與幀率無關——`1-exp(-k*dt)` 在 30fps 與
+	#   144fps 下走完同一段路，`lerp(_, k*dt)` 不會。這只動**畫面**，
+	#   不碰模擬：`_pan` 不進 `state_hash()`，也不影響任何 tick。
+	if not _pan.is_equal_approx(_pan_goal):
+		_pan = _pan.lerp(_pan_goal, 1.0 - exp(-PAN_EASE * delta))
+		if _pan.distance_to(_pan_goal) < 0.5:
+			_pan = _pan_goal
+		queue_redraw()
+
 	# ★ `TL_SHOT` 下模擬凍結在 `_demo_layout()` 推完的那一格。否則截圖落在第幾
 	# tick 取決於這台機器 3 秒內跑了幾幀——同一份佈局在不同機器上會拍出不同
 	# 數字，截圖就不能拿來做回歸比對，也對不上 `TL_SIM=<同一個 N>` 的輸出。
@@ -999,9 +1048,13 @@ func _gui_input(event: InputEvent) -> void:
 		#   Input 單例從實體滑鼠狀態填的，合成事件填進去的值不保證留得住——
 		#   驗不到的輸入路徑就是遲早會壞掉的輸入路徑（B0.7.2 的教訓）。
 		if _panning:
-			_pan += mm.relative
-			_clamp_pan()
+			_pan_to(_pan + mm.relative, true)
 			queue_redraw()
+			return
+		# ★ 小地圖按住拖曳（B2.1d，使用者指定）：按住不放，視野持續跟著游標走。
+		#   走 `_pan_goal` → 畫面是**平滑**追過去的，不是一格一格跳。
+		if _mini_drag:
+			_mini_seek(mm.position)
 			return
 		var c := _cell_at(mm.position)
 		if c != _hover:
@@ -1015,6 +1068,11 @@ func _gui_input(event: InputEvent) -> void:
 		_panning = mb.pressed
 		return
 	if not mb.pressed:
+		if mb.button_index == MOUSE_BUTTON_LEFT and _mini_drag:
+			# 小地圖上放開：**不可以掉進 `_release()`**，否則等於在小地圖
+			# 底下那一格結束一次拉線。
+			_mini_drag = false
+			return
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			_release(mb.position)
 		return
@@ -1153,6 +1211,7 @@ func _draw() -> void:
 	_draw_enemies()
 	_draw_shots()
 	_draw_bursts()
+	_draw_shields()
 	_draw_hover()
 	# 階段色調（`10_GDD.md` §6.2 硬性要求 4）：**不看計時器也知道自己在哪個階段**。
 	# 蓋在最上層而不是墊在底下——墊底的話節點與敵人會把它整片蓋掉。
@@ -1208,11 +1267,9 @@ func _view_world_rect() -> Rect2:
 
 ## 把某一格移到畫面中央（小地圖與箭頭的「一鍵跳」）。
 ## 與 `TL_FOCUS` 走同一條算式——兩份會漂掉。
-func _center_view_on(c: Vector2i) -> void:
+func _center_view_on(c: Vector2i, immediate: bool = false) -> void:
 	var px := Vector2(s.map["size"]) * Shapes.GRID
-	_pan = (px * 0.5 - _center(c)) * _zoom
-	_clamp_pan()
-	queue_redraw()
+	_pan_to((px * 0.5 - _center(c)) * _zoom, immediate)
 
 
 ## 小地圖的位置：框架**右下角**內側——離建造欄（左）與能量列（上）最遠的角。
@@ -1229,9 +1286,11 @@ func _draw_minimap() -> void:
 	if not _oversized():
 		return
 	var r := _minimap_rect()
-	var box := r.grow(5.0)
-	draw_rect(box, Palette.alpha(Palette.BG_PANEL, 0.96))
-	draw_rect(box, Palette.BORDER_STRONG, false, 1.0)
+	# ★ 底板往外長，**外框畫在 `r` 上**（B2.1d）。舊版把框也畫在 `box` 上，
+	#   於是推到底時視野框離可見的邊還有 5px ——使用者回報「小地圖滑到底
+	#   不會貼邊」。框就是地圖的邊界，底板只是讓它在遊戲畫面上讀得出來。
+	draw_rect(r.grow(5.0), Palette.alpha(Palette.BG_PANEL, 0.96))
+	draw_rect(r, Palette.BORDER_STRONG, false, 1.0)
 	# 世界座標 → 小地圖座標。
 	var k := r.size.x / (float(s.map["size"].x) * Shapes.GRID)
 	var cell := maxf(1.0, Shapes.GRID * k)
@@ -1310,12 +1369,20 @@ func _guide_click(pos: Vector2) -> bool:
 		if pos.distance_to(hit[0] as Vector2) <= ARROW_HIT:
 			_center_view_on(hit[2] as Vector2i)
 			return true
-	var r := _minimap_rect()
-	if not r.grow(5.0).has_point(pos):
+	if not _minimap_rect().grow(5.0).has_point(pos):
 		return false
+	# 按下就開始拖曳；放開才結束（見 `_gui_input`）。單擊仍然等於「跳一次」，
+	# 因為按下的當下就已經 seek 過一次了。
+	_mini_drag = true
+	_mini_seek(pos)
+	return true
+
+
+## 把小地圖上的一點換算成地圖格，並把視野**平滑**移過去。
+func _mini_seek(pos: Vector2) -> void:
+	var r := _minimap_rect()
 	var k := r.size.x / (float(s.map["size"].x) * Shapes.GRID)
 	_center_view_on(Shapes.to_grid((pos - r.position) / k))
-	return true
 
 
 ## ★ 大圖導引自檢（`TL_CLICKTEST=1 TL_PANEL=endless`，B2.1b）。
@@ -1343,7 +1410,7 @@ func _guide_selftest() -> void:
 		# ★ **先把視野移過去才蓋得到**：那一格在畫面外，合成點擊落在框架外
 		#   會被輸入層擋掉（第一版就是這樣紅的——而那個行為是對的，玩家也
 		#   點不到看不見的格子）。蓋完再 `_reset_view()` 把它送回畫面外。
-		_center_view_on(target)
+		_center_view_on(target, true)
 		for _i in 2:
 			await get_tree().process_frame
 		_press(_build_buttons["extractor"])
@@ -1377,7 +1444,24 @@ func _guide_selftest() -> void:
 		_click_at(arrow_at)
 		for _i in 2:
 			await get_tree().process_frame
+		# ★ 補間中途的 `_pan` 還沒到位——`_settle_view()` 把「動畫沒跑完」
+		#   和「位置算錯」分開，否則這條斷言會變成在驗補間速度。
+		_settle_view()
 		jumped = _view_world_rect().has_point(_center(target))
+
+	# ★ 推到底要真的貼到地圖的邊（RG-121）。使用者回報「小地圖滑到底不會貼邊」
+	#   ——那是視野框與小地圖外框之間的內縮，肉眼在縮放過的截圖上判不準，
+	#   所以這裡用數字驗：夾到底之後視野的世界矩形要對齊地圖的角。
+	var msz := Vector2(s.map["size"]) * Shapes.GRID
+	_pan_to(Vector2(99999.0, 99999.0), true)
+	var tl := _view_world_rect().position
+	_pan_to(Vector2(-99999.0, -99999.0), true)
+	var br := _view_world_rect().end
+	var flush: bool = (
+		absf(tl.x) < 0.5 and absf(tl.y) < 0.5
+		and absf(br.x - msz.x) < 0.5 and absf(br.y - msz.y) < 0.5
+	)
+	_reset_view()
 
 	# 小地圖：點左上角，視野要往左上走（而且**不可以在那裡蓋出東西**）。
 	#
@@ -1403,8 +1487,34 @@ func _guide_selftest() -> void:
 	))
 	for _i in 2:
 		await get_tree().process_frame
-	var mini_moved: bool = _pan != pan_before
+	var mini_moved: bool = _pan_goal != pan_before
 	var mini_safe: bool = _message == "＿哨兵＿"
+
+	# ★ 按住拖曳（B2.1d，使用者指定）：**按住不放時視野要持續跟著游標**。
+	#   ⚠ `_click_at()` 是按下**即放開**，所以要自己按住——第一版直接接在
+	#   上一次點擊後面送移動事件，`drag=false`，因為那時早就放開了。
+	var opp := r.position + Vector2(
+		r.size.x - 6.0 if vcen.x > 0.5 else 6.0,
+		r.size.y - 6.0 if vcen.y > 0.5 else 6.0
+	)
+	_press_at(r.position + r.size * 0.5, true)
+	for _i in 2:
+		await get_tree().process_frame
+	var drag_from := _pan_goal
+	_move_at(opp)
+	for _i in 2:
+		await get_tree().process_frame
+	var dragged: bool = _pan_goal != drag_from
+	# 放開之後再移動就**不可以**再跟著跑，否則等於滑鼠一直黏著小地圖。
+	_press_at(opp, false)
+	var after_release := _pan_goal
+	_move_at(r.position + r.size * 0.5)
+	for _i in 2:
+		await get_tree().process_frame
+	var drag_stops: bool = _pan_goal == after_release
+	# 平滑：目標已經到了，但 `_pan` 還在路上（補間真的存在，不是瞬移）。
+	var smooth: bool = not _pan.is_equal_approx(_pan_goal)
+	_settle_view()
 
 	# 可讀性地板：大圖的縮放下限是 24px／格，不是 fit（RG-59）。
 	var floor_ok: bool = Shapes.GRID * _fit >= Shapes.MIN_READABLE_CELL - 0.001
@@ -1421,14 +1531,15 @@ func _guide_selftest() -> void:
 	var ok: bool = (
 		big and found_offscreen and placed and back_offscreen and flagged and arrowed
 		and arrow_inside and jumped and mini_moved and mini_safe and floor_ok and frac_ok
+		and flush and dragged and drag_stops and smooth
 	)
 	print(
 		"[TL_CLICKTEST/endless] big=%s offscreen=%s placed=%s back_off=%s flagged=%s arrow=%s"
 		% [big, found_offscreen, placed, back_offscreen, flagged, arrowed]
 		+ " inside=%s jump=%s mini_pan=%s mini_safe=%s floor=%s（%.1f px/格）"
 		% [arrow_inside, jumped, mini_moved, mini_safe, floor_ok, Shapes.GRID * _fit]
-		+ " view=%.0f%%×%.0f%% → %s"
-		% [frac.x * 100.0, frac.y * 100.0, "PASS" if ok else "FAIL"]
+		+ " flush=%s drag=%s drag_stop=%s smooth=%s view=%.0f%%×%.0f%% → %s"
+		% [flush, dragged, drag_stops, smooth, frac.x * 100.0, frac.y * 100.0, "PASS" if ok else "FAIL"]
 	)
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)
@@ -1959,6 +2070,42 @@ func _draw_threat(cell: Vector2i, p: Vector2) -> void:
 ##
 ## 零 RNG（`Motion.fragment_dir` 由來源 id 決定方向），所以重播與每日挑戰
 ## 看到的是同一場爆炸。
+## ★ 屏障擋格（B2.1d，使用者指定「類似盾牌隔檔」）。
+##
+## 畫成**面向來向的一段弧**＋一次白閃：盾牌的語彙是「擋住」，不是「爆開」，
+## 所以用弧線而不是圓（圓已經是碎片爆的語彙，兩者不能混）。
+## 弧的張角隨減傷比例變大——擋掉四成和擋掉九成看得出差別。
+##
+## **只在能量傷害被吃掉時出現**，所以它同時回答了「為什麼我打不動」：
+## 玩家看到盾就知道換物理傷害的塔（§3.5 的剋制表）。
+func _draw_shields() -> void:
+	var frac := _accum / BattleController.TICK
+	for sh: Dictionary in s.shields:
+		var t := Motion.progress(int(sh["life"]), int(sh["ttl"]), frac)
+		var at: Vector2 = (
+			Vector2(sh["at"] as Vector2i) * Shapes.GRID
+			+ Vector2(Shapes.GRID, Shapes.GRID) * 0.5
+		)
+		var e := Motion.ease_out_cubic(t)
+		# ★ **六邊形的護盾泡**，不是一段弧。
+		#   第一版畫成朝 +X 的弧：在 32px 的格子上和敵人自己的輪廓分不開，
+		#   而且「朝右」對一隻正在往下走的敵人沒有意義（我手上只有格子，
+		#   沒有傷害來向）。改成封閉的六邊形之後**與方向無關**，
+		#   而且六邊形是本作既有的「硬」語彙（甲殼就是六邊形，§1.7）。
+		var r := Shapes.GRID * (0.62 + 0.22 * e)
+		var poly := PackedVector2Array()
+		for i in 7:
+			var a := TAU * float(i) / 6.0 - PI / 2.0
+			poly.append(at + Vector2(cos(a), sin(a)) * r)
+		draw_polyline(poly, Palette.alpha(Palette.ORDER_BRIGHT, (1.0 - t) * 0.95), 3.0)
+		# 擋掉越多，泡越實：40% 與 90% 看得出差別。
+		var fill := clampf(float(sh["frac"]), 0.0, 1.0)
+		draw_polyline(poly, Palette.alpha(Palette.ORDER_CYAN, (1.0 - t) * 0.45 * fill), 7.0)
+		# 起手一瞬的白閃，讓「就是現在被擋了一下」讀得出來。
+		if t < 0.35:
+			draw_circle(at, Shapes.GRID * 0.30, Palette.alpha(Palette.ORDER_BRIGHT, (0.35 - t) * 1.6))
+
+
 func _draw_bursts() -> void:
 	var frac := _accum / BattleController.TICK
 	for b: Dictionary in s.bursts:
@@ -2744,6 +2891,7 @@ func _refresh_over() -> void:
 	#   由畫面層在這裡收乾淨。
 	s.shots.clear()
 	s.bursts.clear()
+	s.shields.clear()
 	var won: bool = s.phase == "won"
 	var waves: int = s.wave_index if won else maxi(0, s.wave_index - 1)
 	var score := Score.throughput(s.delivered_total, s.tick_count, BattleController.TICK)

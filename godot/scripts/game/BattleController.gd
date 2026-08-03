@@ -43,6 +43,11 @@ static func step(s: RefCounted) -> void:
 	# 碎片的壽命在這裡遞減，**不放進 `_fire()`**：那支函式在「場上沒有敵人」
 	# 時會提早 return，而最後一隻敵人死掉的那一 tick 正好就是沒有敵人的那一 tick
 	# ——碎片會卡在畫面上不消失。
+	for i in range(s.shields.size() - 1, -1, -1):
+		var sh: Dictionary = s.shields[i]
+		sh["ttl"] = int(sh["ttl"]) - 1
+		if int(sh["ttl"]) <= 0:
+			s.shields.remove_at(i)
 	for i in range(s.bursts.size() - 1, -1, -1):
 		var b: Dictionary = s.bursts[i]
 		b["ttl"] = int(b["ttl"]) - 1
@@ -227,10 +232,19 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 			# 科技「校準」（§7.8）乘在**原始傷害**上，在減傷／破甲之前——
 			# 乘在最後結果上會讓它對高護甲敵人的效益憑空變小，而玩家買的是
 			# 「塔傷害 +6%」，不是「對軟目標 +6%」。
-			damage[i] += Combat.hit_damage(
-				float(def.get("dmg", 0.0)) * float(count) * float(s.mods["damage_mult"]),
-				String(def.get("dmg_type", "physical")), edef, aura[i].y
+			var raw := float(def.get("dmg", 0.0)) * float(count) * float(s.mods["damage_mult"])
+			var dealt := Combat.hit_damage(
+				raw, String(def.get("dmg_type", "physical")), edef, aura[i].y
 			)
+			damage[i] += dealt
+			# ★ 屏障擋格（B2.1d，使用者指定「類似盾牌隔檔」）。**純渲染**：
+			#   `shields` 和 `shots`／`bursts` 一樣不進 `state_hash()`。
+			#   只有**能量傷害被屏障吃掉一截**時才出現——護甲（減法）不畫，
+			#   它已經有六邊形＋厚邊在講「硬」（§1.7）。
+			#   屏障在此之前**完全沒有視覺通道**：玩家只看得出熾泳「快」，
+			#   看不出自己的能量傷害被砍掉四成。
+			if dealt < raw - 0.001 and String(def.get("dmg_type", "physical")) == "energy":
+				_shield(s, cells[i], (raw - dealt) / maxf(raw, 0.001))
 			# `by` 是**純渲染**欄位（`shots` 不進 `state_hash()`）：畫的時候要知道
 			# 這一發是誰開的，才畫得出四種開火形態（`20_ART_DIRECTION.md` §1.7）。
 			# 形態本身由 `NodeDefs` 既有的 `dmg_type`／`pierce`／`splash`／`reclaim`
@@ -243,7 +257,12 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 			if splash_at.x >= 0:
 				rec["splash_at"] = splash_at
 				splash_at = Vector2i(-1, -1)
-				s.shots.append(rec)
+			# ⚠ **這一行必須在 `if` 外面。** B1.6.3 誤縮排到 `if` 裡面，於是
+			#   只有濺射（碎浪）會留下 `shots` 記錄——其餘四座塔的開火形態
+			#   （稜鏡光束、實體彈、回收珠）**整整一批都沒有畫出來過**，
+			#   而所有測試都是綠的，因為 `shots` 是純渲染、不進 `state_hash()`。
+			#   回歸斷言在 `hud_test`：非濺射塔開火後 `shots` 不得為空。
+			s.shots.append(rec)
 
 	# **先把全部傷害算完再結算死亡**：邊打邊結算的話，同一 tick 內誰拿到擊殺
 	# 會由節點在陣列裡的順序決定——那是把 id 順序偷渡成遊戲規則。
@@ -269,6 +288,19 @@ static func _burst(s: RefCounted, at: Vector2, kind: String, seed_id: int) -> vo
 	if life <= 0:
 		return
 	s.bursts.append({"at": at, "kind": kind, "seed": seed_id, "life": life, "ttl": life})
+
+
+## ★ 屏障擋格的渲染記錄（B2.1d）。同一隻敵人同一 tick 只留一筆——
+## 一發打中 N 隻是 N 筆（各自在自己身上擋），但一隻被 N 座塔打中只畫一次，
+## 否則同一個位置會疊出 N 層弧線（和 B1.6.3 濺射環疊 N 圈是同一個錯）。
+static func _shield(s: RefCounted, at: Vector2i, frac: float) -> void:
+	var life := Motion.ticks(Motion.BASE)
+	if life <= 0:
+		return
+	for r: Dictionary in s.shields:
+		if r["at"] == at:
+			return
+	s.shields.append({"at": at, "frac": frac, "life": life, "ttl": life})
 
 
 ## 一次擊殺的兩種回收，**並存**（§7.4）。

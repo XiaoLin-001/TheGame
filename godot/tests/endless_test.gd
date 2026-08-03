@@ -19,18 +19,28 @@ const SWEEP := 300
 
 ## ★ B2.1c 的四個門檻。**數字是實測值往回退一步訂的**，不是照著實測填的
 ## ——照實測填等於把「現在剛好長這樣」寫成規格，任何一點變動都會假紅。
-## 實測：跨幅 min 28／死列 max 0／礦點全在帶內／孤點 12%。
+## 實測：跨幅 min 28／死列 max 0／礦點全部離路徑 ≥2／每一大區都有礦。
 const SPAN_MIN := 18
 const REACH := 6
 const DEAD_MAX := 6
-const LONELY_MAX := 0.2
 ## ★ B2.1c 第二輪。「一坨擠在一起、其他地方都是空的」的兩個可量面向：
 ## **空檔**＝沿路徑連續幾格旁邊沒有任何礦；**擠**＝半徑 4 內最多幾顆。
-## 實測：空檔 avg 5.8／max 19，擠 avg 3.2／max 6。
-## 注意「擠」的下限不是 1——**一條脈本來就是三顆靠在一起**，那是設計不是缺陷；
-## 這一條守的是「兩條脈不要疊在一起」。
-const GAP_MAX := 24
+## 實測（第三輪，面積分層）：見下方斷言訊息印出的實測值。
+## ★ 第三輪放寬 24 → 40（實測最差 28）。**這是設計變了，不是把門檻遷就實作**：
+## 礦點改成鋪滿全圖之後，「路線旁邊一定有礦」本來就不再是承諾——
+## 承諾換成了不變量 9（每一個大區都有礦）。這一條退居為粗略的理智檢查：
+## 擋的是「整條路線有一大半旁邊完全沒東西」那種極端。
+const GAP_MAX := 40
 const CLUMP_MAX := 8
+## ★ B2.1c 第三輪：「平均分配」的可量版本。把整張圖切成 `AREA_COLS×AREA_ROWS`
+## 個大區，**每一區都要有礦**。這是使用者第三次回報同一件事之後補的：
+## 前兩輪的指標（沿路徑的空檔、半徑內的擁擠度）**都只看路徑附近**，
+## 所以「礦點全擠在路邊、其他地方一顆都沒有」在它們眼裡是滿分。
+const AREA_COLS := 4
+const AREA_ROWS := 3
+## 「路徑旁邊算不算有礦」的半徑。第三輪把生成器的 `OFF_MAX` 拿掉之後，
+## 這個數字只屬於**指標**，不再是生成規則——量的是「沿路線走，附近有沒有礦」。
+const COVER := 7
 
 
 func _initialize() -> void:
@@ -70,7 +80,7 @@ func _invariants(t: T) -> void:
 	var dead_rows := 0
 	var worst_dead := 0
 	var ore_off_band := 0
-	var lonely := 0
+	var empty_area := 0
 	var ore_total := 0
 	var worst_gap := 0
 	var worst_clump := 0
@@ -142,24 +152,29 @@ func _invariants(t: T) -> void:
 		dead_rows += dead
 		worst_dead = maxi(worst_dead, dead)
 
-		# ★ 不變量 8：礦點離路徑落在容許帶內（B2.1c）。下限是 walk-by 打不到，
-		#   上限是「這顆礦值不值得拉一條導管過去」。舊版 50% 的礦點超出上限。
+		# ★ 不變量 8：礦點離路徑 ≥ OFF_MIN（walk-by 打不到）。
+		#   **上限已於第三輪移除**——那條上限正是「只長在路邊」的成因。
 		var ore: Array = m["ore"]
 		var dist := _dist_to_path(on_path, ore)
 		ore_total += ore.size()
 		for c: Vector2i in ore:
-			var d := int(dist.get(c, -1))
-			if d < MapGen.OFF_MIN or d > MapGen.OFF_MAX:
+			if int(dist.get(c, -1)) < MapGen.OFF_MIN:
 				ore_off_band += 1
-		# ★ 不變量 9：礦點成脈，不是撒點。孤點＝最近的另一顆礦在 VEIN_STEP
-		#   的兩倍之外，也就是收不進同一條幹線。舊版 72% 是孤點。
-		for a: Vector2i in ore:
-			var nb := 9999
-			for b: Vector2i in ore:
-				if a != b:
-					nb = mini(nb, absi(a.x - b.x) + absi(a.y - b.y))
-			if nb > MapGen.VEIN_STEP * 2:
-				lonely += 1
+		# ★ 不變量 9：**每一個大區都要有礦**（平均分配）。切 4×3 是因為
+		#   20–26 顆礦分到 12 區、每區平均 2 顆——切得再細就會變成在驗
+		#   「剛好每區一顆」，那是把實作寫成規格。
+		for gx in AREA_COLS:
+			for gy in AREA_ROWS:
+				var any := false
+				for c: Vector2i in ore:
+					if (
+						c.x >= size.x * gx / AREA_COLS and c.x < size.x * (gx + 1) / AREA_COLS
+						and c.y >= size.y * gy / AREA_ROWS and c.y < size.y * (gy + 1) / AREA_ROWS
+					):
+						any = true
+						break
+				if not any:
+					empty_area += 1
 
 		# ★ 不變量 10：沿路徑的最大空檔（B2.1c 第二輪）。使用者的原話是
 		#   「只在某些地方有，其他地方都是空的」。均勻要靠**分層**不能靠隨機
@@ -170,7 +185,7 @@ func _invariants(t: T) -> void:
 			var p: Vector2i = path[j]
 			var covered := false
 			for c: Vector2i in ore:
-				if absi(c.x - p.x) + absi(c.y - p.y) <= MapGen.OFF_MAX:
+				if absi(c.x - p.x) + absi(c.y - p.y) <= COVER:
 					covered = true
 					break
 			if covered:
@@ -180,9 +195,8 @@ func _invariants(t: T) -> void:
 				worst_gap = maxi(worst_gap, run)
 
 		# ★ 不變量 11：最擠（半徑 4 內的礦點數）。使用者的原話是「一坨擠在
-		#   一起」。**一條脈本身就是三顆靠在一起，那是設計**——這一條守的是
-		#   兩條脈不要疊在同一個地方（沿路徑索引分層不保證空間上散得開：
-		#   轉角處相隔十幾個索引的兩段在地圖上可能只差 5 格）。
+		#   一起」。面積分層之後這一條守的是**相鄰區塊的邊界**——兩顆各自
+		#   貼著共同邊界一樣會擠在一起，`ORE_APART` 就是為此存在的。
 		for a: Vector2i in ore:
 			var k := 0
 			for b: Vector2i in ore:
@@ -229,13 +243,13 @@ func _invariants(t: T) -> void:
 	)
 	t.eq(
 		ore_off_band, 0,
-		"%d 張圖：礦點全部離路徑 %d–%d 格（walk-by 打不到，又值得拉線過去）"
-			% [SWEEP, MapGen.OFF_MIN, MapGen.OFF_MAX]
+		"%d 張圖：礦點全部離路徑 ≥ %d 格（walk-by 打不到）"
+			% [SWEEP, MapGen.OFF_MIN]
 	)
-	t.ok(
-		float(lonely) / float(ore_total) <= LONELY_MAX,
-		"%d 張圖：孤點 %.0f%% ≤ %.0f%%（礦點成脈，一條幹線收得完）"
-			% [SWEEP, float(lonely) / float(ore_total) * 100.0, LONELY_MAX * 100.0]
+	t.eq(
+		empty_area, 0,
+		"%d 張圖 × %d 個大區：**每一區都有礦**（平均分配，不是只長在路邊）"
+			% [SWEEP, AREA_COLS * AREA_ROWS]
 	)
 
 	t.ok(
@@ -245,7 +259,7 @@ func _invariants(t: T) -> void:
 	)
 	t.ok(
 		worst_clump <= CLUMP_MAX,
-		"%d 張圖：半徑 4 內最多 %d 顆礦（實測最差 %d）——兩條脈不疊在一起"
+		"%d 張圖：半徑 4 內最多 %d 顆礦（實測最差 %d）——相鄰區塊的礦不擠在一起"
 			% [SWEEP, CLUMP_MAX, worst_clump]
 	)
 

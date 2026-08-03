@@ -176,26 +176,93 @@ def bgm_base():
 
 
 def bgm_perc():
+    """戰鬥層。**疊在 `bgm_base` 上播**，所以這一層只負責「外面那個東西」。
+
+    ★ 第二版（B2.1d）。第一版使用者回報「戰鬥的音樂不好」。三個具體毛病：
+      ① **每一拍都一顆 kick**（24 拍 24 顆）。四平八穩、沒有重音層次，
+         一波打三分鐘等於同一個節拍敲兩百多次，很快就變成噪音而不是張力。
+      ② **1320/1328Hz 的失諧正弦**互打出 8Hz 拍音。那是很尖的頻段，
+         長時間聽會刺耳——「威脅」不該用生理不適來表達。
+      ③ **和聲完全不動**。底層是恆定的 A 小調 drone，這一層也不給任何進行，
+         整首沒有方向感，聽起來就是一段循環而不是一段音樂。
+
+    這一版的作法：
+      ① 節奏**切分**：每小節 kick 落在 1、2.5、4（不是 1234），
+         第 4 拍那顆輕、當作推進下一小節的預備。
+      ② **低音有進行**：六小節走 Am–Am–F–F–G–G（A 小調的 i–VI–VII），
+         每小節換一次根音。這是「有方向」的來源，也還在同一個調上，
+         和 `bgm_base` 的 drone 疊起來不打架。
+      ③ **威脅改用低頻**：小二度叢集（A2 與降 B2）緩慢漲落，
+         再加一層低通過的噪音「呼吸」。不協和感留著，刺耳拿掉。
+      ④ **敲玻璃的動機**：一個兩下的金屬敲擊，只在第 2 與第 5 小節出現。
+         整個 loop 因此有起伏，而不是每小節都一樣。
+    """
     out = buf(LOOP)
-    # 打擊層：每一拍一顆低頻 kick（下滑的正弦），反拍一個金屬碎響。
-    for b in range(24):
-        t0 = b * BEAT
-        if t0 > LOOP - 0.4:
-            break
-        kick = buf(0.26)
-        for i in range(len(kick)):
-            t = i / RATE
-            f = 110.0 * math.exp(-9.0 * t) + 44.0
-            kick[i] = math.sin(2.0 * math.pi * f * t) * env_exp(t, 0.26, 7.0)
-        mix(out, kick, t0, 0.55 if b % 4 == 0 else 0.34)
-        if b * BEAT + BEAT * 0.5 < LOOP - 0.2:
-            hat = highpass(noise(0.06, 31 + b), 5200)
-            hat = [v * env_exp(i / RATE, 0.06, 14.0) for i, v in enumerate(hat)]
-            mix(out, hat, t0 + BEAT * 0.5, 0.20)
-    # 失諧的高頻：兩個差 8Hz 的正弦互相打拍，慢慢進出。**這是「威脅」那一層**。
-    swell = lambda t: 0.05 * (0.5 - 0.5 * math.cos(2.0 * math.pi * (2.0 / LOOP) * t))
-    tone(out, 1320.0, 0, LOOP, swell, loop=LOOP)
-    tone(out, 1328.0, 0, LOOP, swell, loop=LOOP, phase=0.7)
+    bar = BEAT * 4.0
+    # 六小節的根音：Am–Am–F–F–G–G（i–VI–VII）。頻率是 A1 為基準的比例。
+    roots = [ROOT, ROOT, ROOT * 2 ** (8 / 12.0) / 2, ROOT * 2 ** (8 / 12.0) / 2,
+             ROOT * 2 ** (10 / 12.0) / 2, ROOT * 2 ** (10 / 12.0) / 2]
+
+    for m in range(6):
+        t_bar = m * bar
+        # ── 低音：每小節一個長音，慢起慢收，接得住下一小節 ──────────────
+        f = roots[m]
+        # ⚠ 包絡**兩端必須是 0**。第一版寫成 `0.35 + 0.65*sin(...)`，最低點是
+        #   0.35 → 每小節的低音是「跳進來」的，而 loop 接點正好是其中一次跳，
+        #   `audio_test` 當場抓到（接點跳幅 1602／鄰近平均 271）。
+        tone(out, f, t_bar, bar, lambda t: 0.34 * math.sin(math.pi * t / bar))
+        tone(out, f * 2.0, t_bar, bar, lambda t: 0.12 * math.sin(math.pi * t / bar))
+
+        # ── kick：1、2.5、4（切分）。第 4 拍輕，是給下一小節的預備 ────────
+        for beat, gain in [(0.0, 0.62), (1.5, 0.40), (3.0, 0.26)]:
+            t0 = t_bar + beat * BEAT
+            if t0 > LOOP - 0.35:
+                continue
+            kick = buf(0.30)
+            for i in range(len(kick)):
+                t = i / RATE
+                # 下滑的正弦：從 130Hz 掉到根音附近，尾巴接得住低音層。
+                fr = 130.0 * math.exp(-11.0 * t) + f
+                kick[i] = math.sin(2.0 * math.pi * fr * t) * env_exp(t, 0.30, 6.0)
+            mix(out, kick, t0, gain)
+
+        # ── 反拍的金屬碎響，只在 2、4 拍後半，比第一版稀 ──────────────
+        for beat in (1.0, 3.5):
+            t0 = t_bar + beat * BEAT
+            if t0 > LOOP - 0.2:
+                continue
+            hat = highpass(noise(0.05, 101 + m * 7 + int(beat * 2)), 4800)
+            hat = [v * env_exp(i / RATE, 0.05, 16.0) for i, v in enumerate(hat)]
+            mix(out, hat, t0, 0.14)
+
+    # ── 敲玻璃：兩下的金屬動機，只在第 2 與第 5 小節 ──────────────────
+    # 這是整首唯一「有人在外面」的具體聲音，稀少才有份量（§5）。
+    for m, gain in [(1, 0.30), (4, 0.34)]:
+        for k, off in enumerate((0.0, 0.75)):
+            t0 = m * bar + (2.0 + off) * BEAT
+            if t0 > LOOP - 0.5:
+                continue
+            knock = buf(0.42)
+            for i in range(len(knock)):
+                t = i / RATE
+                # 兩個不成整數比的泛音 → 金屬感（不是鐘，是被敲的鋼板）。
+                v = (math.sin(2.0 * math.pi * 494.0 * t)
+                     + 0.7 * math.sin(2.0 * math.pi * 494.0 * 2.76 * t)
+                     + 0.4 * math.sin(2.0 * math.pi * 494.0 * 5.40 * t))
+                knock[i] = v * env_exp(t, 0.42, 8.0)
+            knock = lowpass(knock, 5200)
+            mix(out, knock, t0, gain * (1.0 if k == 0 else 0.62))
+
+    # ── 威脅層：小二度叢集（A2 / B♭2），緩慢漲落 ─────────────────────
+    # 第一版用 1320Hz 的 8Hz 拍音，太尖。同樣是不協和，搬到低頻就只剩壓迫感。
+    swell = lambda t: 0.055 * (0.5 - 0.5 * math.cos(2.0 * math.pi * (2.0 / LOOP) * t))
+    tone(out, 110.0, 0, LOOP, swell, loop=LOOP)
+    tone(out, 116.5, 0, LOOP, swell, loop=LOOP, phase=0.9)
+    # 低通噪音的「呼吸」，一個 loop 兩次。給空間感，不給音高。
+    breath = lowpass(loop_noise(LOOP, 60.0, 900.0, 40, 4242, 1.0), 700, circular=True)
+    for i in range(len(out)):
+        t = i / RATE
+        out[i] += breath[i] * 0.10 * (0.5 - 0.5 * math.cos(2.0 * math.pi * (2.0 / LOOP) * t))
     return normalize(out, 0.70)
 
 
