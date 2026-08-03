@@ -2,9 +2,8 @@
 
 Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
-> **狀態：遠端尚未建立（2026-07-27）。** 本 repo 目前沒有 `git remote`，`gh` 也還沒安裝。
-> 在遠端接上之前，下列所有指令都會失敗——這是預期的，不是設定錯誤。
-> 接上的方法見本檔末尾「Pending: 建立遠端」。
+> **狀態：遠端已建立（2026-08-03）。** `origin` = `github.com/XiaoLin-001/TheGame`，
+> **可見性 PUBLIC**（使用者 2026-08-03 拍板：維持公開）。`gh` 已安裝並登入。
 >
 > **與 `docs/40_PRODUCTION_PLAN.md` 的關係**：生產計畫的**批次 backlog** 是里程碑層級的
 > 權威排程（B0.1、B0.2、…），**不會**搬到 GitHub issues。GitHub issues 給的是
@@ -55,25 +54,16 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 
 ---
 
-## Pending: 建立遠端
+## 遠端（已建立）
 
-由持有 GitHub 帳號的人執行（agent 不碰認證）。裝好 `gh` 之後：
+`origin` = `https://github.com/XiaoLin-001/TheGame`，**PUBLIC**。
 
-```bash
-winget install --id GitHub.cli -e
-```
+**可見性是使用者拍板的決定（2026-08-03），不要再改。** 本檔原先建議 `--private`，
+理由是「`docs/` 含完整 GDD 與變現設計，公開等於把設計案送出去」——使用者知情後
+選擇維持公開，所以那段建議已移除，免得文件和現實繼續打架。
 
-重開一個終端讓 PATH 生效，然後：
+實務上的兩個後果，記著就好：
 
-```bash
-gh auth login
-```
-
-最後在 repo 根目錄一次做完「建 repo ＋ 接遠端 ＋ 推上去」：
-
-```bash
-gh repo create TheGame --private --source=. --remote=origin --push
-```
-
-**建議先用 `--private`。** 這個 repo 的 `docs/` 含完整 GDD 與變現設計，公開等於把設計案送出去。
-遠端建好後把本檔頂端的「狀態」註記刪掉，並確認 `gh issue list` 跑得起來。
+- **不要把任何機密放進這個 repo**（金鑰、後端端點、未公布的商業條款）。
+  `tools/godot/` 已在 gitignore，維持這樣。
+- **設計案是公開的。** 這是刻意的選擇，不是疏漏。
