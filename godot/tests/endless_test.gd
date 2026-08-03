@@ -17,6 +17,14 @@ const SaveService := preload("res://scripts/core/SaveService.gd")
 ## 都是「某些種子才踩得到」（`_other_y` 沒得選、核心區太小、跨越點撞入口）。
 const SWEEP := 300
 
+## ★ B2.1c 的四個門檻。**數字是實測值往回退一步訂的**，不是照著實測填的
+## ——照實測填等於把「現在剛好長這樣」寫成規格，任何一點變動都會假紅。
+## 實測：跨幅 min 28／死列 max 0／礦點全在帶內／孤點 12%。
+const SPAN_MIN := 18
+const REACH := 6
+const DEAD_MAX := 6
+const LONELY_MAX := 0.2
+
 
 func _initialize() -> void:
 	var t := T.new("endless_test")
@@ -50,6 +58,13 @@ func _invariants(t: T) -> void:
 	var worst_near := 99
 	var out_of_bounds := 0
 	var edge_hugging := 0
+	var thin_span := 0
+	var worst_span := 99
+	var dead_rows := 0
+	var worst_dead := 0
+	var ore_off_band := 0
+	var lonely := 0
+	var ore_total := 0
 
 	for i in SWEEP:
 		var m := MapGen.generate(i * 7 + 1)
@@ -89,6 +104,54 @@ func _invariants(t: T) -> void:
 			if c == core:
 				ore_on_core += 1
 
+		# ★ 不變量 6：路徑縱向跨幅（B2.1c）。舊版每段獨立抽列，走出來的是一條
+		#   在窄帶裡折返的路徑——平均只跨 19.3 列、最差的種子只跨 8 列，
+		#   於是整個下半區是玩家永遠不會去的死區。單調掃掠把這件事變成結構保證。
+		var lo := size.y
+		var hi := -1
+		var rows: Dictionary = {}
+		for c: Vector2i in path:
+			lo = mini(lo, c.y)
+			hi = maxi(hi, c.y)
+			rows[c.y] = true
+		var span := hi - lo + 1
+		worst_span = mini(worst_span, span)
+		if span < SPAN_MIN:
+			thin_span += 1
+
+		# ★ 不變量 7：死列——離任何路徑列超過 REACH 列的列。塔的射程與產線的
+		#   合理長度都在這個尺度上，所以死列＝畫面上有、玩法上沒有的空間。
+		var dead := 0
+		for y in size.y:
+			var near_row := false
+			for ry: int in rows.keys():
+				if absi(ry - y) <= REACH:
+					near_row = true
+					break
+			if not near_row:
+				dead += 1
+		dead_rows += dead
+		worst_dead = maxi(worst_dead, dead)
+
+		# ★ 不變量 8：礦點離路徑落在容許帶內（B2.1c）。下限是 walk-by 打不到，
+		#   上限是「這顆礦值不值得拉一條導管過去」。舊版 50% 的礦點超出上限。
+		var ore: Array = m["ore"]
+		var dist := _dist_to_path(on_path, ore)
+		ore_total += ore.size()
+		for c: Vector2i in ore:
+			var d := int(dist.get(c, -1))
+			if d < MapGen.OFF_MIN or d > MapGen.OFF_MAX:
+				ore_off_band += 1
+		# ★ 不變量 9：礦點成脈，不是撒點。孤點＝最近的另一顆礦在 VEIN_STEP
+		#   的兩倍之外，也就是收不進同一條幹線。舊版 72% 是孤點。
+		for a: Vector2i in ore:
+			var nb := 9999
+			for b: Vector2i in ore:
+				if a != b:
+					nb = mini(nb, absi(a.x - b.x) + absi(a.y - b.y))
+			if nb > MapGen.VEIN_STEP * 2:
+				lonely += 1
+
 		# 「不必過橋」＝ 從核心的自由鄰格出發、只走非路徑格的四連通泛洪能到。
 		# ★ 這裡**刻意重寫一次泛洪**，不呼叫 `MapGen._core_region()`——
 		#   用生成器自己的函式驗生成器，測的是它跟自己一致，不是它對。
@@ -116,6 +179,27 @@ func _invariants(t: T) -> void:
 			% [SWEEP, MapGen.NEAR_ORE, worst_near]
 	)
 
+	t.eq(
+		thin_span, 0,
+		"%d 張圖：路徑縱向跨幅全部 ≥ %d 列（最窄的一張 %d 列，全高 %d）"
+			% [SWEEP, SPAN_MIN, worst_span, MapGen.H]
+	)
+	t.ok(
+		worst_dead <= DEAD_MAX,
+		"%d 張圖：死列最多 %d 列（實測最差 %d，平均 %.1f）"
+			% [SWEEP, DEAD_MAX, worst_dead, float(dead_rows) / float(SWEEP)]
+	)
+	t.eq(
+		ore_off_band, 0,
+		"%d 張圖：礦點全部離路徑 %d–%d 格（walk-by 打不到，又值得拉線過去）"
+			% [SWEEP, MapGen.OFF_MIN, MapGen.OFF_MAX]
+	)
+	t.ok(
+		float(lonely) / float(ore_total) <= LONELY_MAX,
+		"%d 張圖：孤點 %.0f%% ≤ %.0f%%（礦點成脈，一條幹線收得完）"
+			% [SWEEP, float(lonely) / float(ore_total) * 100.0, LONELY_MAX * 100.0]
+	)
+
 	# 數量落在宣告的範圍內（§7.10 的參數表）。
 	var m0 := MapGen.generate(12345)
 	t.ok(
@@ -130,6 +214,20 @@ func _invariants(t: T) -> void:
 	t.eq(m0["size"], Vector2i(MapGen.W, MapGen.H), "B2.1a 的尺寸仍是一屏可見")
 	t.ok(bool(m0.get("endless", false)), "生成圖帶著 endless 旗標")
 	t.eq(Maps.waves_of(m0), [], "生成圖沒有波次表——波次由公式長出來")
+
+
+## 與 `MapGen._dist_to_path()` 各寫一份的距離場（理由同泛洪）。
+## 這一份刻意用**最笨的寫法**：每格對全路徑取最小曼哈頓距離。生成器那份是
+## 多源 BFS——兩種算法在路徑轉角處是會分岔的，所以這不只是抄一遍。
+## 只算礦點那幾格——全格盤是 64×40×94×300 次，跑起來比整支測試還久。
+func _dist_to_path(on_path: Dictionary, cells: Array) -> Dictionary:
+	var out: Dictionary = {}
+	for c: Vector2i in cells:
+		var best := 9999
+		for p: Vector2i in on_path.keys():
+			best = mini(best, absi(p.x - c.x) + absi(p.y - c.y))
+		out[c] = best
+	return out
 
 
 ## 與 `MapGen._core_region()` 各寫一份的泛洪（理由見上）。
