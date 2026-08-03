@@ -24,6 +24,13 @@ const SPAN_MIN := 18
 const REACH := 6
 const DEAD_MAX := 6
 const LONELY_MAX := 0.2
+## ★ B2.1c 第二輪。「一坨擠在一起、其他地方都是空的」的兩個可量面向：
+## **空檔**＝沿路徑連續幾格旁邊沒有任何礦；**擠**＝半徑 4 內最多幾顆。
+## 實測：空檔 avg 5.8／max 19，擠 avg 3.2／max 6。
+## 注意「擠」的下限不是 1——**一條脈本來就是三顆靠在一起**，那是設計不是缺陷；
+## 這一條守的是「兩條脈不要疊在一起」。
+const GAP_MAX := 24
+const CLUMP_MAX := 8
 
 
 func _initialize() -> void:
@@ -65,6 +72,8 @@ func _invariants(t: T) -> void:
 	var ore_off_band := 0
 	var lonely := 0
 	var ore_total := 0
+	var worst_gap := 0
+	var worst_clump := 0
 
 	for i in SWEEP:
 		var m := MapGen.generate(i * 7 + 1)
@@ -152,6 +161,35 @@ func _invariants(t: T) -> void:
 			if nb > MapGen.VEIN_STEP * 2:
 				lonely += 1
 
+		# ★ 不變量 10：沿路徑的最大空檔（B2.1c 第二輪）。使用者的原話是
+		#   「只在某些地方有，其他地方都是空的」。均勻要靠**分層**不能靠隨機
+		#   ——第一版隨機挑錨點，空檔平均 16.8 格、最差 43（＝將近半條路線
+		#   旁邊沒有任何礦）。
+		var run := 0
+		for j in path.size():
+			var p: Vector2i = path[j]
+			var covered := false
+			for c: Vector2i in ore:
+				if absi(c.x - p.x) + absi(c.y - p.y) <= MapGen.OFF_MAX:
+					covered = true
+					break
+			if covered:
+				run = 0
+			else:
+				run += 1
+				worst_gap = maxi(worst_gap, run)
+
+		# ★ 不變量 11：最擠（半徑 4 內的礦點數）。使用者的原話是「一坨擠在
+		#   一起」。**一條脈本身就是三顆靠在一起，那是設計**——這一條守的是
+		#   兩條脈不要疊在同一個地方（沿路徑索引分層不保證空間上散得開：
+		#   轉角處相隔十幾個索引的兩段在地圖上可能只差 5 格）。
+		for a: Vector2i in ore:
+			var k := 0
+			for b: Vector2i in ore:
+				if absi(a.x - b.x) + absi(a.y - b.y) <= 4:
+					k += 1
+			worst_clump = maxi(worst_clump, k)
+
 		# 「不必過橋」＝ 從核心的自由鄰格出發、只走非路徑格的四連通泛洪能到。
 		# ★ 這裡**刻意重寫一次泛洪**，不呼叫 `MapGen._core_region()`——
 		#   用生成器自己的函式驗生成器，測的是它跟自己一致，不是它對。
@@ -198,6 +236,17 @@ func _invariants(t: T) -> void:
 		float(lonely) / float(ore_total) <= LONELY_MAX,
 		"%d 張圖：孤點 %.0f%% ≤ %.0f%%（礦點成脈，一條幹線收得完）"
 			% [SWEEP, float(lonely) / float(ore_total) * 100.0, LONELY_MAX * 100.0]
+	)
+
+	t.ok(
+		worst_gap <= GAP_MAX,
+		"%d 張圖：沿路徑最大空檔 ≤ %d 格（實測最差 %d）——沒有一整段路線旁邊是空的"
+			% [SWEEP, GAP_MAX, worst_gap]
+	)
+	t.ok(
+		worst_clump <= CLUMP_MAX,
+		"%d 張圖：半徑 4 內最多 %d 顆礦（實測最差 %d）——兩條脈不疊在一起"
+			% [SWEEP, CLUMP_MAX, worst_clump]
 	)
 
 	# 數量落在宣告的範圍內（§7.10 的參數表）。

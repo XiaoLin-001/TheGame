@@ -47,7 +47,7 @@ const ORE_MAX := 26
 ## 「北岸三顆，共用一座橋」——**共線、共用一條幹線、合起來是一個決定**。
 ## 脈就是把這件事寫成規則：一條脈沿單一軸等距排列，一條幹線收完整條脈。
 const VEIN_LEN_MIN := 2
-const VEIN_LEN_MAX := 4
+const VEIN_LEN_MAX := 3
 ## 脈內相鄰兩顆的間距。1 會讓採集器彼此貼死（節點佔一格），
 ## 3 以上就收不進同一條幹線、脈也就不成其為脈了。
 const VEIN_STEP := 2
@@ -84,8 +84,9 @@ static func generate(s: int) -> Dictionary:
 	rng.seed = s
 	var waypoints := _waypoints(rng)
 	var core: Vector2i = waypoints[waypoints.size() - 1]
+	var path := Maps.path_of({"waypoints": waypoints})
 	var on_path: Dictionary = {}
-	for c: Vector2i in Maps.path_of({"waypoints": waypoints}):
+	for c: Vector2i in path:
 		on_path[c] = true
 	return {
 		"id": "endless_%d" % s,
@@ -100,8 +101,8 @@ static func generate(s: int) -> Dictionary:
 		"seed": s,
 		"start_ore": START_ORE,
 		"prep_time": PREP,
-		"crossings": _crossings(rng, Maps.path_of({"waypoints": waypoints})),
-		"ore": _ore(rng, on_path, core),
+		"crossings": _crossings(rng, path),
+		"ore": _ore(rng, path, on_path, core),
 	}
 
 
@@ -200,69 +201,139 @@ static func _crossings(rng: RandomNumberGenerator, path: Array) -> Array[Vector2
 	return out
 
 
-## 礦點。**先把「核心這一側」的配額塞滿，剩下的才沿全圖鋪開**——
-## 這是不變量 5 的實作方式：構造出來的，不是撒完再檢查。
-## B2.1c 起，兩個階段的單位都從「顆」換成「脈」（見 `VEIN_LEN_MIN`）。
-static func _ore(rng: RandomNumberGenerator, on_path: Dictionary, core: Vector2i) -> Array[Vector2i]:
+## 礦點。**沿路徑分層**：把路徑切成 `脈數` 段，一段長一條脈。
+##
+## ★ 這是 B2.1c 的第二次修正。第一版把「均勻撒點」換成「隨機挑錨點再長脈」，
+## 但**隨機挑錨點一樣會結塊**——使用者的原話是「會有一坨擠在一起，然後只在
+## 某些地方有，其他地方都是空的」。實測沿路徑的最大空檔平均 13 格（最差 36，
+## 等於三分之一條路線旁邊沒有任何礦），而半徑 4 內最多擠了 9 顆。
+##
+## 均勻分佈要靠**分層**，不能靠隨機——`_crossings()` 早就是這樣寫的（切成 n+1
+## 段、各段中央附近挑一格），橋看起來散得開就是因為這個。這裡沿用同一招：
+## 段的單位是**路徑索引**，所以礦脈天生沿著路線鋪開，而不是散在地圖座標上。
+##
+## 錨點取在**路徑的側向法線**上、脈沿**路徑的局部方向**生長 → 長出來的就是
+## 手作圖那種「沿著岸邊一排，一條幹線收完」的形狀（`Campaign.gd`：北岸三顆）。
+static func _ore(
+	rng: RandomNumberGenerator, path: Array, on_path: Dictionary, core: Vector2i
+) -> Array[Vector2i]:
 	var n := rng.randi_range(ORE_MIN, ORE_MAX)
 	var dist := _dist_to_path(on_path)
-	var near: Dictionary = {}
+	var region: Dictionary = {}
 	for c: Vector2i in _core_region(on_path, core):
-		near[c] = true
+		region[c] = true
+
+	var count := maxi(1, int(round(float(n) * 2.0 / float(VEIN_LEN_MIN + VEIN_LEN_MAX))))
+	var seg := float(path.size()) / float(count)
 	var out: Array[Vector2i] = []
 	var used: Dictionary = {}
-	_veins(rng, _anchors(dist, near, true), NEAR_ORE, dist, used, out)
-	_veins(rng, _anchors(dist, near, false), n - out.size(), dist, used, out)
-	# 保底：脈鋪不滿配額時（錨點被疏開規則吃光）補單顆，維持礦點總數在
-	# `ORE_MIN..ORE_MAX`。
-	_singles(rng, _anchors(dist, near, false), n - out.size(), used, out)
+	var near := 0
+	for i in count:
+		var left := n - out.size()
+		if left <= 0:
+			break
+		# 段中央附近取一格路徑。jitter 只有 seg/4——**給得太多相鄰兩段會擠在
+		# 一起，那正是「一坨」的來源之一**（分層的意義就在於段與段不重疊）。
+		var mid := int(seg * (float(i) + 0.5))
+		var jit := int(seg / 4.0)
+		var lo := clampi(mid - jit, 0, path.size() - 2)
+		var hi := clampi(mid + jit, 0, path.size() - 2)
+		var span := hi - lo + 1
+		var start := rng.randi_range(0, span - 1)
+		# ★ **段內掃過去，不是抽一格就放棄**：抽到的那格兩側都塞不下時
+		#   （轉角、貼邊、已被上一條脈佔走）舊版直接跳過整段 → 路線上開一個
+		#   十幾格的洞。掃描的次數由 span 決定，與種子無關（確定性）。
+		for k in span:
+			var at := lo + (start + k) % span
+			var p: Vector2i = path[at]
+			var dir: Vector2i = path[at + 1] - p
+			var nrm := Vector2i(-dir.y, dir.x)
+			# ★ 兩岸輪流：連續幾條脈都長在同一岸，另一岸就整片空著。
+			#   核心配額沒滿時，配額優先於輪流（不變量 5 是硬的）。
+			# ⚠ 不要寫成三元式：`[1,-1] if c else [-1,1]` 產出的是 untyped
+			#   `Array`，指派給 `Array[int]` 會在**執行期**炸（不是編譯期），
+			#   而且炸在 `_ore` 裡的結果是**礦點靜靜地變成 0 個**。
+			var order: Array[int] = [1, -1]
+			if i % 2 == 1:
+				order.reverse()
+			var pick := Vector2i(-1, -1)
+			for s: int in order:
+				var a := _anchor(rng, p, nrm * s, dist, used)
+				if a.x < 0:
+					continue
+				if pick.x < 0:
+					pick = a
+				if near < NEAR_ORE and region.has(a):
+					pick = a
+					break
+			if pick.x < 0:
+				continue
+			var got := _grow(pick, dir, clampi(left, VEIN_LEN_MIN, VEIN_LEN_MAX), dist, used, out)
+			if region.has(pick):
+				near += got
+			break
+
+	# 保底：核心配額沒滿（某些種子的核心區塞不下整條脈）就補單顆。
+	if near < NEAR_ORE:
+		_singles(rng, _band(dist, region, true), NEAR_ORE - near, used, out)
+	_singles(rng, _band(dist, region, false), n - out.size(), used, out)
 	return out
 
 
-## 候選錨點：離路徑在容許帶內的自由格。`only_near` 為 true 時只取核心那一側。
-static func _anchors(dist: Dictionary, near: Dictionary, only_near: bool) -> Array[Vector2i]:
+## 側向錨點：從路徑格 `p` 沿法線 `nrm` 找一格落在容許帶內的自由格。
+## 隨機起點、繞一圈試完所有偏移量——**不重擲**（重擲迴圈的次數會跟著種子跑）。
+static func _anchor(
+	rng: RandomNumberGenerator, p: Vector2i, nrm: Vector2i,
+	dist: Dictionary, used: Dictionary
+) -> Vector2i:
+	var span := OFF_MAX - OFF_MIN + 1
+	var start := rng.randi_range(0, span - 1)
+	for k in span:
+		var c := p + nrm * (OFF_MIN + (start + k) % span)
+		var d := int(dist.get(c, -1))
+		if d < OFF_MIN or d > OFF_MAX or used.has(c):
+			continue
+		# ★ 空間隔離。**沿路徑索引分層不等於空間上散得開**——轉角處相隔十幾個
+		#   索引的兩段在地圖上可能只差 5 格，兩條脈就疊成一坨。這一條把
+		#   「散得開」從索引空間搬到真正的地圖座標上。
+		var clear := true
+		for o: Vector2i in used.keys():
+			if absi(o.x - c.x) + absi(o.y - c.y) < VEIN_APART:
+				clear = false
+				break
+		if clear:
+			return c
+	return Vector2i(-1, -1)
+
+
+## 從錨點沿路徑方向長出一條脈。越出容許帶或撞到已用格就在那裡收尾。
+static func _grow(
+	a: Vector2i, dir: Vector2i, want: int,
+	dist: Dictionary, used: Dictionary, out: Array[Vector2i]
+) -> int:
+	var got := 0
+	for j in want:
+		var c := a + dir * (j * VEIN_STEP)
+		var d := int(dist.get(c, -1))
+		if d < OFF_MIN or d > OFF_MAX or used.has(c):
+			break
+		used[c] = true
+		out.append(c)
+		got += 1
+	return got
+
+
+## 容許帶內的自由格。`only_near` 為 true 時只取核心那一側。保底補顆用。
+static func _band(dist: Dictionary, region: Dictionary, only_near: bool) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	for c: Vector2i in dist.keys():
 		var d := int(dist[c])
 		if d < OFF_MIN or d > OFF_MAX:
 			continue
-		if only_near and not near.has(c):
+		if only_near and not region.has(c):
 			continue
 		out.append(c)
 	return out
-
-
-## 從錨點長出礦脈，直到配額用完或候選用光。
-##
-## **一條脈沿單一軸等距排列**，越界／越出容許帶／撞到已用格就在那裡收尾
-## ——構造出來的，不重擲（重擲迴圈的次數會跟著種子跑，確定性測試裡很難看）。
-## 因為越出容許帶就收尾，垂直路徑長的脈自然被切短、**平行路徑的脈長得完整**：
-## 這正好長成手作圖那種「沿著岸邊一排，一條幹線收完」的樣子。
-static func _veins(
-	rng: RandomNumberGenerator, pool: Array[Vector2i], quota: int,
-	dist: Dictionary, used: Dictionary, out: Array[Vector2i]
-) -> void:
-	var avail := pool.duplicate()
-	while quota > 0 and not avail.is_empty():
-		var a: Vector2i = avail[rng.randi_range(0, avail.size() - 1)]
-		var axis := Vector2i(1, 0) if rng.randi_range(0, 1) == 1 else Vector2i(0, 1)
-		if rng.randi_range(0, 1) == 1:
-			axis = -axis
-		var want := mini(quota, rng.randi_range(VEIN_LEN_MIN, VEIN_LEN_MAX))
-		for j in want:
-			var c := a + axis * (j * VEIN_STEP)
-			var d := int(dist.get(c, -1))
-			if d < OFF_MIN or d > OFF_MAX or used.has(c):
-				break
-			used[c] = true
-			out.append(c)
-			quota -= 1
-		# 疏開：拿掉錨點附近的候選，下一條脈長在別的地方。
-		var keep: Array[Vector2i] = []
-		for c: Vector2i in avail:
-			if absi(c.x - a.x) + absi(c.y - a.y) > VEIN_APART:
-				keep.append(c)
-		avail = keep
 
 
 ## 保底補單顆。候選不足就補多少算多少——真的不足時該紅的是

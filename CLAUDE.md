@@ -76,7 +76,7 @@
 - **色值唯一來源是 `scripts/render/Palette.gd`。** 任何 `Color(...)` 字面量出現在其他檔案，視為缺陷。
 - **中文 UI 一律 `SystemFont`**（微軟正黑體）。**不要改回 Godot 預設字型**（無 CJK，會變豆腐字）。
 - **狀態讀檔時原地變更**（`clear()` + `append_array()`），絕不重新賦值容器——重新賦值會讓已持有引用的面板拿到斷裂的舊物件。
-- **GDScript 嚴格型別地雷**：泛型 `lerp()` 編譯錯 → 用 `lerpf()`；untyped array 的 `for` 變數要顯式型別；`match` 各分支共享作用域，變數名要唯一。
+- **GDScript 嚴格型別地雷**：泛型 `lerp()` 編譯錯 → 用 `lerpf()`；untyped array 的 `for` 變數要顯式型別；`match` 各分支共享作用域，變數名要唯一；**三元式產出的是 untyped `Array`**——`var a: Array[int] = [1,-1] if c else [-1,1]` 過得了編譯、**在執行期才炸**，而且炸在生成器裡的樣子是「礦點靜靜地變成 0 個」。
 - 存檔：`SaveService.SAVE_VERSION` 常數；讀取一律 `d.get(key, default)`；結構改動寫 `_migrate_sv<N>_to_sv<N+1>()`。**只增不破。**
 
 ---
