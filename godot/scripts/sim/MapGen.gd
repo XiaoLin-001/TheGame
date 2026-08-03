@@ -84,11 +84,17 @@ const ORE_APART := 4
 ## 實測 300 張圖有 21 個大區因此空著（0.6%），補洞把它變成 0。
 const AREA_COLS := 4
 const AREA_ROWS := 3
-## ★ 礦點離路徑的**下限**。敵人每 tick 傷害相鄰 1 格內的建築（§3.5），
-## 貼著路徑的礦點蓋下去就是送死，等於不是礦點。
+## ★ 礦點離路徑的**下限**，單位是 **Chebyshev（八方）距離**。
 ##
-## **上限已於第三輪移除**（原本是 7）。那條上限正是「只長在路邊」的成因：
-## 它把礦點鎖在路徑兩側各 7 格的帶子裡，全圖其他地方一顆都不會有。
+## ⚠ **一定要和 `Tide.in_blast()` 用同一種距離。** 那支函式是
+## `Chebyshev ≤ 1`（八方相鄰）；這裡原本用四方 BFS 的距離，於是
+## **斜對角貼著路徑轉角的格子** 四方距離 2（通過）、Chebyshev 距離 1
+## （每 tick 挨打）——採集器蓋下去當場被啃，等於這顆礦不能用。
+## 使用者實玩回報的就是這個。
+##
+## 2 ＝ 遊戲說明面板自己寫的「塔與導管退開路徑 2 格就安全」。
+##
+## **上限已於第三輪移除**（原本是 7）。那條上限正是「只長在路邊」的成因。
 const OFF_MIN := 2
 ## ★ 不必過橋就到得了核心的礦點下限（§7.10 不變量 5）。
 ## 手作圖能靠設計者的眼睛避開「礦砂全在對岸」，生成器只能靠這個數字。
@@ -368,30 +374,37 @@ static func _singles(
 
 
 
-## 每個自由格到最近路徑格的距離（多源 BFS，路徑格是源但不可通行）。
+## 每個自由格到最近路徑格的 **Chebyshev（八方）距離**（多源 BFS，
+## 路徑格是源但不可通行）。
 ## **鍵集本身就是「自由格」的定義**——`has()` 同時涵蓋了界內與不在路徑上。
+##
+## ⚠ **八方，不是四方。** 用四方距離的話，斜對角貼著路徑的格子會量到 2，
+## 但 `Tide.in_blast()`（Chebyshev ≤ 1）認定它挨打——量度和規則對不起來，
+## 生出來的礦點就是「看起來合法、蓋下去被啃」。
 static func _dist_to_path(on_path: Dictionary) -> Dictionary:
 	var dist: Dictionary = {}
 	var queue: Array[Vector2i] = []
-	for c: Vector2i in on_path.keys():
-		queue.append(c)
-	var head := 0
 	var cur: Dictionary = {}
 	for c: Vector2i in on_path.keys():
+		queue.append(c)
 		cur[c] = 0
+	var head := 0
 	while head < queue.size():
 		var c: Vector2i = queue[head]
 		head += 1
 		var d := int(cur[c]) + 1
-		for dir: Vector2i in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
-			var nb := c + dir
-			if nb.x < 0 or nb.x >= W or nb.y < 0 or nb.y >= H:
-				continue
-			if on_path.has(nb) or cur.has(nb):
-				continue
-			cur[nb] = d
-			dist[nb] = d
-			queue.append(nb)
+		for dx in [-1, 0, 1]:
+			for dy in [-1, 0, 1]:
+				if dx == 0 and dy == 0:
+					continue
+				var nb := c + Vector2i(dx, dy)
+				if nb.x < 0 or nb.x >= W or nb.y < 0 or nb.y >= H:
+					continue
+				if on_path.has(nb) or cur.has(nb):
+					continue
+				cur[nb] = d
+				dist[nb] = d
+				queue.append(nb)
 	return dist
 
 

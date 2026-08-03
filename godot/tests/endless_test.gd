@@ -152,8 +152,10 @@ func _invariants(t: T) -> void:
 		dead_rows += dead
 		worst_dead = maxi(worst_dead, dead)
 
-		# ★ 不變量 8：礦點離路徑 ≥ OFF_MIN（walk-by 打不到）。
-		#   **上限已於第三輪移除**——那條上限正是「只長在路邊」的成因。
+		# ★ 不變量 8：礦點離路徑 ≥ OFF_MIN，**Chebyshev 距離**（B2.1d.1）。
+		#   ⚠ 距離的種類要和 `Tide.in_blast()`（Chebyshev ≤ 1）一致：
+		#   用四方距離量的話，斜對角貼著路徑轉角的礦點會通過檢查，
+		#   但採集器蓋下去每 tick 挨打——使用者實玩回報的正是這個。
 		var ore: Array = m["ore"]
 		var dist := _dist_to_path(on_path, ore)
 		ore_total += ore.size()
@@ -243,7 +245,7 @@ func _invariants(t: T) -> void:
 	)
 	t.eq(
 		ore_off_band, 0,
-		"%d 張圖：礦點全部離路徑 ≥ %d 格（walk-by 打不到）"
+		"%d 張圖：礦點全部離路徑 ≥ %d 格（Chebyshev，＝ walk-by 真的打不到）"
 			% [SWEEP, MapGen.OFF_MIN]
 	)
 	t.eq(
@@ -283,12 +285,16 @@ func _invariants(t: T) -> void:
 ## 這一份刻意用**最笨的寫法**：每格對全路徑取最小曼哈頓距離。生成器那份是
 ## 多源 BFS——兩種算法在路徑轉角處是會分岔的，所以這不只是抄一遍。
 ## 只算礦點那幾格——全格盤是 64×40×94×300 次，跑起來比整支測試還久。
+##
+## ★ **Chebyshev（八方）距離**，和 `Tide.in_blast()` 同一種。
+##   這一份刻意直接對全路徑取 min，不是抄生成器的多源 BFS——
+##   兩種算法在路徑轉角處是會分岔的，所以這不只是抄一遍。
 func _dist_to_path(on_path: Dictionary, cells: Array) -> Dictionary:
 	var out: Dictionary = {}
 	for c: Vector2i in cells:
 		var best := 9999
 		for p: Vector2i in on_path.keys():
-			best = mini(best, absi(p.x - c.x) + absi(p.y - c.y))
+			best = mini(best, maxi(absi(p.x - c.x), absi(p.y - c.y)))
 		out[c] = best
 	return out
 

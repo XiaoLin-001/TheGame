@@ -113,6 +113,13 @@ var _pan_goal: Vector2 = Vector2.ZERO
 const PAN_EASE := 14.0
 ## 小地圖拖曳中。按住不放時視野持續跟著游標走。
 var _mini_drag: bool = false
+## ★ 小地圖的剩餘顯示秒數（B2.1d.1，使用者指定）。**不常駐**——它蓋在地圖
+## 右下角，常駐等於那一塊永遠點不到（使用者：「有些地方會點不到」）。
+## 縮放或平移時出現，靜止 `MINI_HOLD` 秒後自己退場。
+var _mini_ttl: float = 0.0
+const MINI_HOLD := 3.0
+## 最後這段時間用來淡出，不要用消失的。
+const MINI_FADE := 0.5
 var _zoom_button: Button = null
 
 var _mode: int = Mode.BUILD
@@ -260,6 +267,7 @@ func _reset_view() -> void:
 	_zoom = _fit
 	_pan = Vector2.ZERO
 	_pan_goal = Vector2.ZERO
+	_mini_ttl = MINI_HOLD
 	# ★ `TL_FOCUS="x,y,zoom"`：拍特效的近照（B1.6）。**不會在真實遊玩中生效**
 	#   ——它只在有鉤子時存在，而有鉤子時存檔已經是唯讀的。
 	if Hooks.focus.x >= 0:
@@ -288,6 +296,8 @@ func _clamp_pan() -> void:
 ## 設定平移目標。`immediate` 為真時當場到位——中鍵拖曳、縮放錨定、
 ## 以及所有測試斷言都走這條（斷言要驗的是「目標對不對」，不是「補間跑完沒」）。
 func _pan_to(p: Vector2, immediate: bool = false) -> void:
+	# 視野一動，小地圖就現身（並重新計時）。
+	_mini_ttl = MINI_HOLD
 	_pan_goal = p
 	if immediate or Motion.reduce:
 		_pan = p
@@ -850,6 +860,13 @@ func _process(delta: float) -> void:
 		if _pan.distance_to(_pan_goal) < 0.5:
 			_pan = _pan_goal
 		queue_redraw()
+	# ★ 小地圖倒數。`TL_SHOT` 下**不倒數**——截圖落在第幾秒取決於這台機器
+	#   跑了幾幀，會倒數的話同一組參數在不同機器上會拍出「有／沒有小地圖」
+	#   兩種圖，截圖就不能拿來回歸比對了（和模擬凍結同一條理由）。
+	if _mini_ttl > 0.0 and Hooks.shot_path == "":
+		_mini_ttl = maxf(0.0, _mini_ttl - delta)
+		if _mini_ttl <= 0.0:
+			queue_redraw()
 
 	# ★ `TL_SHOT` 下模擬凍結在 `_demo_layout()` 推完的那一格。否則截圖落在第幾
 	# tick 取決於這台機器 3 秒內跑了幾幀——同一份佈局在不同機器上會拍出不同
@@ -1283,37 +1300,46 @@ func _minimap_rect() -> Rect2:
 
 
 func _draw_minimap() -> void:
-	if not _oversized():
+	if not _oversized() or _mini_ttl <= 0.0:
 		return
+	# ★ 最後 `MINI_FADE` 秒淡出。**整體透明度乘在每一筆上**，退場時底板、
+	#   路徑、視野框一起淡——只淡其中幾樣會出現「框還在、底板不見了」。
+	var fade := clampf(_mini_ttl / MINI_FADE, 0.0, 1.0)
 	var r := _minimap_rect()
 	# ★ 底板往外長，**外框畫在 `r` 上**（B2.1d）。舊版把框也畫在 `box` 上，
 	#   於是推到底時視野框離可見的邊還有 5px ——使用者回報「小地圖滑到底
 	#   不會貼邊」。框就是地圖的邊界，底板只是讓它在遊戲畫面上讀得出來。
-	draw_rect(r.grow(5.0), Palette.alpha(Palette.BG_PANEL, 0.96))
-	draw_rect(r, Palette.BORDER_STRONG, false, 1.0)
+	draw_rect(r.grow(5.0), Palette.alpha(Palette.BG_PANEL, 0.96 * fade))
+	draw_rect(r, Palette.alpha(Palette.BORDER_STRONG, fade), false, 1.0)
 	# 世界座標 → 小地圖座標。
 	var k := r.size.x / (float(s.map["size"].x) * Shapes.GRID)
 	var cell := maxf(1.0, Shapes.GRID * k)
 
 	for c: Vector2i in s.path:
-		draw_rect(Rect2(r.position + Vector2(c) * cell, Vector2(cell, cell)), Palette.TIDE_DEEP)
+		draw_rect(
+			Rect2(r.position + Vector2(c) * cell, Vector2(cell, cell)),
+			Palette.alpha(Palette.TIDE_DEEP, fade)
+		)
 	# 玩家節點：小地圖上讀的是**產線的形狀**，不是個別節點，所以一律同一個點。
 	for n: Dictionary in s.nodes:
 		draw_rect(
 			Rect2(r.position + Vector2(n["cell"]) * cell, Vector2(cell, cell)),
-			Palette.ORDER_CYAN
+			Palette.alpha(Palette.ORDER_CYAN, fade)
 		)
 	# 問題標記：**比節點大一倍** ＋ 脈動。要在一堆青點裡被一眼挑出來，
 	# 只換顏色不夠（§4.3b）。
-	var a := Motion.pulse01(s.tick_count, Motion.BASE * 2.0, 0.45)
+	var pulse := Motion.pulse01(s.tick_count, Motion.BASE * 2.0, 0.45)
 	for c: Vector2i in _problem_cells():
 		var at := r.position + Vector2(c) * cell - Vector2(cell, cell) * 0.5
-		draw_rect(Rect2(at, Vector2(cell, cell) * 2.0), Palette.alpha(Palette.WARN_ORANGE, a))
+		draw_rect(
+			Rect2(at, Vector2(cell, cell) * 2.0),
+			Palette.alpha(Palette.WARN_ORANGE, pulse * fade)
+		)
 	# 視野框：「我在哪」——這是小地圖與一張縮圖的唯一差別。
 	var vw := _view_world_rect()
 	draw_rect(
 		Rect2(r.position + vw.position * k, vw.size * k).intersection(r),
-		Palette.ORDER_BRIGHT, false, 1.0
+		Palette.alpha(Palette.ORDER_BRIGHT, fade), false, 1.0
 	)
 
 
@@ -1369,7 +1395,9 @@ func _guide_click(pos: Vector2) -> bool:
 		if pos.distance_to(hit[0] as Vector2) <= ARROW_HIT:
 			_center_view_on(hit[2] as Vector2i)
 			return true
-	if not _minimap_rect().grow(5.0).has_point(pos):
+	# ★ **看不見就不攔截**（B2.1d.1）。小地圖蓋在地圖右下角，常駐攔截等於
+	#   那一塊永遠蓋不了東西——使用者回報「有些地方會點不到」。
+	if _mini_ttl <= 0.0 or not _minimap_rect().grow(5.0).has_point(pos):
 		return false
 	# 按下就開始拖曳；放開才結束（見 `_gui_input`）。單擊仍然等於「跳一次」，
 	# 因為按下的當下就已經 seek 過一次了。
@@ -1516,6 +1544,25 @@ func _guide_selftest() -> void:
 	var smooth: bool = not _pan.is_equal_approx(_pan_goal)
 	_settle_view()
 
+	# ★ 小地圖不常駐（B2.1d.1）：視野一動就在，靜止 `MINI_HOLD` 秒後退場，
+	#   **退場後不得再攔截點擊**——常駐攔截等於右下角那一塊永遠蓋不了東西。
+	var mini_on: bool = _mini_ttl > 0.0
+	_mini_ttl = 0.0
+	# 哨兵同前：`_act()` 在 BUILD 模式下一定會覆寫 `_message`，
+	# 哨兵被蓋掉 ＝ 這一次點擊真的走到了建造層（＝小地圖沒有擋）。
+	_press(_build_buttons["relay"])
+	_message = "＿哨兵＿"
+	_click_at(r.position + r.size * 0.5)
+	for _i in 2:
+		await get_tree().process_frame
+	var mini_gone: bool = _message != "＿哨兵＿"
+	# 再動一下視野，它要自己回來。
+	_center_view_on(target)
+	for _i in 2:
+		await get_tree().process_frame
+	var mini_back: bool = _mini_ttl > 0.0
+	_settle_view()
+
 	# 可讀性地板：大圖的縮放下限是 24px／格，不是 fit（RG-59）。
 	var floor_ok: bool = Shapes.GRID * _fit >= Shapes.MIN_READABLE_CELL - 0.001
 
@@ -1532,14 +1579,17 @@ func _guide_selftest() -> void:
 		big and found_offscreen and placed and back_offscreen and flagged and arrowed
 		and arrow_inside and jumped and mini_moved and mini_safe and floor_ok and frac_ok
 		and flush and dragged and drag_stops and smooth
+		and mini_on and mini_gone and mini_back
 	)
 	print(
 		"[TL_CLICKTEST/endless] big=%s offscreen=%s placed=%s back_off=%s flagged=%s arrow=%s"
 		% [big, found_offscreen, placed, back_offscreen, flagged, arrowed]
 		+ " inside=%s jump=%s mini_pan=%s mini_safe=%s floor=%s（%.1f px/格）"
 		% [arrow_inside, jumped, mini_moved, mini_safe, floor_ok, Shapes.GRID * _fit]
-		+ " flush=%s drag=%s drag_stop=%s smooth=%s view=%.0f%%×%.0f%% → %s"
-		% [flush, dragged, drag_stops, smooth, frac.x * 100.0, frac.y * 100.0, "PASS" if ok else "FAIL"]
+		+ " flush=%s drag=%s drag_stop=%s smooth=%s"
+		% [flush, dragged, drag_stops, smooth]
+		+ " mini_on=%s mini_gone=%s mini_back=%s view=%.0f%%×%.0f%% → %s"
+		% [mini_on, mini_gone, mini_back, frac.x * 100.0, frac.y * 100.0, "PASS" if ok else "FAIL"]
 	)
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)
