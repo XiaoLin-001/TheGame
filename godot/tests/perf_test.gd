@@ -24,6 +24,7 @@ const SessionState := preload("res://scripts/game/SessionState.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
 const MapGen := preload("res://scripts/sim/MapGen.gd")
+const NodeDefs := preload("res://data/NodeDefs.gd")
 
 ## §5 的兩條線。**斷言掛在「最低可接受」上**，目標值只印出來——
 ## 把目標當紅線會讓一台比較慢的機器把測試變成擲骰子。
@@ -124,24 +125,46 @@ func _endless_scale(t: T) -> void:
 		s.ore = 9999999.0
 		s.alloy = 9999999.0
 		var path: Dictionary = s.sets["path"]
+		var ore: Dictionary = s.sets["ore"]
 		var size: Vector2i = s.map["size"]
 		var grid: Dictionary = {}
 		var ops: Array = []
 		for gy in step.y:
 			for gx in step.x:
 				var c := Vector2i(2 + gx * 2, 2 + gy * 2)
-				if c.x >= size.x or c.y >= size.y or path.has(c):
+				if c.x >= size.x or c.y >= size.y or path.has(c) or ore.has(c):
 					continue
 				grid[Vector2i(gx, gy)] = c
 				var i := gy * step.x + gx
 				ops.append(["place", "anchor" if i % 9 == 0 else (
 					"generator" if i % 7 == 0 else "relay"
 				), c])
+		# ★ 採集器（B2.1e）。**沒有它，量到的是一張死網**：中繼與錨都不產礦，
+		#   發電機的產出又要乘上自己的礦砂滿足率，於是全網供給恆為 0，
+		#   `FlowNetwork` 的傳播迴圈連一次都不會跑——B2.1b 記在
+		#   `30_TECH_DESIGN.md` §5.2 的那條曲線量到的是「建索引」的成本，
+		#   不是解算的成本。真值大它五十倍（219 節點：27 ms → 1449 ms）。
+		for oc: Vector2i in ore.keys():
+			ops.append(["place", "extractor", oc])
 		for g: Vector2i in grid.keys():
 			for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1)]:
 				if grid.has(g + d):
 					ops.append(["conduit", grid[g], grid[g + d]])
+		# 採集器與核心各自接上對得齊的鄰近網格節點（不合法的一律被 `apply_ops` 擋掉）。
+		for oc: Vector2i in (ore.keys() + [s.map["core"] as Vector2i]):
+			for g: Vector2i in grid.keys():
+				var to: Vector2i = grid[g]
+				var d := to - oc
+				if maxi(absi(d.x), absi(d.y)) > 5:
+					continue
+				if d.x != 0 and d.y != 0 and absi(d.x) != absi(d.y):
+					continue
+				ops.append(["conduit", oc, to])
 		BuildController.apply_ops(s, ops)
+		var supply := 0.0
+		for n: Dictionary in s.nodes:
+			supply += float(NodeDefs.of(String(n["type"])).get("ore_out", 0.0))
+		t.ok(supply > 0.0, "無盡 %d×%d 的量測台真的有供給（死網量不到解算器）" % [step.x, step.y])
 		for k in ENEMIES:
 			s.add_enemy(["drifter", "carapace", "ember"][k % 3])
 		s.phase = "wave"

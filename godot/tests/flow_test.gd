@@ -28,6 +28,7 @@ func _initialize() -> void:
 	_harvester_never_deadlocks(t)
 	_three_resource_networks(t)
 	_two_lines_feed_one_consumer(t)
+	_satisfied_nodes_stop_attracting(t)
 	quit(t.report())
 
 
@@ -59,6 +60,50 @@ func _two_lines_feed_one_consumer(t: T) -> void:
 	# 反向邊上不該有任何流量：來回彈是上面那個缺陷的指紋。
 	var back := float(res["flow"][1]) + float(res["flow"][3])
 	t.near(back, 0.0, "★ 沒有任何量沿著來路推回去（同一根管子共用一份 cap）")
+
+
+## ★ 「吃飽的節點不得再吸引流量」（B2.1e）。
+##
+## 串成一條線：採集器 → 熔爐（吃 1）→ 中繼 → 核心（吃 1）。供給 2，
+## 剛好餵飽兩個消費者——**前提是熔爐吃飽之後，中繼不會把餘量原路推回去**。
+##
+## 這是 B2.1e 換掉可送達需求估計法時踩到的坑。舊法對每一次推送重跑一趟 DFS，
+## 所以 `demand_left` 永遠是活的；新法一個迭代只算一次，中繼手上那份
+## 「熔爐還餓著 1」是**上一刻的快照**，於是三分之二的量會沿著來路彈回去。
+## 淺灘示範佈局當場掉 55% 產出（`delivered_total` 4412.8 → 2008.4），
+## 而那時候 `flow_test` 是全綠的——所以補這一條。
+##
+## 修法在 `FlowNetwork` 的傳播段：節點吸收掉需求時，沿祖先鏈 O(深度) 把
+## 森林上「看得到這份需求」的量一起扣掉。拿掉那一段，這一條就會紅。
+## ⚠ 佈局不能隨便擺：**採集器要在離核心最遠的那一端**（id 最大），
+## 而且發電機與核心之間至少隔兩個中繼。生成森林的根是 id 最小的節點，
+## 所以這樣擺才會讓餘量**沿著樹往上**流過那個已經吃飽的發電機——
+## 第一版把採集器擺在 id 1，餘量往樹下走，怎麼改都是綠的（沒驗到東西）。
+## 發電機的優先權也要高於核心，否則就算估計是舊的，權重也分不回去。
+func _satisfied_nodes_stop_attracting(t: T) -> void:
+	var nodes := [
+		{"id": 1, "type": "core", "demand": 1.0},
+		{"id": 2, "type": "relay"},
+		{"id": 3, "type": "relay"},
+		{"id": 4, "type": "generator", "demand": 1.0},
+		{"id": 5, "type": "extractor", "supply": 2.0},
+	]
+	var edges: Array = []
+	for pair: Array in [[1, 2], [2, 3], [3, 4], [4, 5]]:
+		edges.append({"from": pair[0], "to": pair[1], "cap": 5.0})
+		edges.append({"from": pair[1], "to": pair[0], "cap": 5.0})
+	var res := FN.solve(
+		nodes, edges, {"core": 1, "relay": 1, "generator": 4, "extractor": 1}
+	)
+	var sat: Dictionary = res["satisfaction"]
+	t.near(float(sat[4]), 1.0, "前置：發電機吃飽")
+	t.near(
+		float(sat[1]), 1.0,
+		"★ 發電機吃飽之後餘量要繼續往核心送，不能被已滿足的需求勾回去"
+	)
+	# 指紋：反向邊（中繼→發電機、發電機→採集器）上不該有任何流量。
+	t.near(float(res["flow"][4]), 0.0, "★ 沒有任何量從中繼推回吃飽的發電機")
+	t.near(float(res["flow"][6]), 0.0, "★ 沒有任何量推回採集器")
 
 
 # ── ★ 第三資源：合金網（B1.1、GDD §3.1／§7.3）─────────────────────────

@@ -60,10 +60,13 @@ static func step(s: RefCounted) -> void:
 
 	# 邊只建一次：兩個資源網與回寫共用同一份，索引順序才對得起來。
 	var edges := _edges(s)
-	var ore_res := _solve_ore(s, edges)
-	var power_res := _solve_power(s, edges, ore_res, engaged)
+	# ★ 拓樸也只建一次（B2.1e）：三張網的圖逐位元相同，只有供需不同。
+	#   三次各建一遍等於把 CSR、孿生邊、生成森林都算三遍。
+	var topo := FlowNetwork.prepare(s.nodes, edges)
+	var ore_res := _solve_ore(s, edges, topo)
+	var power_res := _solve_power(s, edges, ore_res, engaged, topo)
 	# 合金最後：熔爐的產出要乘上它**礦砂與能量兩個滿足率中較低的那一個**（§3.1）。
-	var alloy_res := _solve_alloy(s, edges, ore_res, power_res)
+	var alloy_res := _solve_alloy(s, edges, ore_res, power_res, topo)
 	var sat: Dictionary = power_res["satisfaction"]
 
 	# 光環算一次就好，推進與開火共用：兩者相隔一個 tick 的移動量，
@@ -151,18 +154,56 @@ static func _anyone_walking(s: RefCounted) -> bool:
 ## 減速只改速度，**不會改成 0**：光環強度上限 40%，永遠停不下來（RG-17）。
 static func _advance_and_damage(s: RefCounted, aura: Array = []) -> void:
 	var crossings: Dictionary = s.sets["crossings"]
+	# ★ 格索引（B2.1e）。`in_blast` 是 Chebyshev ≤ 1 ＝ 剛好九格，所以「誰挨打」
+	#   可以用查表回答，不必每隻敵人重掃一遍全部節點與導管。
+	#
+	#   舊寫法是 `O(敵人 × (節點 + 導管 × 每條導管的格數))`，而且每一對
+	#   （敵人, 導管）都要重算一次 `immune_indices()`（那還會配一個字典）。
+	#   一屏地圖上量不出來；64×40 的無盡圖上它是單 tick 最大的一筆開銷
+	#   ——198 節點／357 導管時 17.2 ms，佔整個 tick 的六成。
+	#
+	#   **這是等價改寫，不是新規則**：同一個 `in_blast`、同一份免疫格，
+	#   而且每個目標挨打的順序仍然是敵人陣列的順序（逐位元相同）。
+	var node_at_cell: Dictionary = {}
+	var cond_at_cell: Dictionary = {}
+	var hit_by := PackedInt32Array()
+	if not s.enemies.is_empty():
+		for n: Dictionary in s.nodes:
+			node_at_cell[n["cell"]] = n
+		for ci in s.conduits.size():
+			var c: Dictionary = s.conduits[ci]
+			var cells: Array = c["cells"]
+			var immune := Tide.immune_indices(cells, crossings)
+			for k in cells.size():
+				if immune.has(k):
+					continue
+				var cc: Vector2i = cells[k]
+				if not cond_at_cell.has(cc):
+					cond_at_cell[cc] = [] as Array[int]
+				cond_at_cell[cc].append(ci)
+		hit_by.resize(s.conduits.size())
+		hit_by.fill(-1)
+
 	for i in s.enemies.size():
 		var e: Dictionary = s.enemies[i]
 		var def := Enemies.of(String(e["type"]))
 		var cell := Tide.cell_of(s.path, float(e["progress"]))
 		var dmg := float(def.get("dmg", 0.0)) * TICK
 
-		for n: Dictionary in s.nodes:
-			if Tide.in_blast(cell, n["cell"]):
-				n["hp"] = float(n["hp"]) - dmg
-		for c: Dictionary in s.conduits:
-			if Tide.conduit_hit(c["cells"], crossings, cell):
-				c["hp"] = float(c["hp"]) - dmg
+		for dy in [-1, 0, 1]:
+			for dx in [-1, 0, 1]:
+				var at := cell + Vector2i(dx, dy)
+				var n: Dictionary = node_at_cell.get(at, {})
+				if not n.is_empty():
+					n["hp"] = float(n["hp"]) - dmg
+				# 一條導管可能有好幾格都在同一隻敵人的半徑內——**只能挨一次**
+				# （舊寫法的 `conduit_hit()` 命中就 return，語意在此以戳記保留）。
+				for ci: int in cond_at_cell.get(at, []):
+					if hit_by[ci] == i:
+						continue
+					hit_by[ci] = i
+					var c: Dictionary = s.conduits[ci]
+					c["hp"] = float(c["hp"]) - dmg
 
 		var slow := 0.0 if i >= aura.size() else (aura[i] as Vector2).x
 		e["progress"] = Tide.advance(
@@ -354,7 +395,7 @@ static func _clear_wreckage(s: RefCounted) -> void:
 
 # ── 礦砂網 ────────────────────────────────────────────────────────────
 
-static func _solve_ore(s: RefCounted, edges: Array) -> Dictionary:
+static func _solve_ore(s: RefCounted, edges: Array, topo: Dictionary = {}) -> Dictionary:
 	var nodes: Array = []
 	var supply_total := 0.0
 	var demand_total := 0.0
@@ -375,7 +416,7 @@ static func _solve_ore(s: RefCounted, edges: Array) -> Dictionary:
 		if sn["id"] == s.core_id:
 			sn["demand"] = maxf(0.0, supply_total - demand_total)
 
-	return FlowNetwork.solve(nodes, edges, s.priorities)
+	return FlowNetwork.solve(nodes, edges, s.priorities, topo)
 
 
 # ── 合金網（B1.1）─────────────────────────────────────────────────────
@@ -386,7 +427,8 @@ static func _solve_ore(s: RefCounted, edges: Array) -> Dictionary:
 ## 只是減數為 0——特意用同一段程式碼寫，日後真的出現吃合金的節點時，
 ## 那個 `demand_total` 會自己開始起作用，不必回頭改語意。
 static func _solve_alloy(
-	s: RefCounted, edges: Array, ore_res: Dictionary, power_res: Dictionary
+	s: RefCounted, edges: Array, ore_res: Dictionary, power_res: Dictionary,
+	topo: Dictionary = {}
 ) -> Dictionary:
 	var ore_sat: Dictionary = ore_res.get("satisfaction", {})
 	var power_sat: Dictionary = power_res.get("satisfaction", {})
@@ -409,13 +451,14 @@ static func _solve_alloy(
 		if sn["id"] == s.core_id:
 			sn["demand"] = maxf(0.0, supply_total - demand_total)
 
-	return FlowNetwork.solve(nodes, edges, s.priorities)
+	return FlowNetwork.solve(nodes, edges, s.priorities, topo)
 
 
 # ── 能量網 ────────────────────────────────────────────────────────────
 
 static func _solve_power(
-	s: RefCounted, edges: Array, ore_res: Dictionary, engaged: Dictionary
+	s: RefCounted, edges: Array, ore_res: Dictionary, engaged: Dictionary,
+	topo: Dictionary = {}
 ) -> Dictionary:
 	var sat: Dictionary = ore_res.get("satisfaction", {})
 	var nodes: Array = []
@@ -448,7 +491,7 @@ static func _solve_power(
 			sn["supply"] = float(sn["supply"]) + offer
 		nodes.append(sn)
 
-	var res := FlowNetwork.solve(nodes, edges, s.priorities)
+	var res := FlowNetwork.solve(nodes, edges, s.priorities, topo)
 
 	# 回寫儲槽充能。解算器是純函式，狀態的變更在這一層。
 	var deltas: Dictionary = res.get("charge_delta", {})
@@ -505,10 +548,18 @@ static func _sim_node(n: Dictionary, supply: float, demand: float) -> Dictionary
 ## 而畫面上那條線看起來一切正常。看不見、控制不了、又會靜靜毀掉佈局的東西
 ## 不是規則，是缺陷。
 static func _edges(s: RefCounted) -> Array:
+	# ★ 格索引（B2.1e）。`SessionState.node_at()` 是線性掃描，而這裡每條導管要查
+	#   兩次 → `O(導管 × 節點)`。31×19 的無盡佈局（604 節點／1095 導管）光這一支
+	#   就吃掉 25.8 ms，比整個解算器還貴。
+	#   索引建在這裡而不是塞進 `SessionState`：那要多一套失效機制，而失效機制
+	#   漏一個呼叫點的下場是「模擬拿到一份過期的網路」——比慢嚴重得多。
+	var by_cell: Dictionary = {}
+	for n: Dictionary in s.nodes:
+		by_cell[n["cell"]] = n
 	var edges: Array = []
 	for c: Dictionary in s.conduits:
-		var a: Dictionary = s.node_at(c["a"])
-		var b: Dictionary = s.node_at(c["b"])
+		var a: Dictionary = by_cell.get(c["a"], {})
+		var b: Dictionary = by_cell.get(c["b"], {})
 		if a.is_empty() or b.is_empty():
 			continue
 		var cap := Build.conduit_cap(int(c["level"]), float(s.mods["cap_bonus"])) * TICK

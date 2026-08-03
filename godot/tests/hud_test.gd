@@ -196,14 +196,21 @@ func _core_and_silo_never_starve(t: T) -> void:
 	# 那是路由後果，不是玩家能在那一格處理的事——恆亮的徽章＝沒有徽章。
 	var full := _demo(5600)
 	t.eq(String(full.phase), "won", "前置：示範佈局撐完全部波次（順便驗通關真的到得了）")
-	t.near(float(full.rates["silo_charge"]), 300.0, "前置：儲槽已充飽，盈餘無處可去")
-	for n: Dictionary in full.nodes:
-		if String(n["type"]) != "relay":
-			continue
-		t.eq(
-			int((full.rates["node_state"] as Dictionary).get(int(n["id"]), -1)),
-			SessionState.NORMAL, "★ 中繼永遠不掛徽章：它不宣告需求，也不產出"
-		)
+	# ★ 「儲槽充飽」要在**充飽的那一格**上驗，不是在最後一格上驗（B2.1e）。
+	#   最後一格是通關的那一瞬間，塔正在放電打最後幾隻，儲槽當然不是滿的。
+	#   舊版把它寫成末格斷言而剛好是綠的——那是通關 tick 落點的巧合：
+	#   B2.1e 換掉解算器後通關晚了 45 個 tick，同一個局面就變紅了。
+	#   （和 RG-120 小地圖那條同一種毛病：斷言看的是快照，不是它想證明的性質。）
+	var brim := _demo(400)
+	t.near(float(brim.rates["silo_charge"]), 300.0, "前置：儲槽已充飽，盈餘無處可去")
+	for state: RefCounted in [brim, full]:
+		for n: Dictionary in state.nodes:
+			if String(n["type"]) != "relay":
+				continue
+			t.eq(
+				int((state.rates["node_state"] as Dictionary).get(int(n["id"]), -1)),
+				SessionState.NORMAL, "★ 中繼永遠不掛徽章：它不宣告需求，也不產出"
+			)
 
 
 # ── 通關（局末結算的觸發條件）─────────────────────────────────────────
