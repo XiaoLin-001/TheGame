@@ -1391,7 +1391,16 @@ func _guide_selftest() -> void:
 	#   **一定**會覆寫 `_message`（成功是空字串、失敗是原因），所以哨兵還在
 	#   ＝ 這次點擊根本沒走到建造層。
 	_message = "＿哨兵＿"
-	_click_at(r.position + Vector2(6.0, 6.0))
+	# ★ 點「離目前視野最遠的那個角」，不是固定點左上角。固定左上是**看種子
+	#   臉色**的斷言：前一步的箭頭跳轉若剛好把視野帶到左上，`_pan` 已經夾在
+	#   (0,0)，再點左上當然不會動——測試紅掉而產品沒問題（`TL_SEED=42` 實際
+	#   踩到）。確定性的閘門不可以有「某些種子才過」這種行為。
+	var msize := Vector2(s.map["size"]) * Shapes.GRID
+	var vcen := _view_world_rect().get_center() / msize
+	_click_at(r.position + Vector2(
+		6.0 if vcen.x > 0.5 else r.size.x - 6.0,
+		6.0 if vcen.y > 0.5 else r.size.y - 6.0
+	))
 	for _i in 2:
 		await get_tree().process_frame
 	var mini_moved: bool = _pan != pan_before
@@ -1404,8 +1413,7 @@ func _guide_selftest() -> void:
 	#   （小地圖只有 232px 寬，視野框和外框差幾個像素），所以用數字。
 	#   兩軸都必須 < 1（真的有看不到的部分）也都必須 > 0.3（不然是算錯了，
 	#   而算錯的症狀正是「小地圖上那個框說謊」）。
-	var mp := Vector2(s.map["size"]) * Shapes.GRID
-	var frac := _view_world_rect().size / mp
+	var frac := _view_world_rect().size / msize
 	var frac_ok: bool = (
 		frac.x > 0.3 and frac.x < 1.0 and frac.y > 0.3 and frac.y < 1.0
 	)
