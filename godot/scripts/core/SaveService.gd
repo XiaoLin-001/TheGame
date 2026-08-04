@@ -10,6 +10,7 @@ extends Node
 ## 以 `--script` 執行時不載入 autoload，只能 preload 這個檔案呼叫靜態函式（§4.2）。
 
 const Score := preload("res://scripts/sim/Score.gd")
+const Daily := preload("res://scripts/sim/Daily.gd")
 
 ## sv2（B1.4）：`campaign.cleared` 移除，改由 `campaign.stars` 推導。
 const SAVE_VERSION := 2
@@ -44,6 +45,13 @@ const DEFAULTS := {
 	# 這個情況：`_fill_defaults()` 在讀檔時補缺鍵，所以舊存檔讀進來自動長出
 	# 這一格 0/0。遷移分支是給「結構改動」用的，加一個新鍵不是結構改動。
 	"endless": {"best_wave": 0, "best_output": 0.0},
+	# ★ B2.2 落地的鍵。同樣**沒有 bump `SAVE_VERSION`**（理由同上：加鍵不是結構改動）。
+	# `date` ＝ `today` 那兩榜屬於哪一天；跨日時 `apply_daily()` 會把它推進 `history`。
+	"daily": {
+		"date": "",
+		"today": {"uniform": {"wave": 0, "output": 0.0}, "free": {"wave": 0, "output": 0.0}},
+		"history": [],
+	},
 	# `resolution` 是 `RESOLUTIONS` 的索引，不是像素——存像素的話，
 	# 日後刪掉一個選項就會出現一個選不到、也顯示不出來的設定值。
 	"settings": {
@@ -137,6 +145,47 @@ static func apply_endless(d: Dictionary, wave: int, output: float) -> Dictionary
 	if new_output:
 		e["best_output"] = output
 	d["endless"] = e
+	return {"wave": new_wave, "output": new_output}
+
+
+## ★ 每日挑戰的成績（B2.2、`10_GDD.md` §3.10）。**兩欄各自取最大值**，
+## 理由與 `apply_endless()` 完全相同（撐得久 vs 產線好是兩件事）。
+##
+## 跨日在這裡處理，不在畫面層：畫面層有兩個入口（兩張榜）而換日只該發生一次，
+## 放在那裡就會出現「先點哪一榜決定昨天的紀錄有沒有被存進歷史」。
+##
+## ⚠ `today` 的兩榜**一起歸零**。只歸零玩的那一榜的話，昨天的另一榜會混進今天
+## ——而它是在另一張圖上打出來的。
+static func apply_daily(
+	d: Dictionary, date: String, board: String, wave: int, output: float
+) -> Dictionary:
+	var day: Dictionary = d.get("daily", {})
+	var today: Dictionary = day.get("today", {})
+	if Daily.rolled_over(String(day.get("date", "")), date):
+		var hist: Array = day.get("history", [])
+		for b: String in Daily.BOARDS:
+			var old: Dictionary = today.get(b, {})
+			if int(old.get("wave", 0)) > 0:
+				hist.push_front(Daily.entry(
+					String(day["date"]), b, int(old["wave"]), float(old["output"])
+				))
+		while hist.size() > Daily.HISTORY_MAX:
+			hist.pop_back()
+		day["history"] = hist
+		today = {}
+	for b: String in Daily.BOARDS:
+		if not today.has(b):
+			today[b] = {"wave": 0, "output": 0.0}
+	day["date"] = date
+	var slot: Dictionary = today[board]
+	var new_wave := wave > int(slot.get("wave", 0))
+	var new_output := output > float(slot.get("output", 0.0))
+	if new_wave:
+		slot["wave"] = wave
+	if new_output:
+		slot["output"] = output
+	day["today"] = today
+	d["daily"] = day
 	return {"wave": new_wave, "output": new_output}
 
 

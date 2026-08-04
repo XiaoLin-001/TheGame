@@ -87,7 +87,7 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（12 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless）
+# 自動化測試（13 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -112,6 +112,10 @@ TL_SHOT="C:/tmp/first.png" TL_DEMO_TICKS=0 TL_PANEL=battle <godot> --path godot 
 # ⚠ TL_DEMO_TICKS 是**從參考解跑完那一刻起算**的（參考解的 wait 已經推掉一批 tick）。
 TL_SHOT="C:/tmp/lv.png" TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> --path godot --rendering-driver opengl3
 
+# ★ 每日挑戰（B2.2）：TL_PANEL=daily。種子是 YYYYMMDD，**有鉤子時日期固定為 2026-01-01**
+# （否則同一組參數會因為今天是幾號而拍出不同的圖）。
+TL_SHOT="C:/tmp/daily.png" TL_PANEL=daily <godot> --path godot --rendering-driver opengl3
+
 # ★ 科技樹（B1.3）：TL_PANEL=tech。存檔在有鉤子時是預設值（研究數據 0），
 # 所以 clicktest 會自己先塞一筆數據進去再點——不寫檔，玩家進度碰不到。
 TL_SHOT="C:/tmp/tech.png" TL_PANEL=tech <godot> --path godot --rendering-driver opengl3
@@ -135,6 +139,8 @@ TL_CLICKTEST=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 TL_CLICKTEST=1 TL_PANEL=campaign TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 科技樹（解鎖鈕點得到、真的扣款、捲到底最後一顆鈕還在畫面內）
 TL_CLICKTEST=1 TL_PANEL=tech TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
+# 每日挑戰（兩顆鈕點得到、種子是今天那一個、離線註記真的在畫面上）
+TL_CLICKTEST=1 TL_PANEL=daily TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 設定（音量真的接到匯流排、reduce_motion 當場生效、視窗真的變大再變回來）
 TL_CLICKTEST=1 TL_PANEL=settings TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 主選單（六顆鈕、ESC 往返、無盡那一顆真的開出生成圖）

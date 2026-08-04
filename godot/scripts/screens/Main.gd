@@ -8,6 +8,7 @@ const BattleScreen := preload("res://scripts/screens/Battle.gd")
 const CampaignScreen := preload("res://scripts/screens/Campaign.gd")
 const TechScreen := preload("res://scripts/screens/Tech.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
+const DailyScreen := preload("res://scripts/screens/DailyScreen.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 
 ## ★ `TL_PANEL` → 要進的畫面。**這張表就是「認得哪些畫面」的唯一一份**（B1.9）。
@@ -27,12 +28,13 @@ const PANEL_SCREENS := {
 	"sandbox": BattleScreen,
 	"campaign": CampaignScreen,
 	"endless": BattleScreen,
+	"daily": DailyScreen,
 	"tech": TechScreen,
 	"settings": SettingsScreen,
 }
 
 
-## 主選單的五顆鈕（自檢要按得到）。
+## 主選單的七顆鈕（自檢要按得到）。
 var _menu_buttons: Array[Button] = []
 
 
@@ -47,6 +49,8 @@ func _ready() -> void:
 				setup = _campaign_level
 			"endless":
 				setup = _endless
+			"daily":
+				setup = _daily
 		_enter(PANEL_SCREENS[Hooks.panel], setup)
 		return
 	_build()
@@ -62,7 +66,7 @@ func _ready() -> void:
 
 ## ★ 輸入層自檢（`TL_CLICKTEST=1 TL_PANEL=title`，B1.9）。
 ##
-## **這一支是 B1.9 重構自己逼出來的**：主選單那五顆鈕原本各接一支 `_enter_*`，
+## **這一支是 B1.9 重構自己逼出來的**：主選單那幾顆鈕原本各接一支 `_enter_*`，
 ## 改成 `_enter.bind(Screen)` 之後——`Callable.bind()` 把參數綁在**尾端**，
 ## 綁錯位置就是一顆按了沒反應的鈕，而 `_draw()` 一個字都不會說（B0.7.2 同一課）。
 ## 其餘三條 clicktest 全走 `TL_PANEL`，**完全繞過主選單**，所以這條路是零覆蓋。
@@ -73,23 +77,40 @@ func _ready() -> void:
 ## ★ 無盡那一顆是這條自檢現在最該守的東西：它和戰役一樣走 `_enter.bind(Screen, setup)`
 ## 的兩參數形式，而 `endless_seed` 沒被 setup 指到的話**畫面照樣開得起來**——
 ## 只是開出淺灘測試圖。那種缺陷 `_draw()` 一個字都不會說，所以斷言直接看種子。
+## 依**按鈕上的字**找鈕，不依索引。
+##
+## ⚠ B2.2 插進一顆「每日挑戰」，索引整個往後挪一格——原本寫死 `_menu_buttons[2]`
+##   的那一行於是去按了科技樹以外的東西，`tech=false`。**選單順序是會動的**，
+##   而測試不該因為多一個入口就變紅（它要驗的是「這顆鈕通到那個畫面」，
+##   不是「它排第三」）。
+func _menu_button(prefix: String) -> Button:
+	for b: Button in _menu_buttons:
+		if b.text.begins_with(prefix):
+			return b
+	return _menu_buttons[0]
+
+
 func _click_selftest() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
-	var count: bool = _menu_buttons.size() == 6
+	var count: bool = _menu_buttons.size() == 7
 
-	await _press(_menu_buttons[0])                     # 戰役
+	await _press(_menu_button("戰役"))
 	var to_campaign: bool = _child_script() == CampaignScreen
 
 	await _escape()
-	# 回到標題＝六顆鈕**重新長出來**（`_build()` 有跑），不是舊的那六顆還在。
-	var back_home: bool = _child_script() == null and _menu_buttons.size() == 6
+	# 回到標題＝七顆鈕**重新長出來**（`_build()` 有跑），不是舊的那七顆還在。
+	var back_home: bool = _child_script() == null and _menu_buttons.size() == 7
 
-	await _press(_menu_buttons[2])                     # 科技樹
+	await _press(_menu_button("科技樹"))
 	var to_tech: bool = _child_script() == TechScreen
 
 	await _escape()
-	await _press(_menu_buttons[1])                     # 無盡
+	await _press(_menu_button("每日挑戰"))
+	var to_daily: bool = _child_script() == DailyScreen
+
+	await _escape()
+	await _press(_menu_button("無盡"))
 	# ★ **不是看 `endless_seed` 有沒有值**——那個欄位在畫面已經用錯地圖之後
 	#   才被設上一樣是 true（B2.1a 第一版斷言就是這樣綠的，截圖才抓到打開的
 	#   是淺灘）。要問的是「這一局真的用了生成圖嗎」，所以看局面裡的地圖。
@@ -101,9 +122,9 @@ func _click_selftest() -> void:
 			generated = bool((c.s.map as Dictionary).get("endless", false))
 	var to_endless: bool = seeded != 0 and generated
 
-	var ok: bool = count and to_campaign and back_home and to_tech and to_endless
-	print("[TL_CLICKTEST/title] buttons=%s campaign=%s esc_home=%s tech=%s endless=%s(seed=%d gen=%s) → %s" % [
-		count, to_campaign, back_home, to_tech, to_endless, seeded, generated,
+	var ok: bool = count and to_campaign and back_home and to_tech and to_daily and to_endless
+	print("[TL_CLICKTEST/title] buttons=%s campaign=%s esc_home=%s tech=%s daily=%s endless=%s(seed=%d gen=%s) → %s" % [
+		count, to_campaign, back_home, to_tech, to_daily, to_endless, seeded, generated,
 		"PASS" if ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
@@ -181,6 +202,18 @@ func _endless(screen: Control) -> void:
 	screen.endless_seed = Rng.next_seed()
 
 
+## 每日挑戰（B2.2）。畫面自己不知道怎麼開一局——它只回報「哪一榜、哪一天、
+## 哪個種子」，由這裡翻譯成一個局內畫面。**每日就是無盡跑在日種子上**
+## （§3.10），所以進的是同一個 `BattleScreen`、走同一條 `endless_seed`。
+func _daily(screen: Control) -> void:
+	screen.on_start = func(board: String, date: String, sd: int) -> void:
+		_enter(BattleScreen, func(battle: Control) -> void:
+			battle.endless_seed = sd
+			battle.daily_board = board
+			battle.daily_date = date
+		)
+
+
 func _back_to_title() -> void:
 	UiKit.clear(self)
 	_build()
@@ -211,6 +244,7 @@ func _build() -> void:
 	for entry: Array in [
 		["戰役　%s" % _campaign_progress(), _enter.bind(CampaignScreen, _campaign_level)],
 		["無盡　%s" % _endless_best(), _enter.bind(BattleScreen, _endless)],
+		["每日挑戰", _enter.bind(DailyScreen, _daily)],
 		["科技樹　%s 研究數據" % UiKit.commas(int(_research_data())), _enter.bind(TechScreen)],
 		["設定", _enter.bind(SettingsScreen)],
 		["測試圖　淺灘", _enter.bind(BattleScreen)],

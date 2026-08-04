@@ -16,6 +16,7 @@ const Tide := preload("res://scripts/sim/Tide.gd")
 const Combat := preload("res://scripts/sim/Combat.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const MapGen := preload("res://scripts/sim/MapGen.gd")
+const Daily := preload("res://scripts/sim/Daily.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
@@ -95,6 +96,13 @@ var level: Dictionary = {}
 ## 而無盡沒有星等也沒有關卡獎勵——共用會換來一堆 `if level.has(...)`。
 ## 由呼叫端在 `add_child()` 之前指派，同 `level`。
 var endless_seed: int = 0
+## ★ 每日挑戰打的是哪一張榜（B2.2）。`""` ＝ 不是每日局。
+## **地圖仍然走 `endless_seed`**——每日挑戰就是無盡跑在一個固定的日種子上
+## （§3.10「兩榜共用同一套地圖、波次、模擬與計分」），這個欄位只決定兩件事：
+## 起始配置吃不吃玩家的科技，以及成績寫進哪一格存檔。
+var daily_board: String = ""
+## 每日挑戰的日期鍵（`YYYY-MM-DD`）。成績要記在哪一天名下。
+var daily_date: String = ""
 ## 回關卡選擇。測試圖沒有上一層，所以是 Callable 而不是寫死的場景切換。
 var on_exit: Callable = Callable()
 
@@ -221,7 +229,11 @@ func _setup_session() -> void:
 	elif endless_seed != 0:
 		# 無盡開局就是全建造欄（§7.10）——它沒有解鎖階梯，而**空 `unlocked`
 		# 就是「全部」**（`SessionState.setup()`），不必另外列一份會過期的清單。
-		s.setup(MapGen.generate(endless_seed), [], tech)
+		#
+		# ★ 每日挑戰走的是同一行（B2.2）：同一張生成圖、同一套波次，**只有
+		#   第三個參數不同**。統一配置榜拿到空科技陣列＝與玩家的進度與課金
+		#   完全無關（憲法 B3），而那個參數是所有局外成長進入這一局的唯一入口。
+		s.setup(MapGen.generate(endless_seed), [], Daily.tech_for(daily_board, tech))
 	elif Hooks.stress:
 		# ★ 壓力情境（B1.7、RG-8）：只為了量渲染。模擬在 `_process` 裡凍結——
 		#   這一份佈局的單 tick 要 30 秒（`perf_test.gd` 的說明），不凍結的話
@@ -2973,11 +2985,28 @@ func _refresh_over() -> void:
 	# ★ 無盡的個人最佳（B2.1a、§7.10）。放在星等的位置——無盡沒有星，
 	#   「破了幾項紀錄」就是它的成就感來源。兩欄各自比對（`apply_endless`）。
 	if endless_seed != 0:
-		var e: Dictionary = GameState.data.get("endless", {})
-		var prev_wave := int(e.get("best_wave", 0))
-		var prev_output := float(e.get("best_output", 0.0))
-		var fresh := SaveService.apply_endless(GameState.data, waves, score)
+		# ★ 每日挑戰記在自己那一格，不混進無盡的個人最佳（B2.2）：兩者的地圖
+		#   來源一樣，但無盡是「隨便一張圖能撐多久」、每日是「今天這張圖」。
+		#   混在一起會讓無盡的紀錄被一張特別好打的日圖洗掉。
+		var daily: bool = daily_board != ""
+		var slot: Dictionary = (
+			((GameState.data.get("daily", {}) as Dictionary).get("today", {}) as Dictionary)
+				.get(daily_board, {})
+			if daily else GameState.data.get("endless", {})
+		)
+		var prev_wave := int(slot.get("wave" if daily else "best_wave", 0))
+		var prev_output := float(slot.get("output" if daily else "best_output", 0.0))
+		var fresh := (
+			SaveService.apply_daily(GameState.data, daily_date, daily_board, waves, score)
+			if daily else SaveService.apply_endless(GameState.data, waves, score)
+		)
 		SaveService.save_from(GameState.data)
+		if daily:
+			col.add_child(UiKit.label(
+				"每日挑戰　%s　%s" % [
+					daily_date, "統一配置" if daily_board == Daily.UNIFORM else "自由配置"
+				], 15, Palette.ORDER_CYAN, false
+			))
 		for line: Array in [
 			["最高波次　%d 波" % waves, bool(fresh["wave"]), "前次 %d 波" % prev_wave],
 			["最佳產能　%.1f" % score, bool(fresh["output"]), "前次 %.1f" % prev_output],
