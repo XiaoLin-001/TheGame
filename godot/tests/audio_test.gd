@@ -22,14 +22,13 @@ const RATE := 22050
 ## 與塔無關的音效鍵（塔的那幾個由 `NodeDefs` 推）。
 const SFX_KEYS := [
 	"build_place", "build_wire", "build_destroyed",
-	"prod_flow", "enemy_hit", "warn_power", "core_hit",
+	"prod_flow", "enemy_hit", "warn_power", "core_hit", "wave_start",
 	"ui_click", "ui_back", "ui_unlock",
 ]
 
 ## 會循環播放的檔案。它們的接點是硬性條件，一次性音效沒有這個問題。
 const LOOPING := [
 	BGM_DIR + "tl_bgm_battle_base.wav",
-	BGM_DIR + "tl_bgm_battle_perc.wav",
 	BGM_DIR + "tl_bgm_menu.wav",
 	SFX_DIR + "tl_sfx_prod_flow.wav",
 ]
@@ -42,6 +41,7 @@ func _initialize() -> void:
 	_bgm_layers_align(t)
 	_loops_are_seamless(t)
 	_levels(t)
+	_sting_is_not_a_hit(t)
 	quit(t.report())
 
 
@@ -64,7 +64,7 @@ func _paths() -> Array[String]:
 		var def := NodeDefs.of(type)
 		if bool(def.get("tower", false)) and float(def.get("rof", 0.0)) > 0.0:
 			out.append(SFX_DIR + "tl_sfx_fire_%s.wav" % type)
-	for name: String in ["tl_bgm_battle_base", "tl_bgm_battle_perc", "tl_bgm_menu"]:
+	for name: String in ["tl_bgm_battle_base", "tl_bgm_menu"]:
 		out.append(BGM_DIR + name + ".wav")
 	return out
 
@@ -102,15 +102,66 @@ func _format(t: T) -> void:
 		t.ok(_frames(w) > 0, "非空檔　%s" % path.get_file())
 
 
-## ★ 兩層 BGM 同長度。它們是同時起跑、各自循環的兩個播放器——
-## 差一個取樣，跑一分鐘就差 60 個，節拍會慢慢地錯開而沒有人說得出哪裡怪。
+## 兩首 BGM 同長度、同 BPM、同調性（§5.1）。
+##
+## ★ B2.1f 刪掉了第三首（戰鬥打擊層 `tl_bgm_battle_perc`）——戰鬥期沒有音樂了。
+##   所以這裡也**斷言它不存在**：留著一個沒人播的 wav 會一路被打包、被改音色、
+##   再被誤以為還在用（潮鳴的開火音就這樣活過一整批，見 `_paths()` 的註解）。
 func _bgm_layers_align(t: T) -> void:
 	var base := _frames(_wav(BGM_DIR + "tl_bgm_battle_base.wav"))
-	var perc := _frames(_wav(BGM_DIR + "tl_bgm_battle_perc.wav"))
 	var menu := _frames(_wav(BGM_DIR + "tl_bgm_menu.wav"))
-	t.eq(perc, base, "戰鬥層與底層同長度（無縫切層的前提）")
-	t.eq(menu, base, "選單曲同長度（同 BPM 同調性，§5.1）")
+	t.eq(menu, base, "選單曲與準備期曲同長度（同 BPM 同調性，§5.1）")
 	t.eq(base, 16 * RATE, "BGM 一個循環 16.0 秒（90 BPM × 24 拍）")
+	t.ok(
+		not ResourceLoader.exists(BGM_DIR + "tl_bgm_battle_perc.wav"),
+		"★ 戰鬥打擊層已刪除（B2.1f：戰鬥期沒有音樂）"
+	)
+
+
+## ★ 號令**不能是一個打擊音**（B2.1f）。
+##
+## 使用者砍掉戰鬥曲的理由是它有「一個敲擊聲，意義不明且會與其他東西誤會」。
+## 那顆敲擊的問題不是音色難聽，是它**在物理上就是一個前景瞬態**——
+## 耳朵把瞬態一律歸類成「剛剛發生了一件事」，然後去找那件事。
+## 這款遊戲的音訊是診斷通道，所以一個不對應任何事件的瞬態＝訓練假警報。
+##
+## 取代它的號令必須走反方向：**起音慢**。這是可以直接量的——
+## 從開頭到第一次達到峰值 90% 要花幾個取樣。
+## 量的是**到達滿音量要多久**（第一次觸及峰值 90%）。打擊類全部在 10 ms 以內，
+## 號令實測 411 ms（三個音疊上來才滿）。門檻訂 100 ms——從實測退一大步，
+## 照實測填會讓之後任何一次音色微調都假紅，但 100 ms 已經是「絕不可能被聽成
+## 一記敲擊」的區間，還是驗得到東西。
+func _sting_is_not_a_hit(t: T) -> void:
+	const SLOW_MS := 100.0
+	const FAST_MS := 12.0
+	var sting := _attack_ms(SFX_DIR + "tl_sfx_wave_start.wav")
+	t.ok(
+		sting >= SLOW_MS,
+		"★ 開打號令是宣告不是打擊：滿音量要 %.0f ms ≥ %.0f" % [sting, SLOW_MS]
+	)
+	# 對照組：打擊類的必須是快的。少了這一半，上面那條可以靠「把全部音效都
+	# 做成慢起音」通過——那是把問題搬走，不是解決。
+	for key: String in ["build_place", "build_wire", "enemy_hit", "fire_anchor"]:
+		var ms := _attack_ms(SFX_DIR + "tl_sfx_%s.wav" % key)
+		t.ok(ms <= FAST_MS, "打擊類仍是瞬態　%s（滿音量 %.0f ms ≤ %.0f）" % [key, ms, FAST_MS])
+	t.ok(
+		sting > _attack_ms(SFX_DIR + "tl_sfx_core_hit.wav") * 3.0,
+		"★ 號令比全場最醒目的那個打擊音（核心受擊）慢三倍以上才滿"
+	)
+
+
+## 到達滿音量的時間：從第一個取樣到**第一次**觸及峰值 90% 的毫秒數。
+func _attack_ms(path: String) -> float:
+	var d := _wav(path).data
+	var n := d.size() / 2
+	var peak := 0
+	for i in n:
+		peak = maxi(peak, absi(d.decode_s16(i * 2)))
+	var target := int(float(peak) * 0.9)
+	for i in n:
+		if absi(d.decode_s16(i * 2)) >= target:
+			return float(i) * 1000.0 / float(RATE)
+	return 0.0
 
 
 ## ★ 循環接點不爆音。

@@ -554,21 +554,31 @@ func _click_selftest() -> void:
 	_close_menu()
 
 	# ★ 音訊（B1.5）。四件事，全部只有真的跑起來才問得到：
-	#   ① 兩層 BGM **都在播**（perc 靜音待命）——這是「無縫切層」的實作前提。
-	#      等到要打了才 `play()` 那一層，接進去的會是曲子的中間。
-	#   ② 準備期時戰鬥層是 0（`_audio_tick()` 每幀從 `phase` 推目標）。
-	#   ③ ★ **一進入波次，戰鬥層真的開始爬。** 第一版的自檢直接呼叫
-	#      `combat_layer(true)`，結果下一幀就被 `_audio_tick()` 從 `phase` 蓋回 0——
-	#      量到的是自己的呼叫，不是遊戲真正的那條路。改成推 `phase`。
+	#   ① 準備期的 BGM **在播**，而且音量真的不是 0。
+	#   ② ★ **一進入波次，音樂真的降到全靜**（B2.1f：戰鬥期沒有音樂）。
+	#      第一版的自檢直接呼叫 `AudioBus` 的 API，結果下一幀就被 `_audio_tick()`
+	#      從 `phase` 蓋回去——量到的是自己的呼叫，不是遊戲真正的那條路。改成推 `phase`。
+	#   ③ ★ **開打時號令真的響了一次**（用 `plays` 的差值問，它是唯一的證據）。
 	#   ④ 播一個音效之後真的有聲道在響（檔案讀得到、`play()` 有生效）。
 	#      ⚠ 有鉤子時是**匯流排靜音**，不是不播，所以這些狀態問得到。
-	var music_ok: bool = AudioBus.music_playing("base") and AudioBus.music_playing("perc")
-	var layer_prep: bool = AudioBus.layer_level() <= 0.0
+	var music_ok: bool = AudioBus.music_playing("base") and AudioBus.music_level() > 0.0
 	var phase_before: String = s.phase
+	var sting_plays: int = AudioBus.plays
 	s.phase = "wave"
-	for _i in 8:
+	# ⚠ **每一幀都要把 phase 釘回去。** 這個局面的 `spawn_queue` 是空的，
+	#   所以 `_end_of_wave()` 下一個 tick 就把它打回 `prep`——音樂淡到一半又淡回來，
+	#   `wave_hush` 恆為 false（實際踩到）。釘 phase 不是作弊：`_audio_tick()`
+	#   本來就只從 `phase` 推導，走的仍是遊戲真正的那條路。
+	#
+	# ⚠ 而且要等**時間**，不是等幀數。淡出是 `LAYER_FADE`（1.2 秒）的實時，
+	#   而這個視窗沒有垂直同步——120 幀可能只有 0.2 秒（實際踩到，`wave_hush`
+	#   恆為 false）。「等 N 幀」在任何跟實時掛鉤的東西上都是壞的等待方式。
+	var hush_t0 := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - hush_t0 < 2000 and AudioBus.music_level() > 0.0:
+		s.phase = "wave"
 		await get_tree().process_frame
-	var layer_rising: bool = AudioBus.layer_level() > 0.0
+	var wave_hush: bool = AudioBus.music_level() <= 0.0
+	var wave_sting: bool = AudioBus.plays > sting_plays
 	s.phase = phase_before
 	AudioBus.play("build_place")
 	await get_tree().process_frame
@@ -577,7 +587,7 @@ func _click_selftest() -> void:
 		var pl := child as AudioStreamPlayer
 		if pl != null and pl.playing:
 			voice_ok = true
-	var audio_ok: bool = music_ok and layer_prep and layer_rising and voice_ok and AudioBus.muted
+	var audio_ok: bool = music_ok and wave_hush and wave_sting and voice_ok and AudioBus.muted
 
 	# ★ **局結束之後不得有東西還在動**（使用者回報：「音效還在，他們也還在射擊」）。
 	#   根因是 `step()` 在 won/lost 直接 return → 開火線的 `ttl` 不再遞減 →
@@ -681,8 +691,8 @@ func _click_selftest() -> void:
 		energy_ok, codex_ok, prio_ok, view_ok, menu_ok, audio_ok, over_ok,
 		"PASS" if ok else "FAIL"
 	])
-	print("[TL_CLICKTEST/audio] two_layers=%s prep_silent=%s wave_fade_in=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s knell_field=%s" % [
-		music_ok, layer_prep, layer_rising, voice_ok, AudioBus.muted, tower_built, over_cleared,
+	print("[TL_CLICKTEST/audio] prep_music=%s wave_hush=%s wave_sting=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s knell_field=%s" % [
+		music_ok, wave_hush, wave_sting, voice_ok, AudioBus.muted, tower_built, over_cleared,
 		over_silent, why_shown, why_fits, field_ok
 	])
 	print("[TL_CLICKTEST/menu] esc_open=%s scrim_blocks=%s settings=%s settings_back=%s esc_close=%s cell_buildable=%s button=%s fits=%s" % [
@@ -974,7 +984,7 @@ func _stress_frame(delta: float) -> void:
 func _audio_reset() -> void:
 	_audio_prev = {
 		"kills": s.kills, "nodes": s.nodes.size(), "core": s.core_hp(),
-		"warn_at": -99.0, "core_at": -99.0,
+		"warn_at": -99.0, "core_at": -99.0, "phase": s.phase,
 	}
 	_last_tick = s.tick_count
 	_diag = {"wave_ticks": 0, "starved": 0, "leak_wave": -1, "core_hp": s.core_hp()}
@@ -987,7 +997,15 @@ func _audio_tick(advanced: bool) -> void:
 	if _audio_prev.is_empty():
 		return
 	var over: bool = s.phase == "won" or s.phase == "lost"
-	AudioBus.combat_layer(s.phase == "wave")
+	# ★ B2.1f：戰鬥期**完全沒有音樂**（使用者拍板）。這一行淡的是準備期那首。
+	AudioBus.battle_hush(s.phase == "wave")
+	# ★ 開打的號令。**邊緣觸發**（上一幀不是 wave、這一幀是）——
+	#   照 `phase` 每幀播的話一波會播兩百次，而且它有 1.7 秒長。
+	#   放在 `advanced` 判斷**之前**：提前召喚是玩家按鈕當幀就換 phase 的，
+	#   等下一個 tick 才響會慢半拍，而這個音的全部價值就是「就是現在」。
+	if s.phase == "wave" and String(_audio_prev.get("phase", "")) != "wave":
+		AudioBus.play("wave_start")
+	_audio_prev["phase"] = s.phase
 	# 局結束就停掉生產的循環音。它是「東西正在跑」的聲音，而東西已經不跑了。
 	AudioBus.flow(0.0 if over else clampf(float(s.rates["ore_in"]) / 30.0, 0.0, 1.0))
 

@@ -13,8 +13,8 @@
     godot/assets/audio/bgm/tl_bgm_*.wav
     godot/assets/audio/sfx/tl_sfx_*.wav
 
-音樂的三個硬性條件（§5.1「無縫接軌」）：
-  ① 三首曲子**同長度、同 BPM、同調性**——戰鬥層是疊上去的，不是換一首。
+音樂的三個硬性條件（§5.1）：
+  ① 兩首曲子**同長度、同 BPM、同調性**（B2.1f 之前是三首——戰鬥層已刪）。
   ② 每個週期性成分在一個 loop 內都要有**整數個週期**，否則接點會啪一聲。
      `tone()` 會把頻率量化到 1/LOOP 的整數倍來保證這件事。
   ③ 打擊音不要撞到 loop 末端（尾巴會被切掉 → 同樣是啪一聲）。
@@ -29,7 +29,7 @@ import wave
 RATE = 22050          # 這是背景音樂與短音效，22.05kHz 聽不出差別，檔案小一半
 BPM = 90.0
 BEAT = 60.0 / BPM     # 0.6667 s
-LOOP = BEAT * 24      # 16.0 s ＝ 6 小節 4/4。三首 BGM 共用這個長度
+LOOP = BEAT * 24      # 16.0 s ＝ 6 小節 4/4。兩首 BGM 共用這個長度
 ROOT = 55.0           # A1。全案的調性中心（A 小調）
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "godot", "assets", "audio")
@@ -148,9 +148,14 @@ def write(path, sig):
 # ── BGM ───────────────────────────────────────────────────────────────
 #
 # 氣質（§5「像在一座深海工廠裡工作，而外面有東西在敲玻璃」）：
-#   base ＝ 工廠的嗡鳴與稀疏的機械節拍（準備期，平靜）
-#   perc ＝ 疊在同一首上的打擊層與失諧高頻（戰鬥期，外面那個東西開始敲了）
+#   base ＝ 工廠的嗡鳴與稀疏的機械節拍（**只在準備期**，平靜）
 #   menu ＝ 同一個嗡鳴，但幾乎什麼都不做（極簡、留白多）
+#
+# ★ B2.1f：**戰鬥期沒有音樂**（使用者拍板）。開打時放一次 `sfx_wave_start`
+#   的號令，然後音樂淡出到全靜，只剩生產嗡鳴與 SFX。
+#   被刪掉的 `bgm_perc`（戰鬥打擊層）敗在它的「敲玻璃」動機是一個前景瞬態，
+#   而全案的音訊是**診斷通道**——瞬態一律被讀成事件，那顆敲擊不對應任何事件，
+#   等於訓練玩家對假警報做反應。詳見 CHANGELOG 0.22.0。
 
 def bgm_base():
     out = buf(LOOP)
@@ -173,97 +178,6 @@ def bgm_base():
         tick = [v * env_exp(i / RATE, 0.09, 9.0) for i, v in enumerate(tick)]
         mix(out, tick, b * BEAT, 0.16 if b % 8 else 0.26)
     return normalize(out, 0.72)
-
-
-def bgm_perc():
-    """戰鬥層。**疊在 `bgm_base` 上播**，所以這一層只負責「外面那個東西」。
-
-    ★ 第二版（B2.1d）。第一版使用者回報「戰鬥的音樂不好」。三個具體毛病：
-      ① **每一拍都一顆 kick**（24 拍 24 顆）。四平八穩、沒有重音層次，
-         一波打三分鐘等於同一個節拍敲兩百多次，很快就變成噪音而不是張力。
-      ② **1320/1328Hz 的失諧正弦**互打出 8Hz 拍音。那是很尖的頻段，
-         長時間聽會刺耳——「威脅」不該用生理不適來表達。
-      ③ **和聲完全不動**。底層是恆定的 A 小調 drone，這一層也不給任何進行，
-         整首沒有方向感，聽起來就是一段循環而不是一段音樂。
-
-    這一版的作法：
-      ① 節奏**切分**：每小節 kick 落在 1、2.5、4（不是 1234），
-         第 4 拍那顆輕、當作推進下一小節的預備。
-      ② **低音有進行**：六小節走 Am–Am–F–F–G–G（A 小調的 i–VI–VII），
-         每小節換一次根音。這是「有方向」的來源，也還在同一個調上，
-         和 `bgm_base` 的 drone 疊起來不打架。
-      ③ **威脅改用低頻**：小二度叢集（A2 與降 B2）緩慢漲落，
-         再加一層低通過的噪音「呼吸」。不協和感留著，刺耳拿掉。
-      ④ **敲玻璃的動機**：一個兩下的金屬敲擊，只在第 2 與第 5 小節出現。
-         整個 loop 因此有起伏，而不是每小節都一樣。
-    """
-    out = buf(LOOP)
-    bar = BEAT * 4.0
-    # 六小節的根音：Am–Am–F–F–G–G（i–VI–VII）。頻率是 A1 為基準的比例。
-    roots = [ROOT, ROOT, ROOT * 2 ** (8 / 12.0) / 2, ROOT * 2 ** (8 / 12.0) / 2,
-             ROOT * 2 ** (10 / 12.0) / 2, ROOT * 2 ** (10 / 12.0) / 2]
-
-    for m in range(6):
-        t_bar = m * bar
-        # ── 低音：每小節一個長音，慢起慢收，接得住下一小節 ──────────────
-        f = roots[m]
-        # ⚠ 包絡**兩端必須是 0**。第一版寫成 `0.35 + 0.65*sin(...)`，最低點是
-        #   0.35 → 每小節的低音是「跳進來」的，而 loop 接點正好是其中一次跳，
-        #   `audio_test` 當場抓到（接點跳幅 1602／鄰近平均 271）。
-        tone(out, f, t_bar, bar, lambda t: 0.34 * math.sin(math.pi * t / bar))
-        tone(out, f * 2.0, t_bar, bar, lambda t: 0.12 * math.sin(math.pi * t / bar))
-
-        # ── kick：1、2.5、4（切分）。第 4 拍輕，是給下一小節的預備 ────────
-        for beat, gain in [(0.0, 0.62), (1.5, 0.40), (3.0, 0.26)]:
-            t0 = t_bar + beat * BEAT
-            if t0 > LOOP - 0.35:
-                continue
-            kick = buf(0.30)
-            for i in range(len(kick)):
-                t = i / RATE
-                # 下滑的正弦：從 130Hz 掉到根音附近，尾巴接得住低音層。
-                fr = 130.0 * math.exp(-11.0 * t) + f
-                kick[i] = math.sin(2.0 * math.pi * fr * t) * env_exp(t, 0.30, 6.0)
-            mix(out, kick, t0, gain)
-
-        # ── 反拍的金屬碎響，只在 2、4 拍後半，比第一版稀 ──────────────
-        for beat in (1.0, 3.5):
-            t0 = t_bar + beat * BEAT
-            if t0 > LOOP - 0.2:
-                continue
-            hat = highpass(noise(0.05, 101 + m * 7 + int(beat * 2)), 4800)
-            hat = [v * env_exp(i / RATE, 0.05, 16.0) for i, v in enumerate(hat)]
-            mix(out, hat, t0, 0.14)
-
-    # ── 敲玻璃：兩下的金屬動機，只在第 2 與第 5 小節 ──────────────────
-    # 這是整首唯一「有人在外面」的具體聲音，稀少才有份量（§5）。
-    for m, gain in [(1, 0.30), (4, 0.34)]:
-        for k, off in enumerate((0.0, 0.75)):
-            t0 = m * bar + (2.0 + off) * BEAT
-            if t0 > LOOP - 0.5:
-                continue
-            knock = buf(0.42)
-            for i in range(len(knock)):
-                t = i / RATE
-                # 兩個不成整數比的泛音 → 金屬感（不是鐘，是被敲的鋼板）。
-                v = (math.sin(2.0 * math.pi * 494.0 * t)
-                     + 0.7 * math.sin(2.0 * math.pi * 494.0 * 2.76 * t)
-                     + 0.4 * math.sin(2.0 * math.pi * 494.0 * 5.40 * t))
-                knock[i] = v * env_exp(t, 0.42, 8.0)
-            knock = lowpass(knock, 5200)
-            mix(out, knock, t0, gain * (1.0 if k == 0 else 0.62))
-
-    # ── 威脅層：小二度叢集（A2 / B♭2），緩慢漲落 ─────────────────────
-    # 第一版用 1320Hz 的 8Hz 拍音，太尖。同樣是不協和，搬到低頻就只剩壓迫感。
-    swell = lambda t: 0.055 * (0.5 - 0.5 * math.cos(2.0 * math.pi * (2.0 / LOOP) * t))
-    tone(out, 110.0, 0, LOOP, swell, loop=LOOP)
-    tone(out, 116.5, 0, LOOP, swell, loop=LOOP, phase=0.9)
-    # 低通噪音的「呼吸」，一個 loop 兩次。給空間感，不給音高。
-    breath = lowpass(loop_noise(LOOP, 60.0, 900.0, 40, 4242, 1.0), 700, circular=True)
-    for i in range(len(out)):
-        t = i / RATE
-        out[i] += breath[i] * 0.10 * (0.5 - 0.5 * math.cos(2.0 * math.pi * (2.0 / LOOP) * t))
-    return normalize(out, 0.70)
 
 
 def bgm_menu():
@@ -456,6 +370,50 @@ def sfx_enemy_hit():
     return fade_edges(normalize(out, 0.40), 2.0)
 
 
+def sfx_wave_start():
+    """戰鬥開始的號令。
+
+    ★ B2.1f（使用者拍板）：**戰鬥期完全沒有音樂**，所以這一個音要一個人扛完
+    「開打了」這件事，然後把場子讓出來。設計條件三條，每一條都是為了不被誤會：
+
+      ① **起音要慢**（80 ms 的平滑上升）。上一版被砍掉的「敲玻璃」就是敗在
+         它是一個**前景瞬態**——耳朵把瞬態一律歸類成「剛剛發生了一件事」，
+         然後去找那件事。號令是一個宣告，不是一個事件，所以它不能「啪」。
+         `audio_test` 直接量這個：起音時間必須遠慢於任何一個打擊類音效。
+      ② **音域壓在 900Hz 以下**。建造類音效全是 880–2700Hz 的非諧和金屬
+         （`build_place` 880/1319/1976、`build_wire` 的扣 1180/1770），
+         撞在同一個頻段就是上一版被誤會的成因。這裡低通到 2000，
+         能量幾乎全在基頻與二次泛音。
+      ③ **三個音疊成堆疊五度**（A2 → E3 → A3，每 0.35 秒進一個）。
+         全庫沒有第二個「音高會往上走」的音效，也沒有第二個超過一秒還在
+         漲的音效——`warn_power` 是同音域，但它是 30Hz 抖振的兩短聲，
+         一個顫、一個開，分得出來。
+
+    尾巴收乾淨（衰到 0），因為它之後**接的是靜音**，不是別的音樂。
+    """
+    dur = 1.7
+    out = buf(dur)
+    # 起音包絡：平滑上升 → 慢衰。**不用 env_exp 的瞬間起音**（見①）。
+    def horn(t, life, attack=0.08):
+        if t >= life:
+            return 0.0
+        rise = 0.5 - 0.5 * math.cos(math.pi * min(1.0, t / attack))
+        return rise * env_exp(t, life, 2.6)
+
+    # A2 → E3 → A3：堆疊五度，開放、沒有三度 → 不寫大小調，只是「集合」。
+    for start, f, gain in [(0.00, 110.0, 1.00), (0.35, 164.81, 0.82), (0.70, 220.0, 0.68)]:
+        life = dur - start
+        for k, ha in [(1.0, 1.0), (2.0, 0.42), (3.0, 0.18), (4.0, 0.07)]:
+            tone(out, f * k, start, life,
+                 lambda t, g=gain * ha, l=life: g * 0.30 * horn(t, l))
+    # 一點空氣感：前 0.3 秒的低通噪音「吸氣」。給重量，不給音高。
+    air = lowpass(noise(0.30, 5150), 1100)
+    mix(out, [v * (0.5 - 0.5 * math.cos(math.pi * min(1.0, (i / RATE) / 0.30)))
+              * env_exp(i / RATE, 0.30, 1.6) for i, v in enumerate(air)], 0.0, 0.22)
+    out = lowpass(out, 2000.0)
+    return fade_edges(normalize(out, 0.88))
+
+
 def sfx_warn_power():
     """能量不足：低頻警報，兩短聲。"""
     out = buf(0.55)
@@ -520,7 +478,6 @@ def sfx_ui_unlock():
 
 BGM = {
     "tl_bgm_battle_base": bgm_base,
-    "tl_bgm_battle_perc": bgm_perc,
     "tl_bgm_menu": bgm_menu,
 }
 
@@ -534,6 +491,7 @@ SFX = {
     "tl_sfx_fire_reclaimer": sfx_fire_reclaimer,
     "tl_sfx_fire_breaker": sfx_fire_breaker,
     "tl_sfx_enemy_hit": sfx_enemy_hit,
+    "tl_sfx_wave_start": sfx_wave_start,
     "tl_sfx_warn_power": sfx_warn_power,
     "tl_sfx_core_hit": sfx_core_hit,
     "tl_sfx_ui_click": sfx_ui_click,
@@ -543,7 +501,7 @@ SFX = {
 
 
 def main():
-    print("BGM（%.1f s／%.0f BPM／A 小調，三首同長度）" % (LOOP, BPM))
+    print("BGM（%.1f s／%.0f BPM／A 小調，兩首同長度）" % (LOOP, BPM))
     for name, fn in BGM.items():
         write(os.path.join(OUT, "bgm", name + ".wav"), fn())
     print("SFX（%d 支）" % len(SFX))

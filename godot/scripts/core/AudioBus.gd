@@ -28,19 +28,23 @@ const BGM_DIR := "res://assets/audio/bgm/"
 ## 少了會被自己蓋掉；多了只是浪費節點。
 const SFX_VOICES := 12
 
-## 戰鬥層淡入／淡出的秒數。**只淡音量、不換曲**（§5.1）。
+## 準備期音樂淡入／淡出的秒數。**只淡音量、不換曲**（§5.1）。
 const LAYER_FADE := 1.2
+
+## 準備期音樂的音量（0..1）。戰鬥期是 0。
+const PREP_LEVEL := 0.9
 
 var muted: bool = false
 
 var _cache: Dictionary = {}                     # 路徑 → AudioStream
 var _voices: Array[AudioStreamPlayer] = []
 var _next_voice: int = 0
-## `base`／`perc`／`menu` 三個常駐播放器。
+## `base`／`menu` 兩個常駐播放器。
 var _music: Dictionary = {}
-## 戰鬥層的目標音量（0..1）。`_process` 每幀往它逼近。
-var _perc_target: float = 0.0
-var _perc_now: float = 0.0
+## 準備期音樂的目標音量（0..1）。`_process` 每幀往它逼近。
+## **戰鬥期是 0**——B2.1f 起戰鬥期完全沒有音樂（見 `battle_hush()`）。
+var _music_target: float = PREP_LEVEL
+var _music_now: float = 0.0
 var _flow: AudioStreamPlayer = null
 var _flow_level: float = 0.0
 ## 累計播了幾次一次性音效。自檢用——「局結束之後還在響嗎」只有這個數字答得出來。
@@ -110,7 +114,7 @@ func _build_players() -> void:
 	_flow.bus = "SFX"
 	_flow.volume_db = SILENT_DB
 	add_child(_flow)
-	for key: String in ["base", "perc", "menu"]:
+	for key: String in ["base", "menu"]:
 		var p := AudioStreamPlayer.new()
 		p.bus = "BGM"
 		p.volume_db = SILENT_DB
@@ -156,15 +160,19 @@ func play(key: String, db: float = 0.0) -> void:
 	p.play()
 
 
-## 換曲。`"battle"` 會同時起 base 與 perc 兩層，**perc 從第一個取樣就在跑**、
-## 只是音量是 −80——這才是「無縫切層」的實作方式：兩軌同時起跑就永遠同相，
-## 切換時只動音量。等到要打了才 `play()` 那一層，接進去的是曲子的中間。
+## 換曲。
+##
+## ★ B2.1f：`"battle"` 只起 `base` 一層，而且**它是準備期的曲子**。
+##   戰鬥期沒有音樂——開打時放一次 `wave_start` 的號令，音樂淡出到全靜。
+##   舊版還有一層 `perc`（戰鬥打擊層），連同它的「敲玻璃」動機一起刪掉了：
+##   那顆敲擊是整首唯一的前景瞬態，而這款遊戲的音訊是**診斷通道**
+##   （核心受擊是全場最醒目的音、缺電有警報、生產嗡鳴的音量跟著流量走）。
+##   瞬態一律被讀成「剛剛發生了一件事」，而它不對應任何事件。
 func music(track: String) -> void:
 	for key: String in _music:
 		var p: AudioStreamPlayer = _music[key]
 		var want: bool = (
-			(track == "battle" and key in ["base", "perc"])
-			or (track == "menu" and key == "menu")
+			(track == "battle" and key == "base") or (track == "menu" and key == "menu")
 		)
 		if want and not p.playing:
 			p.stream = _stream(BGM_DIR + _bgm_file(key), true)
@@ -173,20 +181,23 @@ func music(track: String) -> void:
 		elif not want and p.playing:
 			p.stop()
 	if track == "menu":
-		_music["menu"].volume_db = linear_to_db(0.9)
-	_perc_target = 0.0
-	_perc_now = 0.0
-	_music["base"].volume_db = linear_to_db(0.9)
-	_music["perc"].volume_db = SILENT_DB
+		_music["menu"].volume_db = linear_to_db(PREP_LEVEL)
+	_music_target = PREP_LEVEL
+	_music_now = PREP_LEVEL
+	_music["base"].volume_db = linear_to_db(PREP_LEVEL)
 
 
 func _bgm_file(key: String) -> String:
 	return "tl_bgm_menu.wav" if key == "menu" else "tl_bgm_battle_%s.wav" % key
 
 
-## 戰鬥層：`true` 淡入、`false` 淡出。呼叫端每幀丟現況進來也沒關係。
-func combat_layer(on: bool) -> void:
-	_perc_target = 1.0 if on else 0.0
+## 戰鬥期靜音（B2.1f）：`true` ＝ 正在打，音樂淡出到全靜；`false` ＝ 準備期，淡回來。
+## 呼叫端每幀丟現況進來也沒關係。
+##
+## **靜的是音樂，不是全部**：生產嗡鳴（`flow()`）與所有 SFX 照舊——
+## 戰鬥期要聽的本來就是那些，音樂只是在跟它們搶。
+func battle_hush(on: bool) -> void:
+	_music_target = 0.0 if on else PREP_LEVEL
 
 
 ## 生產的低頻循環（§5.1「音量隨總流量微調」）。`level` 是 0..1 的總流量比例。
@@ -209,17 +220,18 @@ func flow(level: float) -> void:
 func _process(delta: float) -> void:
 	if _music.is_empty():
 		return
-	var perc: AudioStreamPlayer = _music["perc"]
-	if is_equal_approx(_perc_now, _perc_target) and not perc.playing:
+	var base: AudioStreamPlayer = _music["base"]
+	if is_equal_approx(_music_now, _music_target) and not base.playing:
 		return
 	var step := delta / LAYER_FADE
-	_perc_now = move_toward(_perc_now, _perc_target, step)
-	perc.volume_db = SILENT_DB if _perc_now <= 0.001 else linear_to_db(_perc_now * 0.9)
+	_music_now = move_toward(_music_now, _music_target, step)
+	base.volume_db = SILENT_DB if _music_now <= 0.001 else linear_to_db(_music_now)
 
 
-## 自檢用：戰鬥層此刻的 0..1 音量。「切層」這件事只有這個數字證明得了。
-func layer_level() -> float:
-	return _perc_now
+## 自檢用：準備期音樂此刻的 0..1 音量。**戰鬥期必須是 0**——
+## 「戰鬥期沒有音樂」這件事只有這個數字證明得了。
+func music_level() -> float:
+	return _music_now
 
 
 func music_playing(key: String) -> bool:
