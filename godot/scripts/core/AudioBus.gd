@@ -169,26 +169,22 @@ func play(key: String, db: float = 0.0) -> void:
 ##   （核心受擊是全場最醒目的音、缺電有警報、生產嗡鳴的音量跟著流量走）。
 ##   瞬態一律被讀成「剛剛發生了一件事」，而它不對應任何事件。
 func music(track: String) -> void:
+	var wanted := "menu" if track == "menu" else "base"
 	for key: String in _music:
 		var p: AudioStreamPlayer = _music[key]
-		var want: bool = (
-			(track == "battle" and key == "base") or (track == "menu" and key == "menu")
-		)
-		if want and not p.playing:
+		if key == wanted and not p.playing:
 			p.stream = _stream(BGM_DIR + _bgm_file(key), true)
 			if p.stream != null:
 				p.play()
-		elif not want and p.playing:
+		elif key != wanted and p.playing:
 			p.stop()
-	if track == "menu":
-		_music["menu"].volume_db = linear_to_db(PREP_LEVEL)
+		p.volume_db = linear_to_db(PREP_LEVEL)
 	_music_target = PREP_LEVEL
 	_music_now = PREP_LEVEL
-	_music["base"].volume_db = linear_to_db(PREP_LEVEL)
 
 
 func _bgm_file(key: String) -> String:
-	return "tl_bgm_menu.wav" if key == "menu" else "tl_bgm_battle_%s.wav" % key
+	return "tl_bgm_menu.wav" if key == "menu" else "tl_bgm_battle_base.wav"
 
 
 ## 戰鬥期靜音（B2.1f）：`true` ＝ 正在打，音樂淡出到全靜；`false` ＝ 準備期，淡回來。

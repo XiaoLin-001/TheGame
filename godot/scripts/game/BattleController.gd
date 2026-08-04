@@ -28,6 +28,14 @@ const STARVED_BELOW := 0.95
 ## 高於這個量（每 tick）才算 `滿溢`。浮點尾數不是塞車。
 const OVERFLOW_ABOVE := 0.001
 
+## `Tide.in_blast` 的九格（Chebyshev ≤ 1）。**寫成常數不是為了好看**：
+## 陣列字面量在迴圈裡每次都會配一個新陣列，而這裡是每隻敵人每 tick 跑一遍。
+const BLAST_CELLS: Array[Vector2i] = [
+	Vector2i(-1, -1), Vector2i(0, -1), Vector2i(1, -1),
+	Vector2i(-1, 0), Vector2i(0, 0), Vector2i(1, 0),
+	Vector2i(-1, 1), Vector2i(0, 1), Vector2i(1, 1),
+]
+
 
 ## 推進一個 tick。就地變更 `s`。
 ##
@@ -190,20 +198,19 @@ static func _advance_and_damage(s: RefCounted, aura: Array = []) -> void:
 		var cell := Tide.cell_of(s.path, float(e["progress"]))
 		var dmg := float(def.get("dmg", 0.0)) * TICK
 
-		for dy in [-1, 0, 1]:
-			for dx in [-1, 0, 1]:
-				var at := cell + Vector2i(dx, dy)
-				var n: Dictionary = node_at_cell.get(at, {})
-				if not n.is_empty():
-					n["hp"] = float(n["hp"]) - dmg
-				# 一條導管可能有好幾格都在同一隻敵人的半徑內——**只能挨一次**
-				# （舊寫法的 `conduit_hit()` 命中就 return，語意在此以戳記保留）。
-				for ci: int in cond_at_cell.get(at, []):
-					if hit_by[ci] == i:
-						continue
-					hit_by[ci] = i
-					var c: Dictionary = s.conduits[ci]
-					c["hp"] = float(c["hp"]) - dmg
+		for off: Vector2i in BLAST_CELLS:
+			var at := cell + off
+			var n: Dictionary = node_at_cell.get(at, {})
+			if not n.is_empty():
+				n["hp"] = float(n["hp"]) - dmg
+			# 一條導管可能有好幾格都在同一隻敵人的半徑內——**只能挨一次**
+			# （舊寫法的 `conduit_hit()` 命中就 return，語意在此以戳記保留）。
+			for ci: int in cond_at_cell.get(at, []):
+				if hit_by[ci] == i:
+					continue
+				hit_by[ci] = i
+				var c: Dictionary = s.conduits[ci]
+				c["hp"] = float(c["hp"]) - dmg
 
 		var slow := 0.0 if i >= aura.size() else (aura[i] as Vector2).x
 		e["progress"] = Tide.advance(

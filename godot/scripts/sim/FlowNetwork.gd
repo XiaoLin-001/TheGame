@@ -133,30 +133,6 @@ static func prepare(nodes: Array, edges: Array) -> Dictionary:
 		out_list[out_start[f] + fill[f]] = i
 		fill[f] += 1
 
-	# 入邊表。用途只有一個：節點吸收掉自己的需求時，要把**所有指著它的邊**的
-	# 可送達需求一起扣掉（見傳播段的說明）。
-	var in_start := PackedInt32Array()
-	in_start.resize(vn + 1)
-	var in_deg := PackedInt32Array()
-	in_deg.resize(vn)
-	for i in en:
-		if e_from[i] >= 0 and e_to[i] >= 0:
-			in_deg[e_to[i]] += 1
-	var iacc := 0
-	for v in vn:
-		in_start[v] = iacc
-		iacc += in_deg[v]
-	in_start[vn] = iacc
-	var in_list := PackedInt32Array()
-	in_list.resize(iacc)
-	fill.fill(0)
-	for i in en:
-		var t := e_to[i]
-		if e_from[i] < 0 or t < 0:
-			continue
-		in_list[in_start[t] + fill[t]] = i
-		fill[t] += 1
-
 	# 生成森林也是純拓樸的，所以一起算在這裡——三張網、三次迭代共用同一棵。
 	var forest := _spanning_forest(vn, out_start, out_list, e_to)
 	return {
@@ -164,7 +140,6 @@ static func prepare(nodes: Array, edges: Array) -> Dictionary:
 		"ids": ids, "index_of": index_of,
 		"e_from": e_from, "e_to": e_to, "e_cap": e_cap, "e_twin": e_twin,
 		"out_start": out_start, "out_list": out_list,
-		"in_start": in_start, "in_list": in_list,
 		"out_cap": out_cap, "in_cap": in_cap,
 		"parent_edge": forest[0], "order": forest[1],
 	}
@@ -190,8 +165,6 @@ static func solve(
 	var e_twin: PackedInt32Array = tp["e_twin"]
 	var out_start: PackedInt32Array = tp["out_start"]
 	var out_list: PackedInt32Array = tp["out_list"]
-	var in_start: PackedInt32Array = tp["in_start"]
-	var in_list: PackedInt32Array = tp["in_list"]
 	var out_cap: PackedFloat64Array = tp["out_cap"]
 	var in_cap: PackedFloat64Array = tp["in_cap"]
 	var parent_edge: PackedInt32Array = tp["parent_edge"]
@@ -206,11 +179,12 @@ static func solve(
 	var supply := PackedFloat64Array()
 	var demand := PackedFloat64Array()
 	var prio := PackedFloat64Array()
-	var is_silo := PackedInt32Array()
 	supply.resize(vn)
 	demand.resize(vn)
 	prio.resize(vn)
-	is_silo.resize(vn)
+	# 依索引遞增收集（浮點紀律，§2.4）。**在這一趟就收好**，下面那一趟才不必
+	# 為了認出儲槽再做一次 `String()`——那是這支函式最貴的單一操作。
+	var silo_ids: Array[int] = []
 	var base_supply := 0.0
 	var base_demand := 0.0
 	for v in vn:
@@ -218,7 +192,7 @@ static func solve(
 		var type := String(n.get("type", ""))
 		prio[v] = maxf(1.0, float(priorities.get(type, 1)))
 		if type == SILO:
-			is_silo[v] = 1
+			silo_ids.append(v)
 			continue
 		var s := maxf(0.0, float(n.get("supply", 0.0)))
 		var d := maxf(0.0, float(n.get("demand", 0.0)))
@@ -230,13 +204,9 @@ static func solve(
 	# ── 儲槽換邊站（GDD §3.1）：盈餘時是消費者，赤字時是供給者。
 	#    充放電速率受**自己那條導管的 cap** 約束——這是它與全域水池的根本差別，
 	#    不得為了方便豁免（一座 300 容量的儲槽接 cap 10 的線，最多只放得出 10/秒）。
-	var silo_ids: Array[int] = []
 	var silo_discharging := base_demand > base_supply
 	var total_rate := 0.0
-	for v in vn:
-		if is_silo[v] == 0:
-			continue
-		silo_ids.append(v)
+	for v: int in silo_ids:
 		var n: Dictionary = node_at[v]
 		var charge := maxf(0.0, float(n.get("charge", 0.0)))
 		var capacity := maxf(0.0, float(n.get("capacity", 0.0)))
@@ -282,7 +252,6 @@ static func solve(
 	var down_w := PackedFloat64Array()
 	var up_a := PackedFloat64Array()
 	var up_w := PackedFloat64Array()
-	var ready := false
 
 	var step_budget: int = (vn + en) * 4 + 64
 	for _iter in ITERATIONS:
@@ -296,8 +265,7 @@ static func solve(
 		if queue.is_empty():
 			break
 
-		if not ready:
-			ready = true
+		if down_a.is_empty():
 			claim.resize(acc)
 			w_buf.resize(acc)
 			d_buf.resize(acc)
@@ -310,7 +278,7 @@ static func solve(
 			parent_edge, order, down_a, down_w, up_a, up_w
 		)
 		# 「往上看」的量對**除了自己這一支以外**的所有節點都一樣會被消耗，
-		# 所以扣減走一個全域位移，只有祖先鏈上那幾個要加回來（見 `_absorb()`）。
+		# 所以扣減走一個全域位移，只有祖先鏈上那幾個要加回來（見下面的吸收段）。
 		var up_off_a := 0.0
 		var up_off_w := 0.0
 
