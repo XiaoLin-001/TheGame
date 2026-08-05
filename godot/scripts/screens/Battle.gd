@@ -17,6 +17,8 @@ const Combat := preload("res://scripts/sim/Combat.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const MapGen := preload("res://scripts/sim/MapGen.gd")
 const Daily := preload("res://scripts/sim/Daily.gd")
+const Blueprint := preload("res://scripts/sim/Blueprint.gd")
+const Tech := preload("res://data/Tech.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
@@ -83,7 +85,7 @@ const SHORT_ROWS := 3
 ## ★ B1.3.1：`CONNECT` 與 `PAN` 兩個模式已刪。拉線一律是拖曳（B1.6.2 取代了
 ## 「連線」模式），平移是滑鼠中鍵按住拖——**兩件事都不該是模式**：
 ## 模式的代價是「忘記切回來時點地圖沒反應」，而這兩個動作都頻繁到會天天付這個代價。
-enum Mode { BUILD, UPGRADE, DEMOLISH }
+enum Mode { BUILD, UPGRADE, DEMOLISH, BLUEPRINT }
 
 var s: RefCounted = null
 
@@ -134,6 +136,12 @@ var _mode: int = Mode.BUILD
 var _build_type: String = "extractor"
 ## 拖曳拉線的起點（B1.6.2）。−1 ＝ 沒有在拉線。
 var _drag_from: Vector2i = Vector2i(-1, -1)
+## ★ 藍圖框選的起點（B2.3）。−1 ＝ 沒有在框。
+var _bp_from: Vector2i = Vector2i(-1, -1)
+## ★ 待展開的藍圖索引（B2.3）。−1 ＝ 沒有拿著藍圖。
+## 拿著藍圖時左鍵點地圖＝把它放在那裡，而不是蓋一個節點。
+var _bp_index: int = -1
+var _bp_panel: PanelContainer = null
 ## 中鍵按著沒放（B1.3.1）＝正在平移地圖。
 var _panning: bool = false
 var _hover: Vector2i = Vector2i(-999, -999)
@@ -491,6 +499,82 @@ func _click_selftest() -> void:
 		await get_tree().process_frame
 	var alloy_gated: bool = _build_type == "breaker" and _message.contains("合金")
 
+	# ★ 藍圖庫（B2.3）。走完整條路徑：框選 → 存 → 拿起來 → 放下去。
+	#   **不直接呼叫 `Blueprint.capture()`**——那只驗得到純函式，而這一批
+	#   會壞的地方在「拖曳有沒有真的被當成框選」和「拿著藍圖時左鍵做什麼」。
+	GameState.data["blueprints"] = []
+	_press(_mode_buttons[Mode.BLUEPRINT])
+	var built_cells: Array[Vector2i] = []
+	for n: Dictionary in s.nodes:
+		if String(n["type"]) != "core":
+			built_cells.append(n["cell"])
+	var lo := built_cells[0]
+	var hi := built_cells[0]
+	for c: Vector2i in built_cells:
+		lo = Vector2i(mini(lo.x, c.x), mini(lo.y, c.y))
+		hi = Vector2i(maxi(hi.x, c.x), maxi(hi.y, c.y))
+	_drag(lo, hi)
+	for _i in 2:
+		await get_tree().process_frame
+	var bp_saved: bool = (GameState.data["blueprints"] as Array).size() == 1
+	# 存的是**真的框到的東西**，不是一張空藍圖。
+	# ⚠ 前置條件要一起驗：只框到一個節點時「節點數對得上」是**恆真**的，
+	#   而那樣既測不到導管、也測不到多格落點（截圖上只有一格預覽才發現）。
+	var bp_has_nodes: bool = bp_saved and built_cells.size() >= 2 and (
+		((GameState.data["blueprints"] as Array)[0]["nodes"] as Array).size() == built_cells.size()
+	) and not ((GameState.data["blueprints"] as Array)[0]["conduits"] as Array).is_empty()
+	# 找一個**真的放得下**的落點。寫死一格的話，日後動一次示範佈局或地圖
+	# 就會變成「藍圖功能壞了」的假紅——玩家在真實遊玩裡做的也是這件事：
+	# 移動滑鼠直到預覽變綠。
+	var ore_keep: float = s.ore
+	var alloy_keep: float = s.alloy
+	s.ore = 99999.0
+	s.alloy = 99999.0
+	var spot := Vector2i(-1, -1)
+	if bp_saved:
+		var bp0: Dictionary = (GameState.data["blueprints"] as Array)[0]
+		for y in range(1, s.map["size"].y - 4):
+			for x in range(1, s.map["size"].x - 4):
+				if bool(BuildController.blueprint_check(s, bp0, Vector2i(x, y))["ok"]):
+					spot = Vector2i(x, y)
+					break
+			if spot.x >= 0:
+				break
+	# 拿起來 → 左鍵點那一格 → 節點數要真的變多。
+	_on_take_blueprint(0)
+	var bp_nodes_before: int = s.nodes.size()
+	if spot.x >= 0:
+		_click(spot)
+	for _i in 2:
+		await get_tree().process_frame
+	var bp_expanded: bool = s.nodes.size() > bp_nodes_before and _bp_index < 0
+	# ★ 錢不夠時要**說出缺口，而且一格都不放**（DoD 第二條）。
+	#   位置沿用同一格 → 唯一的失敗理由只剩錢。
+	_on_take_blueprint(0)
+	s.ore = 0.0
+	s.alloy = 0.0
+	var nodes_broke: int = s.nodes.size()
+	if spot.x >= 0:
+		_click(spot)
+	for _i in 2:
+		await get_tree().process_frame
+	var bp_short: bool = _message.contains("礦砂差") and s.nodes.size() == nodes_broke
+	# ★ 把局面還原給後面的斷言用：**展開出來的節點要拆掉**、錢改回去、
+	#   藍圖放下、模式回建造。
+	#   少了這幾行，後面的視野／選單／局末三條會因為帳上是 0、或因為那幾格
+	#   被藍圖佔住而一起紅——而紅的原因看起來完全和它們自己有關（實際踩到兩次）。
+	#   `remove_node_at()` 會連帶清掉接在那一格上的導管，所以不會留下斷線。
+	if spot.x >= 0 and bp_saved:
+		for c: Vector2i in Blueprint.cells_at(
+			(GameState.data["blueprints"] as Array)[0], spot
+		):
+			s.remove_node_at(c)
+	s.ore = ore_keep
+	s.alloy = alloy_keep
+	_bp_index = -1
+	GameState.data["blueprints"] = []
+	_press(_build_buttons["extractor"])
+
 	# 三個浮層也走同一條真實路徑：按鈕 → 面板出現且有內容。
 	_energy_button.button_pressed = true
 	_on_codex_show("smelter", _build_buttons["smelter"])
@@ -506,6 +590,16 @@ func _click_selftest() -> void:
 		_codex_panel.visible and _codex_label.text.contains("熔爐")
 		and _codex_panel.position.x + _codex_panel.size.x <= _energy_panel.position.x
 	)
+	# 藍圖抽屜也要守同一條：三張浮層可以同時開，就不得互相蓋掉。
+	_bp_panel.visible = true
+	_refresh_blueprints()
+	await get_tree().process_frame
+	var bp_fits: bool = (
+		_bp_panel.position.x >= _prio_panel.position.x + _prio_panel.size.x
+		and _bp_panel.position.x + _bp_panel.size.x <= _energy_panel.position.x
+		and _bp_panel.position.y + _bp_panel.size.y <= 660.0
+	)
+	_bp_panel.visible = false
 	# 優先權面板 9 列雙欄：整張表要留在畫面內，且不得蓋掉能量面板。
 	var prio_ok: bool = (
 		_prio_panel.size.y > 0.0
@@ -697,6 +791,7 @@ func _click_selftest() -> void:
 		placed and rejected and diag_placed and wired and upgraded and dragged and panned
 		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
 		and view_ok and menu_ok and audio_ok and over_ok
+		and bp_saved and bp_has_nodes and bp_expanded and bp_short and bp_fits
 	)
 	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s → %s" % [
 		placed, rejected, diag_placed, wired, upgraded, dragged, panned, reachable, alloy_gated,
@@ -706,6 +801,9 @@ func _click_selftest() -> void:
 	print("[TL_CLICKTEST/audio] prep_music=%s wave_hush=%s wave_sting=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s knell_field=%s" % [
 		music_ok, wave_hush, wave_sting, voice_ok, AudioBus.muted, tower_built, over_cleared,
 		over_silent, why_shown, why_fits, field_ok
+	])
+	print("[TL_CLICKTEST/blueprint] saved=%s nodes=%s(%d 格) expanded=%s shortfall=%s fits=%s" % [
+		bp_saved, bp_has_nodes, built_cells.size(), bp_expanded, bp_short, bp_fits
 	])
 	print("[TL_CLICKTEST/menu] esc_open=%s scrim_blocks=%s settings=%s settings_back=%s esc_close=%s cell_buildable=%s button=%s fits=%s" % [
 		menu_open, menu_blocks, settings_open, settings_back, menu_closed, buildable_after,
@@ -1141,6 +1239,11 @@ func _gui_input(event: InputEvent) -> void:
 	#   不用每一步都往返左欄切模式——第 1 關的參考解就是 6 蓋 6 接交替，
 	#   舊路徑要切 10 次模式，而那 10 次沒有任何一次是決策。
 	var c := _cell_at(mb.position)
+	# ★ 藍圖框選（B2.3）：按下記起點，放開才成框。
+	if _mode == Mode.BLUEPRINT:
+		_bp_from = c
+		queue_redraw()
+		return
 	if _mode == Mode.BUILD and not s.node_at(c).is_empty():
 		_drag_from = c
 		queue_redraw()
@@ -1152,6 +1255,13 @@ func _gui_input(event: InputEvent) -> void:
 
 ## 左鍵放開。只有「按下時停在某個節點上」的那條路徑會走到這裡。
 func _release(pos: Vector2) -> void:
+	if _bp_from.x >= 0:
+		var from_bp := _bp_from
+		_bp_from = Vector2i(-1, -1)
+		_save_blueprint(from_bp, _cell_at(pos))
+		_refresh_hint()
+		queue_redraw()
+		return
 	if _drag_from.x < 0:
 		return
 	var from := _drag_from
@@ -1180,6 +1290,10 @@ func _act(cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> void:
 	# ⚠ `match` 的各分支共享作用域，變數名不能重複（`CLAUDE.md` 嚴格型別地雷）。
 	match _mode:
 		Mode.BUILD:
+			# ★ 拿著藍圖時，左鍵是「把它放在這裡」而不是蓋一個節點（B2.3）。
+			if _bp_index >= 0:
+				_expand_blueprint(cell)
+				return
 			var code_b := BuildController.place(s, _build_type, cell)
 			if code_b == Build.OK:
 				AudioBus.play("build_place")
@@ -2307,6 +2421,26 @@ func _draw_hover() -> void:
 			)
 	else:
 		draw_rect(Rect2(p, g), Palette.BORDER_STRONG, false, 2.0)
+	# ★ 藍圖（B2.3）。框選中畫橡皮筋框；手上有藍圖時畫它的落點。
+	if _bp_from.x >= 0:
+		var lo := Vector2i(mini(_bp_from.x, _hover.x), mini(_bp_from.y, _hover.y))
+		var hi := Vector2i(maxi(_bp_from.x, _hover.x), maxi(_bp_from.y, _hover.y))
+		var rect := Rect2(_world(lo), Vector2(hi - lo + Vector2i.ONE) * Shapes.GRID)
+		draw_rect(rect, Palette.alpha(Palette.ORDER_CYAN, 0.12))
+		draw_rect(rect, Palette.ORDER_CYAN, false, 2.0)
+	elif _bp_index >= 0:
+		var list := _blueprints()
+		if _bp_index < list.size():
+			# **每一格各自上色**：綠＝放得下、橘＝這一格擋住了。整份一個顏色
+			# 只能說「不行」，指不出是哪一格——而那正是玩家的下一步要知道的事。
+			var chk := BuildController.blueprint_check(s, list[_bp_index], _hover)
+			var bad: Dictionary = {}
+			for c: Vector2i in (chk["blocked"] as Array):
+				bad[c] = true
+			for c: Vector2i in Blueprint.cells_at(list[_bp_index], _hover):
+				var col: Color = Palette.WARN_ORANGE if bad.has(c) else Palette.OK_GREEN
+				draw_rect(Rect2(_world(c), g), Palette.alpha(col, 0.22))
+				draw_rect(Rect2(_world(c), g), col, false, 2.0)
 	var cf := _drag_from
 	if cf.x >= 0:
 		draw_rect(Rect2(_world(cf), g), Palette.ORDER_BRIGHT, false, 2.0)
@@ -2440,7 +2574,7 @@ func _build_ui() -> void:
 	modes.add_theme_constant_override("h_separation", 2)
 	modes.add_theme_constant_override("v_separation", 2)
 	col.add_child(modes)
-	for pair: Array in [[Mode.UPGRADE, "加粗"], [Mode.DEMOLISH, "拆除"]]:
+	for pair: Array in [[Mode.UPGRADE, "加粗"], [Mode.DEMOLISH, "拆除"], [Mode.BLUEPRINT, "藍圖"]]:
 		var b := _tool_button(group, String(pair[1]))
 		b.custom_minimum_size = Vector2(54, 0)   # 兩欄要塞進 112px 的欄寬
 		b.pressed.connect(_on_mode.bind(int(pair[0])))
@@ -2467,6 +2601,13 @@ func _build_ui() -> void:
 	prio.toggle_mode = true
 	prio.toggled.connect(_on_toggle_priority)
 	bar.add_child(UiKit.touchable(prio))
+	# ★ 藍圖庫（B2.3）。放底欄抽屜而不是左欄：左欄的八種節點加動作鈕已經
+	#   吃掉 380px，而藍圖是**每局用一兩次**的東西，不該和每秒都在點的建造欄搶位置。
+	var bp_btn := Button.new()
+	bp_btn.text = "藍圖"
+	bp_btn.toggle_mode = true
+	bp_btn.toggled.connect(_on_toggle_blueprint)
+	bar.add_child(UiKit.touchable(bp_btn))
 	_help_button = Button.new()
 	_help_button.text = "說明"
 	_help_button.toggle_mode = true
@@ -2486,6 +2627,7 @@ func _build_ui() -> void:
 	bar.add_child(UiKit.touchable(_codex_button))
 
 	_build_priority_panel()
+	_build_blueprint_panel()
 	_build_energy_panel()
 	_build_codex_panel()
 	_build_help_panel()
@@ -2505,6 +2647,22 @@ func _build_ui() -> void:
 ##      必須是一個手勢；滑桿會跑位就不是手勢了。
 ##   ② **沒有「每一座」的選項**——操作負擔不得隨建築數量成長（風險 R-1）。
 ##   ③ 預設收合。它是抽屜不是常駐欄（§6.2 全畫面地圖 ＋ 可收合浮層）。
+## ★ 藍圖抽屜（B2.3）。位置在畫面左中——優先權面板在 (128, 380)、
+## 能量面板在右上、提示列在底邊，這一塊是剩下唯一放得下一張清單的地方。
+func _build_blueprint_panel() -> void:
+	var box := UiKit.panel()
+	# 位置是**擠出來的**，不是挑出來的：優先權面板佔 128..510、能量面板佔
+	# 872..1264、圖鑑浮層下緣到 320、提示列從 660 起——中間這一塊是唯一
+	# 能讓三張浮層同時開又互不相疊的地方。
+	# 第一版放 (128, 150)，於是被圖鑑整個蓋住（截圖抓到，文字從圖鑑後面透出來）。
+	box.position = Vector2(560, 400)
+	box.visible = false
+	box.add_child(UiKit.vbox(4))
+	add_child(box)
+	_bp_panel = box
+	_refresh_blueprints()
+
+
 func _build_priority_panel() -> void:
 	var box := UiKit.panel()
 	# B1.1 起 9 列：單欄 × 44px 觸控高度（手機移植前提，不能縮）放不進一屏，
@@ -2858,8 +3016,125 @@ func _on_build_type(type: String) -> void:
 	_refresh_hint()
 
 
+# ── 藍圖庫（B2.3、`10_GDD.md` §3.7）───────────────────────────────────
+
+## 這一份存檔有幾個槽。**吃的是玩家的科技，不是這一局的 `s.mods`**——
+## 藍圖庫是跨局資產（§3.7），而每日挑戰的統一配置榜會把 `s.mods` 壓成中性值
+## （憲法 B3）。用 `s.mods` 的話，打統一配置榜時玩家的槽會憑空少兩個。
+func _bp_slots() -> int:
+	var unlocked: Array = (GameState.data.get("tech", {}) as Dictionary).get("unlocked", [])
+	return Blueprint.slots(Tech.mods(unlocked))
+
+
+func _blueprints() -> Array:
+	return GameState.data.get("blueprints", [])
+
+
+## 框選存檔。
+func _save_blueprint(a: Vector2i, b: Vector2i) -> void:
+	var bp := Blueprint.capture(s.nodes, s.conduits, a, b)
+	var err := SaveService.add_blueprint(GameState.data, bp, _bp_slots())
+	if err != "":
+		_message = err
+		return
+	SaveService.save_from(GameState.data)
+	var cost: Dictionary = Blueprint.cost(bp)
+	_message = "✔ 已存為藍圖　%d 節點・%d 導管　展開要 %d 礦砂" % [
+		(bp["nodes"] as Array).size(), (bp["conduits"] as Array).size(), int(cost["ore"])
+	]
+	_refresh_blueprints()
+
+
+## 把手上那張藍圖放在 `cell`。**全有全無**（`BuildController.blueprint_place`）。
+func _expand_blueprint(cell: Vector2i) -> void:
+	var list := _blueprints()
+	if _bp_index < 0 or _bp_index >= list.size():
+		_bp_index = -1
+		return
+	var err := BuildController.blueprint_place(s, list[_bp_index], cell)
+	if err != "":
+		_message = err
+		return
+	AudioBus.play("build_place")
+	# 放完就放下它。**不留在手上**：藍圖是「一次把一整條產線種下去」，
+	# 連放兩次的自然結果是兩份重疊在一起而第二份整份失敗。
+	_bp_index = -1
+	_message = "✔ 藍圖已展開"
+	_refresh_blueprints()
+	queue_redraw()
+
+
+func _on_toggle_blueprint(open: bool) -> void:
+	_bp_panel.visible = open
+	if open:
+		_refresh_blueprints()
+
+
+## 重畫藍圖抽屜。列出每一張的名字、成本，以及兩顆鈕（展開／刪除）。
+func _refresh_blueprints() -> void:
+	if _bp_panel == null:
+		return
+	var col: VBoxContainer = _bp_panel.get_child(0)
+	UiKit.clear(col)
+	var list := _blueprints()
+	col.add_child(UiKit.label(
+		"藍圖庫　%d／%d 槽" % [list.size(), _bp_slots()], 16, Palette.TEXT_PRIMARY, false
+	))
+	col.add_child(UiKit.label(
+		"框選：切「藍圖」→ 在地圖上按住拖出一個框",
+		13, Palette.TEXT_SECONDARY, false
+	))
+	if list.is_empty():
+		col.add_child(UiKit.label("（尚無藍圖）", 13, Palette.TEXT_SECONDARY, false))
+		return
+	for i in list.size():
+		var bp: Dictionary = list[i]
+		var cost: Dictionary = Blueprint.cost(bp)
+		var row := UiKit.hbox(6)
+		col.add_child(row)
+		# 成本寫在清單上，**不是等玩家點下去才知道**（§3.7「自動計算成本」）。
+		var alloy_part := "" if int(cost["alloy"]) <= 0 else "・%d 合金" % int(cost["alloy"])
+		row.add_child(UiKit.label("%s　%d 礦砂%s" % [
+			String(bp.get("name", "")), int(cost["ore"]), alloy_part
+		], 13, Palette.TEXT_PRIMARY, false))
+		var take := Button.new()
+		take.text = "放下" if _bp_index == i else "展開"
+		take.pressed.connect(_on_take_blueprint.bind(i))
+		row.add_child(UiKit.touchable(take))
+		var del := Button.new()
+		del.text = "刪除"
+		del.pressed.connect(_on_delete_blueprint.bind(i))
+		row.add_child(UiKit.touchable(del))
+
+
+func _on_take_blueprint(i: int) -> void:
+	# 再按一次＝放下。拿著藍圖時左鍵會展開它，沒有取消的手勢就等於卡住。
+	_bp_index = -1 if _bp_index == i else i
+	if _bp_index >= 0:
+		_mode = Mode.BUILD
+		_message = "藍圖在手上：左鍵點地圖放下它（再按一次「放下」取消）"
+	_refresh_blueprints()
+	queue_redraw()
+
+
+func _on_delete_blueprint(i: int) -> void:
+	var list := _blueprints()
+	if i < 0 or i >= list.size():
+		return
+	list.remove_at(i)
+	GameState.data["blueprints"] = list
+	SaveService.save_from(GameState.data)
+	_bp_index = -1
+	_refresh_blueprints()
+
+
 func _on_mode(mode: int) -> void:
 	_mode = mode
+	# 換模式就放下手上的藍圖：拿著它的時候左鍵是「展開」，而玩家切去拆除
+	# 是為了拆東西——留著會讓下一次左鍵做出他沒想要的事。
+	if _bp_index >= 0:
+		_bp_index = -1
+		_refresh_blueprints()
 	_drag_from = Vector2i(-1, -1)
 	_message = ""
 	_refresh_hint()
@@ -3206,6 +3481,7 @@ func _restart() -> void:
 	_ff_button = null
 	_summon_button = null
 	_prio_panel = null
+	_bp_panel = null
 	_help_panel = null
 	_help_button = null
 	_energy_panel = null

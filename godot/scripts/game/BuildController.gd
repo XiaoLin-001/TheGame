@@ -5,6 +5,7 @@ extends RefCounted
 ## 文案也在這裡——`sim/` 回傳原因碼，中文字串不進模擬層。
 
 const Build := preload("res://scripts/sim/Build.gd")
+const Blueprint := preload("res://scripts/sim/Blueprint.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 
 ## 拆除返還比例。失敗只花時間（紅線 R1）的一致延伸：試錯的代價要小。
@@ -113,6 +114,86 @@ static func demolish(s: RefCounted, cell: Vector2i, point: Vector2 = Vector2(-99
 		s.remove_conduit(ci)
 		return Build.OK
 	return Build.OCCUPIED
+
+
+## ★ 藍圖展開的**事前檢查**（B2.3、`10_GDD.md` §3.7）。
+##
+## 回傳 `{ok, ore_short, alloy_short, blocked}`：差多少礦砂、差多少合金、
+## 哪幾格蓋不下去。**不改變任何狀態**。
+##
+## ── 為什麼是「全有全無」──────────────────────────────────────────
+## 藍圖是一個單位，不是一疊各自獨立的指令。半套展開會**花掉資源換到一個
+## 接不起來的殘骸**——玩家看到的是「錢少了、東西沒蓋好」，而且拆掉只退 75%。
+## 所以先整份驗過，一格不合就一格都不放，並且說出是哪一格、差多少
+## （§3.7「資源不足則顯示缺口」）。
+##
+## ── 為什麼要自己投影一份 occupied，而不是直接試著蓋 ────────────────
+## 藍圖自己的節點會互相佔位、自己的導管會互相判重疊。拿當前狀態去問
+## `can_place()` 只會得到「第一格可以」——後面的都還沒放上去。
+## 所以這裡把已放進去的部分**投影**進檢查用的集合裡，一格一格往下走，
+## 走的順序和 `ops_at()` 完全一樣（節點全部先於導管）。
+static func blueprint_check(s: RefCounted, bp: Dictionary, origin: Vector2i) -> Dictionary:
+	var need: Dictionary = Blueprint.cost(bp)
+	var blocked: Array[Vector2i] = []
+	var occupied: Dictionary = s.occupied()
+	var keys: Dictionary = s.conduit_keys()
+	var cells: Array = s.conduit_cells()
+	for op: Array in Blueprint.ops_at(bp, origin):
+		if String(op[0]) == "place":
+			var cell: Vector2i = op[2]
+			if Build.can_place(s.sets, occupied, String(op[1]), cell) != Build.OK:
+				blocked.append(cell)
+				continue
+			occupied[cell] = true
+		else:
+			var a: Vector2i = op[1]
+			var b: Vector2i = op[2]
+			# 兩端只要有一端沒蓋成，這條線本來就接不起來——不重複記一次
+			# （玩家要看的是「哪一格擋住了」，不是被它連累的每一條線）。
+			if not occupied.has(a) or not occupied.has(b):
+				continue
+			if Build.can_connect(s.sets, keys, a, b, cells) != Build.OK:
+				blocked.append(a)
+				continue
+			keys[Build.conduit_key(a, b)] = true
+			cells.append(Build.line_cells(a, b))
+	var ore_short := maxi(0, int(need["ore"]) - int(floorf(s.ore)))
+	var alloy_short := maxi(0, int(need["alloy"]) - int(floorf(s.alloy)))
+	return {
+		"ok": blocked.is_empty() and ore_short == 0 and alloy_short == 0,
+		"ore_short": ore_short,
+		"alloy_short": alloy_short,
+		"blocked": blocked,
+	}
+
+
+## 展開一張藍圖。**檢查不過就一格都不放**，回傳給玩家看的那句話。
+static func blueprint_place(s: RefCounted, bp: Dictionary, origin: Vector2i) -> String:
+	if Blueprint.is_empty(bp):
+		return "✕ 這張藍圖是空的"
+	var chk := blueprint_check(s, bp, origin)
+	if not bool(chk["ok"]):
+		return blueprint_reason(chk)
+	var fails: Array = apply_ops(s, Blueprint.ops_at(bp, origin))
+	# 走到這裡還失敗＝檢查與實際放置對不上，那是缺陷不是玩家的問題。
+	# **不要吞掉**：靜靜失敗的建造正是 `apply_ops()` 回傳失敗清單的理由。
+	if not fails.is_empty():
+		return "✕ 展開時有 %d 步失敗（請回報）" % fails.size()
+	return ""
+
+
+## 缺口的說法。**先講資源、再講格子**：資源不足是玩家等一下就能解決的，
+## 位置不對要他移動滑鼠——兩件事的下一步不一樣，混成一句話等於都沒講。
+static func blueprint_reason(chk: Dictionary) -> String:
+	var parts: Array[String] = []
+	if int(chk["ore_short"]) > 0:
+		parts.append("礦砂差 %d" % int(chk["ore_short"]))
+	if int(chk["alloy_short"]) > 0:
+		parts.append("合金差 %d" % int(chk["alloy_short"]))
+	var blocked: Array = chk["blocked"]
+	if not blocked.is_empty():
+		parts.append("有 %d 格蓋不下（%s…）" % [blocked.size(), blocked[0]])
+	return "✕ " + "，".join(parts) if not parts.is_empty() else ""
 
 
 ## 重播一組建造指令（`data/Maps.gd` 的示範佈局、日後的藍圖與重播都走這裡）。

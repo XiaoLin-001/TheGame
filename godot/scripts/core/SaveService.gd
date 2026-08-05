@@ -11,6 +11,7 @@ extends Node
 
 const Score := preload("res://scripts/sim/Score.gd")
 const Daily := preload("res://scripts/sim/Daily.gd")
+const Blueprint := preload("res://scripts/sim/Blueprint.gd")
 
 ## sv2（B1.4）：`campaign.cleared` 移除，改由 `campaign.stars` 推導。
 const SAVE_VERSION := 2
@@ -54,6 +55,10 @@ const DEFAULTS := {
 	},
 	# `resolution` 是 `RESOLUTIONS` 的索引，不是像素——存像素的話，
 	# 日後刪掉一個選項就會出現一個選不到、也顯示不出來的設定值。
+	# ★ B2.3 落地的鍵。藍圖的座標是 `[dx, dy]` 整數陣列（`sim/Blueprint.gd`
+	# 的說明）——**全部是 JSON 原生型別**，所以這一格存進去讀出來就是原樣，
+	# 不需要任何序列化程式碼。
+	"blueprints": [],
 	"settings": {
 		"master": 0.8, "bgm": 0.6, "sfx": 0.8,
 		"reduce_motion": false, "fullscreen": false, "resolution": 0,
@@ -187,6 +192,27 @@ static func apply_daily(
 	day["today"] = today
 	d["daily"] = day
 	return {"wave": new_wave, "output": new_output}
+
+
+## ★ 存一張藍圖（B2.3、`10_GDD.md` §3.7）。回傳空字串＝成功，否則是給玩家看的話。
+##
+## 槽數在這裡把關而不是在畫面層：畫面之後可能有第二個入口（例如局末結算
+## 直接存這一局的佈局），而「槽滿了」這條規則只該有一份。
+static func add_blueprint(d: Dictionary, bp: Dictionary, slot_count: int) -> String:
+	if Blueprint.is_empty(bp):
+		return "✕ 框選範圍內沒有可存的節點"
+	var list: Array = d.get("blueprints", [])
+	if list.size() >= slot_count:
+		return "✕ 藍圖槽已滿（%d／%d）——先刪一張，或解鎖後勤科技" % [list.size(), slot_count]
+	var copy: Dictionary = bp.duplicate(true)
+	if String(copy.get("name", "")) == "":
+		# 自動命名用**尺寸與節點數**，不是流水號：三個月後回來看「藍圖 3」
+		# 想不起來是什麼，「4×3・7 節點」至少認得出是哪一種產線。
+		var sp := Blueprint.span(copy)
+		copy["name"] = "%d×%d・%d 節點" % [sp.x, sp.y, (copy["nodes"] as Array).size()]
+	list.append(copy)
+	d["blueprints"] = list
+	return ""
 
 
 ## 遞迴補預設值：defaults 有而 target 沒有的鍵才補；兩邊都是 Dictionary 就往下走。
