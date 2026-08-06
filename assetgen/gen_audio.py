@@ -361,6 +361,45 @@ def sfx_fire_breaker():
     return fade_edges(normalize(out, 0.86))
 
 
+def sfx_fire_longcall():
+    """長哨：遠距的一聲哨音——先是一段窄的上滑，尾巴留一點空間感。
+
+    ★ 它是全遊戲**射得最慢**的塔（0.35/秒），所以可以長、可以有存在感；
+    錨那條「一秒好幾發的東西不能用重擊音色」的理由在這裡剛好反過來。
+    音域壓在 700–1500Hz，避開開打號令（≤900Hz）與稜鏡（1750Hz）——
+    B2.1f 的教訓是**撞頻段的前景瞬態會變成訓練假警報**，塔的開火線更該守。
+    """
+    out = buf(0.26)
+    for i in range(len(out)):
+        t = i / RATE
+        f = 700.0 + 800.0 * (1.0 - math.exp(-9.0 * t))
+        out[i] = math.sin(2.0 * math.pi * f * t) * env_exp(t, 0.26, 6.0)
+    # 尾音：同一個哨音低八度、延遲 60ms，做出「打得很遠」的距離感。
+    tail = buf(0.26)
+    for i in range(len(tail)):
+        t = i / RATE
+        tail[i] = math.sin(2.0 * math.pi * 750.0 * t) * env_exp(t, 0.26, 9.0)
+    mix(out, tail, 0.06, 0.28)
+    return fade_edges(normalize(out, 0.58))
+
+
+def sfx_fire_ballast():
+    """定潮：厚實、低、幾乎不亮的一擊——它是壓在路邊撐的那一座。
+
+    刻意和錨（520→240Hz、0.10 秒）分開：同樣是單體物理，定潮低一截也長一截，
+    這樣兩座擺在一起時聽得出開火的是哪一個。沒有噪音層——那是碎浪的東西。
+    """
+    out = buf(0.16)
+    for i in range(len(out)):
+        t = i / RATE
+        e = env_exp(t, 0.16, 11.0)
+        out[i] = (
+            math.sin(2.0 * math.pi * (190.0 * math.exp(-18.0 * t) + 110.0) * t) * e
+            + 0.35 * math.sin(2.0 * math.pi * 165.0 * t) * e * e
+        )
+    return fade_edges(normalize(out, 0.62))
+
+
 def sfx_enemy_hit():
     """敵人受擊：短、乾、不搶戲（一波幾十次）。"""
     out = buf(0.07)
@@ -490,6 +529,8 @@ SFX = {
     "tl_sfx_fire_prism": sfx_fire_prism,
     "tl_sfx_fire_reclaimer": sfx_fire_reclaimer,
     "tl_sfx_fire_breaker": sfx_fire_breaker,
+    "tl_sfx_fire_longcall": sfx_fire_longcall,
+    "tl_sfx_fire_ballast": sfx_fire_ballast,
     "tl_sfx_enemy_hit": sfx_enemy_hit,
     "tl_sfx_wave_start": sfx_wave_start,
     "tl_sfx_warn_power": sfx_warn_power,

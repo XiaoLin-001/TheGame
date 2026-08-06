@@ -135,12 +135,11 @@ func _build() -> void:
 		row.add_child(_card(i))
 
 
-## 這一關解鎖了嗎？第 1 關永遠開著，之後要前一關通關（≥1 星，§7.9）。
+## 這一關解鎖了嗎？規則在 `CampaignData.open_count()`——**名冊讀的是同一條**
+## （B2.4）：「這張卡能不能點」與「這幾隻角色是不是我的」是同一個事實。
 func _unlocked(index: int) -> bool:
-	if index <= 0:
-		return true
-	# 「通關」＝上一關至少 1 星（sv2 起沒有另一份 `cleared` 清單，§7.9）。
-	return _stars(index - 1) >= 1
+	var best: Dictionary = (GameState.data.get("campaign", {}) as Dictionary).get("stars", {})
+	return index < CampaignData.open_count(best)
 
 
 func _stars(index: int) -> int:

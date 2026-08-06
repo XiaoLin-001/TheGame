@@ -41,7 +41,7 @@
 - **耗能模型**：**交戰時每秒持續耗電，待機耗能 0**（少數特殊角色例外）。因此約束是**峰值電力**不是平均電力 → **儲槽是核心策略建築**（準備期充能、波次期放電）。
 - **能量是流率，不是水池**：**沒有全域能量池**。唯一的跨 tick 儲存體是儲槽節點，**充放電受它自己那條導管的 `cap` 約束**。頂欄顯示的是「本 tick 供給／需求」，不是存量／容量。不得為了方便讓儲槽豁免導管上限——那等於偷偷退回水池模型。
 - **導管基礎 `cap` 10 小於發電機輸出 20，是設計不是漏洞**：第一台發電機就會讓那條線滿載變色，用第二個建築教玩家讀瓶頸。加粗幹線（局內升級 +6/級 ×3 → 28）本身就是一個和「多蓋採集器」競爭的取捨。
-- **優先權設在「節點類型」，不是單一節點**（5–8 條滑桿恆在同一位置；儲槽佔一格）。理由：不可暫停的戰術動作必須是一個手勢，而且操作負擔不得隨建築數量成長（R-1）。
+- **優先權設在「節點類型」，不是單一節點**（5–8 條滑桿恆在同一位置；儲槽佔一格）。理由：不可暫停的戰術動作必須是一個手勢，而且操作負擔不得隨建築數量成長（R-1）。**★ B2.4 起新角色併進既有的列**（`NodeDefs.PRIORITY_GROUP`），滑桿恆為九條的子集——否則 M3 的 24 隻角色就是 28 條滑桿。合併只在 UI 層，`FlowNetwork` 仍逐 type 讀。
 - **全域擊殺回收**：任何塔擊殺敵人回收其價值 **25%** 的礦砂。回收者的特殊能力是**射程內任何敵人死亡即回收 60% 為「能量」**（不限自己擊殺）。
 - **礦砂↔能量匯率 1:5**（沿用發電機 4 礦砂→20 能量）。任何價值換能量的地方一律用它，不另發明數字。
 - **路徑規則**：敵人路徑格**不可蓋節點**；導管**只能經由地圖指定的跨越點（橋）通過**。**橋是架高的 → 橋上導管不受攻擊**，是玩家可規劃的安全動線。橋的座數是關卡設計的主要刻度尺。
@@ -87,7 +87,7 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（14 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint）
+# 自動化測試（15 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -116,6 +116,10 @@ TL_SHOT="C:/tmp/lv.png" TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> 
 # （否則同一組參數會因為今天是幾號而拍出不同的圖）。
 TL_SHOT="C:/tmp/daily.png" TL_PANEL=daily <godot> --path godot --rendering-driver opengl3
 
+# ★ 名冊（B2.4）：TL_PANEL=roster。存檔在有鉤子時是零進度 → 只有「錨」是你的，
+# 其餘七張卡是暗的並寫著怎麼拿到（這正是要拍的那一張圖）。
+TL_SHOT="C:/tmp/roster.png" TL_PANEL=roster <godot> --path godot --rendering-driver opengl3
+
 # ★ 科技樹（B1.3）：TL_PANEL=tech。存檔在有鉤子時是預設值（研究數據 0），
 # 所以 clicktest 會自己先塞一筆數據進去再點——不寫檔，玩家進度碰不到。
 TL_SHOT="C:/tmp/tech.png" TL_PANEL=tech <godot> --path godot --rendering-driver opengl3
@@ -141,6 +145,9 @@ TL_CLICKTEST=1 TL_PANEL=campaign TL_MUTE=1 <godot> --path godot --rendering-driv
 TL_CLICKTEST=1 TL_PANEL=tech TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 每日挑戰（兩顆鈕點得到、種子是今天那一個、離線註記真的在畫面上）
 TL_CLICKTEST=1 TL_PANEL=daily TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
+# 名冊（招募鈕真的扣券、連抽三次不重複、畢業後再按也不扣、抽到的進得了建造欄）
+# ★ 存檔在有鉤子時是零進度＝零券，所以自檢自己先把戰役塞成滿星再點——不寫檔。
+TL_CLICKTEST=1 TL_PANEL=roster TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 設定（音量真的接到匯流排、reduce_motion 當場生效、視窗真的變大再變回來）
 TL_CLICKTEST=1 TL_PANEL=settings TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 主選單（六顆鈕、ESC 往返、無盡那一顆真的開出生成圖）

@@ -12,6 +12,7 @@ extends Node
 const Score := preload("res://scripts/sim/Score.gd")
 const Daily := preload("res://scripts/sim/Daily.gd")
 const Blueprint := preload("res://scripts/sim/Blueprint.gd")
+const Roster := preload("res://data/Roster.gd")
 
 ## sv2（B1.4）：`campaign.cleared` 移除，改由 `campaign.stars` 推導。
 const SAVE_VERSION := 2
@@ -59,6 +60,12 @@ const DEFAULTS := {
 	# 的說明）——**全部是 JSON 原生型別**，所以這一格存進去讀出來就是原樣，
 	# 不需要任何序列化程式碼。
 	"blueprints": [],
+	# ★ B2.4 落地的鍵。同樣**沒有 bump `SAVE_VERSION`**（加鍵不是結構改動）。
+	#
+	# 只有 `recruited` 一格。「擁有哪些角色」與「還有幾張券」**都是推導出來的**
+	# （`data/Roster.gd` 的說明）——存進來的每一份平行事實都會漂，而漂掉的那天
+	# 玩家會看到「第 3 關通了但潮鳴還鎖著」，兩邊各自都「對」。
+	"roster": {"recruited": []},
 	"settings": {
 		"master": 0.8, "bgm": 0.6, "sfx": 0.8,
 		"reduce_motion": false, "fullscreen": false, "resolution": 0,
@@ -213,6 +220,25 @@ static func add_blueprint(d: Dictionary, bp: Dictionary, slot_count: int) -> Str
 	list.append(copy)
 	d["blueprints"] = list
 	return ""
+
+
+## ★ 招募一隻（B2.4、`10_GDD.md` §3.9）。回傳招到的角色，空字串＝沒招成。
+##
+## 規則判定回頭問 `Roster`（畫面上的鈕是狀態不是規則，`Tech._unlock()` 同一條）：
+## 券不夠、或已經畢業，就一張券都不扣。**畢業之後不再消耗券**是 §3.9 明文——
+## 抽到重複的、或抽了個空還扣錢，都是這一條要擋的。
+static func apply_recruit(d: Dictionary, rng: RandomNumberGenerator) -> String:
+	if Roster.graduated(d) or Roster.tokens(d) <= 0:
+		return ""
+	var got := Roster.pull(d, rng)
+	if got == "":
+		return ""
+	var r: Dictionary = d.get("roster", {})
+	var list: Array = r.get("recruited", [])
+	list.append(got)
+	r["recruited"] = list
+	d["roster"] = r
+	return got
 
 
 ## 遞迴補預設值：defaults 有而 target 沒有的鍵才補；兩邊都是 Dictionary 就往下走。

@@ -12,6 +12,7 @@ const T := preload("res://tests/_assert.gd")
 const Campaign := preload("res://data/Campaign.gd")
 const Maps := preload("res://data/Maps.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
+const Roster := preload("res://data/Roster.gd")
 const Build := preload("res://scripts/sim/Build.gd")
 const Shapes := preload("res://scripts/render/Shapes.gd")
 const Score := preload("res://scripts/sim/Score.gd")
@@ -174,10 +175,23 @@ func _unlock_ladder(t: RefCounted) -> void:
 		for type: String in now:
 			t.ok(NodeDefs.BUILDABLE.has(type), "第 %d 關的 %s 是真的可建造類型" % [i + 1, type])
 		prev = now
+	# ★ 「全解鎖」＝**全部確定性節點**，不是 `BUILDABLE` 全表（B2.4 起兩者不同）。
+	#   招募池那三隻不進戰役：戰役的建造欄是那一關要教的機制（§7.9），而
+	#   「抽到才有的塔」教不了任何人任何事，也會讓參考解取決於玩家的手氣。
+	var deterministic := 0
+	for type: String in NodeDefs.BUILDABLE:
+		if not Roster.RECRUIT_POOL.has(type):
+			deterministic += 1
 	t.eq(
-		(Campaign.at(4)["unlocked"] as Array).size(), NodeDefs.BUILDABLE.size(),
-		"第 5 關全解鎖"
+		(Campaign.at(4)["unlocked"] as Array).size(), deterministic,
+		"第 5 關全解鎖（＝全部確定性節點；招募池不進戰役）"
 	)
+	for type: String in Roster.RECRUIT_POOL:
+		for i in Campaign.count():
+			t.ok(
+				not (Campaign.at(i)["unlocked"] as Array).has(type),
+				"★ 招募專屬的 %s 不在第 %d 關的建造欄（參考解不吃手氣）" % [type, i + 1]
+			)
 
 
 ## ★ R-4／§7.7：新手難度**只能**用關卡參數表達。

@@ -20,6 +20,7 @@ const Daily := preload("res://scripts/sim/Daily.gd")
 const Blueprint := preload("res://scripts/sim/Blueprint.gd")
 const Tech := preload("res://data/Tech.gd")
 const CampaignData := preload("res://data/Campaign.gd")
+const RosterData := preload("res://data/Roster.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
 
@@ -235,13 +236,20 @@ func _setup_session() -> void:
 	if not level.is_empty():
 		s.setup(level["map"], level["unlocked"], tech)
 	elif endless_seed != 0:
-		# 無盡開局就是全建造欄（§7.10）——它沒有解鎖階梯，而**空 `unlocked`
-		# 就是「全部」**（`SessionState.setup()`），不必另外列一份會過期的清單。
+		# ★ 建造欄不再是「空陣列＝全部」（B2.4）。無盡與每日自由配置榜給的是
+		#   **這名玩家的名冊**——招募池的三隻是抽到才有的，發給所有人等於沒有名冊。
 		#
-		# ★ 每日挑戰走的是同一行（B2.2）：同一張生成圖、同一套波次，**只有
-		#   第三個參數不同**。統一配置榜拿到空科技陣列＝與玩家的進度與課金
-		#   完全無關（憲法 B3），而那個參數是所有局外成長進入這一局的唯一入口。
-		s.setup(MapGen.generate(endless_seed), [], Daily.tech_for(daily_board, tech))
+		# ★ 統一配置榜走一份**明列的固定清單**（`Daily.UNIFORM_BUILD`，§7.11）：
+		#   它與玩家的任何進度與課金完全無關（憲法 B3），而「空陣列＝全部」會讓
+		#   每加一隻角色就悄悄改變這張榜。這是 B2.2 記在 §7.11 的那筆債。
+		#
+		# ★ 兩榜的差異仍然**只在 `SessionState.setup()` 的參數**（§3.10 明文：
+		#   不得為此拆成兩套邏輯）。同一張生成圖、同一套波次、同一支模擬。
+		var build_list: Array = (
+			Daily.UNIFORM_BUILD.duplicate() if daily_board == Daily.UNIFORM
+			else RosterData.buildable(GameState.data)
+		)
+		s.setup(MapGen.generate(endless_seed), build_list, Daily.tech_for(daily_board, tech))
 	elif Hooks.stress:
 		# ★ 壓力情境（B1.7、RG-8）：只為了量渲染。模擬在 `_process` 裡凍結——
 		#   這一份佈局的單 tick 要 30 秒（`perf_test.gd` 的說明），不凍結的話
@@ -385,6 +393,11 @@ func _refresh_zoom() -> void:
 
 
 ## 這一局蓋得出哪些節點。**空的 `unlocked` ＝ 全部**（測試圖與沙盤）。
+##
+## ★ B2.4 之後「全部」包含招募專屬的三隻，而測試圖與沙盤**刻意不吃名冊**：
+## 那兩張圖是開發用的（主選單上寫著「測試圖」），要驗的是節點本身而不是進度。
+## 真正的入口各自明講自己要什麼——戰役問關卡（§7.9）、無盡與自由榜問名冊、
+## 統一榜走 `Daily.UNIFORM_BUILD`。**沒有一條路是靠這個預設值決定的。**
 func _buildable() -> Array:
 	var unlocked: Array = s.sets.get("unlocked", [])
 	return NodeDefs.BUILDABLE if unlocked.is_empty() else unlocked
@@ -489,15 +502,24 @@ func _click_selftest() -> void:
 	# ★ B1.1：建造欄從 8 顆長到 10 顆（＋熔爐＋碎浪），高度逼近底欄。
 	#   **最後一顆鈕還點不點得到**是這件事唯一該問的問題——鈕被擠出畫面時
 	#   `_draw()` 完全不會抱怨，就跟 B0.7.2 那個 size (0,0) 的 bug 一樣。
-	#   碎浪要合金（帳上 0）→ 會被擋下，但**擋下的理由必須是「合金不夠」**，
+	#   最後那一顆要合金（帳上 0）→ 會被擋下，但**擋下的理由必須是「合金不夠」**，
 	#   不能是「這顆鈕根本沒被按到」。
-	var last_button: Button = _build_buttons[NodeDefs.BUILDABLE[NodeDefs.BUILDABLE.size() - 1]]
+	#
+	# ★ **不寫死型別名**（B2.4）：這裡原本斷言 `_build_type == "breaker"`，而
+	#   B2.4 在表尾接了三隻新角色之後，「最後一顆」就不再是碎浪了——測試變紅，
+	#   但壞掉的是斷言不是功能。改成問「表尾那一個是誰」，並**另外斷言它真的
+	#   要合金**：少了後半句，表尾哪天換成不用合金的節點，這條會安靜地變成空操作。
+	var last_type: String = String(_buildable()[_buildable().size() - 1])
+	var last_button: Button = _build_buttons[last_type]
 	var reachable: bool = last_button.global_position.y + 44.0 <= 668.0
 	_press(last_button)
 	_click(Vector2i(12, 12))
 	for _i in 3:
 		await get_tree().process_frame
-	var alloy_gated: bool = _build_type == "breaker" and _message.contains("合金")
+	var alloy_gated: bool = (
+		NodeDefs.alloy_cost(last_type) > 0
+		and _build_type == last_type and _message.contains("合金")
+	)
 
 	# ★ 藍圖庫（B2.3）。走完整條路徑：框選 → 存 → 拿起來 → 放下去。
 	#   **不直接呼叫 `Blueprint.capture()`**——那只驗得到純函式，而這一批
@@ -2686,10 +2708,18 @@ func _build_priority_panel() -> void:
 	#   只解鎖四到六種節點，把另外五條永遠用不到的滑桿也列出來，就是把
 	#   「這一格是我的戰術決定」稀釋成「這一排我看不懂」。**一局之內清單不變**，
 	#   所以滑桿仍然恆在同一位置（R-1／R-15 要保的是那一件事）。
+	# ★ 一列＝一個**角色的角色**，不是一個資料表的鍵（`NodeDefs.PRIORITY_GROUP`，
+	#   B2.4）。長哨與定潮併進「錨」那一列、霜礁併進「潮鳴」那一列，所以滑桿數
+	#   永遠是這九條的子集——M3 的 24 隻角色也不會讓這個面板長成一份表單（R-1）。
 	var rows: Array = []
 	for type: String in NodeDefs.PRIORITY_ROWS:
-		if type == "core" or _buildable().has(type):
+		if type == "core":
 			rows.append(type)
+			continue
+		for member: String in NodeDefs.priority_members(type):
+			if _buildable().has(member):
+				rows.append(type)
+				break
 	var split := 0
 	for type: String in rows:
 		if NodeDefs.PRIORITY_ROWS.find(type) < NodeDefs.PRIORITY_SPLIT:
@@ -2977,10 +3007,13 @@ func _on_toggle_priority(open: bool) -> void:
 	_prio_panel.visible = open
 
 
-func _on_priority(type: String, delta: int) -> void:
-	s.priorities[type] = clampi(
-		int(s.priorities.get(type, 1)) + delta, NodeDefs.PRIORITY_MIN, NodeDefs.PRIORITY_MAX
-	)
+## 一條滑桿推的是**整列**（`NodeDefs.priority_members`，B2.4）。`FlowNetwork`
+## 仍然逐 type 讀 `priorities[type]`——合併只發生在這裡，模擬層不知道有這回事。
+func _on_priority(row: String, delta: int) -> void:
+	for type: String in NodeDefs.priority_members(row):
+		s.priorities[type] = clampi(
+			int(s.priorities.get(type, 1)) + delta, NodeDefs.PRIORITY_MIN, NodeDefs.PRIORITY_MAX
+		)
 	_refresh_priority()
 
 

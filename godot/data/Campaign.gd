@@ -505,6 +505,19 @@ static func id_at(index: int) -> String:
 	return "" if lv.is_empty() else String((lv["map"] as Dictionary)["id"])
 
 
+## ★ 已經開到第幾關（回傳可遊玩的關卡數）。第 1 關永遠開著；之後要前一關
+## ≥1 星（§7.9；sv2 起沒有另一份 `cleared` 清單）。
+##
+## **這條規則只該有一份**（B2.4）：關卡選擇畫面問「這張卡能不能點」，名冊問
+## 「這幾隻角色是不是我的」——同一個事實兩個問法。各判一次的話，日後改成
+## 「要 2 星才開下一關」時只會有一邊跟著改，而名冊那邊沒有任何畫面會抗議。
+static func open_count(stars: Dictionary) -> int:
+	var n := 1
+	while n < LEVELS.size() and int(stars.get(id_at(n - 1), 0)) >= 1:
+		n += 1
+	return n
+
+
 ## 全部關卡 id（依關序）。統計進度時用，免得呼叫端自己寫一次 `for i in count()`。
 static func ids() -> Array[String]:
 	var out: Array[String] = []
