@@ -29,6 +29,18 @@ const SettingsScreen := preload("res://scripts/screens/Settings.gd")
 ## 所以 M3 補敵人時「比基準明顯快」才拿得到這個視覺，不是隨便快一點就有。
 const SWIFT_SPEED := 1.2
 
+## ★ 底欄的 y（B2.4.2 常數化）。它原本是三處各寫一次的 `668`，而 A-1 那個缺陷
+## 正好是「建造欄長到蓋住底欄」——兩個會互相碰撞的東西，座標必須是同一個常數。
+const BAR_Y := 668.0
+
+## 建造清單捲動區的高度。**清單再長也只會在這個區域裡捲**，模式鈕永遠釘在
+## 它下面、永遠碰不到底欄。
+##
+## 100 ＝ 模式鈕那一塊實際佔的高度：`vbox 間隔 2 ＋ 間隔物 4 ＋ 間隔 2 ＋ 兩列 44 ＋ 列間 2`。
+## ⚠ 第一版寫 96，實測差 2px（第二列的底邊落在 670，底欄在 668）——**這種
+## 「差幾個像素」的東西不要用眼睛判**，`TL_CLICKTEST` 的 `pinned_ok` 當場印出來。
+const BUILD_LIST_H := BAR_Y - 56.0 - 100.0
+
 ## 地圖左上角。36×19 格 ×32px = 1152×608；左側 120px 留給建造欄，
 ## 浮層與地圖**不重疊**（RG-20 的先行實踐，正式驗收在 B0.6）。
 ## ★ 地圖框架（B1.2.2，使用者要求）。**玩家看到的地圖區域恆定**，不隨關卡
@@ -153,6 +165,8 @@ var _top: HBoxContainer = null
 var _hint: Label = null
 var _mode_buttons: Dictionary = {}
 var _build_buttons: Dictionary = {}
+## 建造清單的捲動容器（B2.4.2）。模式鈕釘在它**下面**，所以清單再長也推不動它們。
+var _build_scroll: ScrollContainer = null
 var _ff_button: Button = null
 var _summon_button: Button = null
 var _over_panel: Control = null
@@ -509,9 +523,31 @@ func _click_selftest() -> void:
 	#   B2.4 在表尾接了三隻新角色之後，「最後一顆」就不再是碎浪了——測試變紅，
 	#   但壞掉的是斷言不是功能。改成問「表尾那一個是誰」，並**另外斷言它真的
 	#   要合金**：少了後半句，表尾哪天換成不用合金的節點，這條會安靜地變成空操作。
+	# ★★★★ **「按得到」不等於「看得到」**（B2.4.2，RG-139）。這一條原本只驗
+	#   最後一顆**建造鈕**的 y，而 `_press()` 是往 `global_position + size*0.5` 送
+	#   合成事件的——**一顆被底欄蓋住、甚至被推到畫面外的鈕，照樣按得到**。
+	#   B2.4 把可建造類型加到 13 種，「加粗／拆除」和底欄疊在一起、「藍圖」整顆
+	#   掉出畫面，而 `blueprint=true` 全程沒紅過。
+	#
+	#   所以判準改成**幾何的**，而且分兩種東西問——**捲出去的清單項目本來就在
+	#   視窗外，那是合法的**，會害人的是被**釘住卻被擠出去**的那幾顆：
+	#     ① 三顆模式鈕與捲動容器本身：永遠不得越過底欄（它們不會捲）。
+	#     ② 最後一顆建造鈕：**捲到底之後**必須整顆在捲動視窗內（同科技樹 RG-47）。
 	var last_type: String = String(_buildable()[_buildable().size() - 1])
 	var last_button: Button = _build_buttons[last_type]
-	var reachable: bool = last_button.global_position.y + 44.0 <= 668.0
+	var pinned_ok: bool = _build_scroll.global_position.y + _build_scroll.size.y <= BAR_Y
+	for b: Variant in _mode_buttons.values():
+		var btn := b as Button
+		if btn.global_position.y + btn.size.y > BAR_Y:
+			pinned_ok = false
+	_build_scroll.scroll_vertical = 999999
+	await get_tree().process_frame
+	var view := Rect2(_build_scroll.global_position, _build_scroll.size)
+	var reachable: bool = (
+		pinned_ok
+		and last_button.size.y >= 44.0
+		and view.encloses(Rect2(last_button.global_position, last_button.size))
+	)
 	_press(last_button)
 	_click(Vector2i(12, 12))
 	for _i in 3:
@@ -625,7 +661,7 @@ func _click_selftest() -> void:
 	# 優先權面板 9 列雙欄：整張表要留在畫面內，且不得蓋掉能量面板。
 	var prio_ok: bool = (
 		_prio_panel.size.y > 0.0
-		and _prio_panel.position.y + _prio_panel.size.y <= 668.0
+		and _prio_panel.position.y + _prio_panel.size.y <= BAR_Y
 		and _prio_panel.position.x + _prio_panel.size.x <= _energy_panel.position.x
 	)
 
@@ -1779,14 +1815,102 @@ func _draw_frame_matte() -> void:
 			draw_rect(r, Palette.BG_DEEP)
 
 
+## 敵人路徑（`20_ART_DIRECTION.md` §1.6、§7.1 A-2／C-1）。
+##
+## **兩層，由外而內**：
+##   ① **侵蝕暈**（C-1）＝ 路徑外一格。它同時是**敵人 walk-by 的傷害半徑**
+##      （`10_GDD.md` §3.5：每 tick 傷害相鄰 1 格內的建築）。氣氛與規則同一個
+##      元素——一個元素答兩題，和來襲箭羽是同一條理由（§1.6）。
+##   ② **路徑帶本身**。
+##
+## 兩層都走抖動邊緣（`Shapes.band_jitter`），所以混沌側**看起來像混沌側**。
 func _draw_path() -> void:
-	# 敵人路徑屬於**混沌**側：低透明度帶狀底色（20_ART_DIRECTION.md §1.6）。
+	var pathset: Dictionary = s.sets["path"]
+	# ① 侵蝕暈：路徑外一格。**淡到不搶戲**（0.13）——它是底噪不是訊息，
+	#    玩家要讀的是「我的塔壓在這一圈裡就會被啃」，不是「這裡有東西」。
+	var halo := Palette.alpha(Palette.TIDE_DEEP, 0.13)
+	# ★ 外緣描一條線（使用者拍板：「要能讀出傷害半徑」）。
+	#   **只有填色是不夠的**——一塊淡淡的顏色說得出「這附近危險」，說不出
+	#   「危險到哪裡為止」，而後者才是玩家要下的那個決定（塔要退開幾格）。
+	#   線只描**最外圈**，所以它是一條輪廓不是第二條帶子。
+	var edge := Palette.alpha(Palette.TIDE_DEEP, 0.5)
+	for c: Vector2i in _danger_cells():
+		var quad := _band_quad(c, pathset, true)
+		draw_colored_polygon(quad, halo)
+		# 四個邊：鄰居既不是路徑也不是暈 ＝ 這一邊是最外圈。
+		for i in 4:
+			var side: Vector2i = [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)][i]
+			var n := c + side
+			if not pathset.has(n) and not _is_danger(n, pathset):
+				draw_line(quad[i], quad[(i + 1) % 4], edge, 1.0)
+	# ② 路徑帶本身。
 	var band := Palette.alpha(Palette.TIDE_DEEP, 0.45)
 	for c: Vector2i in s.path:
-		draw_rect(Rect2(_world(c), Vector2(Shapes.GRID, Shapes.GRID)), band)
+		draw_colored_polygon(_band_quad(c, pathset, false), band)
 	_draw_incoming()
 	for c: Vector2i in s.map.get("crossings", []):
 		_draw_crossing(c)
+
+
+## 路徑外一格（Chebyshev 距離 1），**不含路徑本身**。
+## ＝ `10_GDD.md` §3.5 的 walk-by 傷害範圍，不是另外發明的一個半徑。
+##
+## 每幀重算：路徑 ~95 格 × 8 個鄰居 ＝ 760 次查表，比快取一份還要便宜
+## （快取要跟著地圖切換失效，而那是一個會忘記的鉤子）。
+func _danger_cells() -> Array[Vector2i]:
+	var pathset: Dictionary = s.sets["path"]
+	var seen: Dictionary = {}
+	var out: Array[Vector2i] = []
+	var size: Vector2i = s.map["size"]
+	for c: Vector2i in s.path:
+		for dy in [-1, 0, 1]:
+			for dx in [-1, 0, 1]:
+				var n := c + Vector2i(dx, dy)
+				if pathset.has(n) or seen.has(n):
+					continue
+				if n.x < 0 or n.y < 0 or n.x >= size.x or n.y >= size.y:
+					continue
+				seen[n] = true
+				out.append(n)
+	return out
+
+
+## 一格的四角多邊形，外緣帶抖動（`Shapes.band_jitter`）。
+##
+## **抖動掛在格點上**：相鄰兩格共用的角落算出同一個偏移，所以帶子不會裂開。
+## 內部格點（四周四格都在同一層裡）不偏移，否則帶子中間會出現縫。
+func _band_quad(c: Vector2i, pathset: Dictionary, halo_layer: bool) -> PackedVector2Array:
+	var quad := PackedVector2Array()
+	for corner: Vector2i in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1)]:
+		var g := c + corner
+		var w := _world(g)
+		if not _interior_vertex(g, pathset, halo_layer):
+			w += Shapes.band_jitter(g.x, g.y)
+		quad.append(w)
+	return quad
+
+
+## 這個格點是不是某一層的**內部**格點（四周四格都屬於該層）。
+func _interior_vertex(g: Vector2i, pathset: Dictionary, halo_layer: bool) -> bool:
+	for d: Vector2i in [Vector2i(-1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 0)]:
+		var cell := g + d
+		var inside: bool = pathset.has(cell)
+		if halo_layer:
+			# 暈的「內部」＝ 這一格屬於暈或屬於路徑（兩層貼在一起，交界不該抖）。
+			inside = inside or _is_danger(cell, pathset)
+		if not inside:
+			return false
+	return true
+
+
+func _is_danger(c: Vector2i, pathset: Dictionary) -> bool:
+	if pathset.has(c):
+		return false
+	for dy in [-1, 0, 1]:
+		for dx in [-1, 0, 1]:
+			if pathset.has(c + Vector2i(dx, dy)):
+				return true
+	return false
 
 
 ## ★ 來襲方向（`20_ART_DIRECTION.md` §1.6）。一條帶子只說「這裡是路」，
@@ -1808,27 +1932,51 @@ func _draw_incoming() -> void:
 
 ## 跨越點（橋）：**「架高」必須用畫的說清楚**——它是「橋上導管不受攻擊」
 ## 這條規則的唯一解釋（`20_ART_DIRECTION.md` §1.6）。硬性要求：一眼可辨。
+## 跨越點（橋）：**「架高」必須用畫的說清楚**——它是「橋上導管不受攻擊」
+## 這條規則的唯一解釋（`20_ART_DIRECTION.md` §1.6）。硬性要求：一眼可辨。
+##
+## ★ B2.4.2（§7.1 B-1）：三個元素**本來就都在**，問題是強度與語彙——
+##   ① 落影內縮 3px、alpha 0.55 → fit 倍率下幾乎看不到。改成**滿格 ＋ 往下偏移**，
+##      投影偏移才是「這東西浮在上面」的視覺線索（一圈等距的暗邊只是描邊）。
+##   ② 引道是**直線延長 6px**，不是 §1.6 寫的 45°。而 45° 是秩序側的既有語彙
+##      （導管只走 90°/45°，§7.2）——用它，橋才接得回玩家自己的線。
 func _draw_crossing(cell: Vector2i) -> void:
 	var p := _world(cell)
 	var g := Shapes.GRID
-	# 橋下留可見的路徑帶陰影
-	draw_rect(Rect2(p + Vector2(3, 3), Vector2(g - 6, g - 6)), Palette.alpha(Palette.BG_DEEP, 0.55))
-	# 橋面：兩條 order.cyan 平行線，方向與路徑垂直（導管要橫越）
 	var path: Dictionary = s.sets["path"]
 	var horizontal := path.has(cell + Vector2i(1, 0)) or path.has(cell + Vector2i(-1, 0))
 	var c := Palette.ORDER_CYAN
+	# 落影：滿格、往行進方向的**側邊**偏 4px。有偏移才讀得出高度。
+	var drop := Vector2(0, 4) if horizontal else Vector2(4, 0)
+	draw_rect(
+		Rect2(p + drop, Vector2(g, g)), Palette.alpha(Palette.BG_DEEP, 0.7)
+	)
 	if horizontal:
-		# 橋面沿垂直方向（導管要南北橫越），兩端伸出格外＝架高的「引道」
+		# 橋面沿垂直方向（導管要南北橫越）。
 		for dx: float in [7.0, g - 7.0]:
 			draw_line(p + Vector2(dx, -6), p + Vector2(dx, g + 6), c, 3.0)
-		# 橋頭：兩端各一條橫桿，把「這是一段結構」講清楚
 		for dy: float in [-6.0, g + 6.0]:
 			draw_line(p + Vector2(4, dy), p + Vector2(g - 4, dy), c, 2.0)
+		# ★ 45° 引道：橋頭往外張開，把橋面接回地面高度。
+		for dy: float in [-6.0, g + 6.0]:
+			var away := signf(dy)
+			for dx: float in [7.0, g - 7.0]:
+				var out_x := -6.0 if dx < g * 0.5 else 6.0
+				draw_line(
+					p + Vector2(dx, dy), p + Vector2(dx + out_x, dy + away * 6.0), c, 2.0
+				)
 	else:
 		for dy: float in [7.0, g - 7.0]:
 			draw_line(p + Vector2(-6, dy), p + Vector2(g + 6, dy), c, 3.0)
 		for dx: float in [-6.0, g + 6.0]:
 			draw_line(p + Vector2(dx, 4), p + Vector2(dx, g - 4), c, 2.0)
+		for dx: float in [-6.0, g + 6.0]:
+			var away := signf(dx)
+			for dy: float in [7.0, g - 7.0]:
+				var out_y := -6.0 if dy < g * 0.5 else 6.0
+				draw_line(
+					p + Vector2(dx, dy), p + Vector2(dx + away * 6.0, dy + out_y), c, 2.0
+				)
 
 
 func _draw_ore_cells() -> void:
@@ -2010,12 +2158,24 @@ func _draw_nodes() -> void:
 			draw_rect(Rect2(at, Vector2(bar.x * frac, bar.y)), Palette.WARN_ORANGE)
 		match String(n["type"]):
 			"core":
-				# 最大的幾何體，order.bright 描邊（§1.6）。
-				draw_rect(Rect2(p - Vector2(15, 15), Vector2(30, 30)), Palette.BG_RAISED)
+				# ★ **最大的幾何體**，order.bright 描邊（§1.6）。
+				#
+				# B2.4.2（§7.1 A-4）：原本是 30px，和採集器的 22px 圓沒有量級差，
+				# 而**這是全遊戲唯一一個「歸零就結束」的物件**。42px（1.3 格）＋
+				# 3px 描邊（`stroke.emphasis`）讓它在 fit 倍率下就是畫面上最大的一塊。
+				#
+				# 形狀仍是**正方**，和儲槽的同心圓、交戰環、受擊環都分得開
+				# （§4.3b「同一個位置上的兩個訊息，換顏色不夠，要換形狀」）。
+				var half := Vector2(21, 21)
+				draw_rect(Rect2(p - half, half * 2.0), Palette.BG_RAISED)
+				draw_rect(Rect2(p - half, half * 2.0), Palette.ORDER_BRIGHT, false, 3.0)
+				# 極慢的呼吸＝這張圖的心跳。**不是警示**（警示是橙色、而且更急），
+				# 所以週期取 `dur.ambient` 的兩倍、振幅只在透明度上。
+				var beat := Motion.pulse01(s.tick_count, Motion.AMBIENT * 2.0, 0.55)
 				draw_rect(
-					Rect2(p - Vector2(15, 15), Vector2(30, 30)), Palette.ORDER_BRIGHT, false, 2.0
+					Rect2(p - Vector2(8, 8), Vector2(16, 16)),
+					Palette.alpha(Palette.ORDER_BRIGHT, beat)
 				)
-				draw_rect(Rect2(p - Vector2(6, 6), Vector2(12, 12)), Palette.ORDER_BRIGHT)
 			"extractor":
 				draw_circle(p, 11.0, Palette.ORDER_CYAN)
 				draw_arc(p, 11.0, 0.0, TAU, 24, Palette.ORDER_BRIGHT, 1.5)
@@ -2556,6 +2716,16 @@ func _build_ui() -> void:
 
 	# 間距 2 而不是 4：B1.1 起建造欄有 10 種節點＋3 個模式鈕，44px 的觸控高度
 	# （手機移植前提，不能縮）乘 13 已經吃掉 572px，只剩間距可以讓。
+	#
+	# ★ B2.4.2：那句話在 B2.4 加了三隻角色之後**就不夠了**——13 種把「加粗／拆除」
+	#   推到和底欄疊在一起，「藍圖」整顆掉出畫面（RG-139），而**全收集的玩家打無盡
+	#   就是 13 種**。所以建造清單改裝進捲動容器，模式鈕釘在它下面。
+	#
+	#   為什麼是捲動而不是「壓矮一點」或「排兩欄」：44px 是手機移植的硬底線
+	#   （P2，不能縮），兩欄在 112px 欄寬裡塞不下「回收者」三個字。而真正的理由是
+	#   **這條清單還要再長一倍**——`10_GDD.md` §5 的 M3 內容矩陣是 24 隻角色，
+	#   加 5 種生產節點就是 29 顆鈕。任何「剛好排得下」的方案都只是把同一個 bug
+	#   往後推一批。
 	var col := UiKit.vbox(2)
 	col.position = Vector2(8, 56)
 	# 112 ＝ 剛好貼到地圖原點 x=120（`ORIGIN`）而不蓋住它。
@@ -2571,7 +2741,26 @@ func _build_ui() -> void:
 	# ★ 只列**這一關解鎖的**（`10_GDD.md` §7.9）。第 1 關給四顆鈕不是十顆——
 	#   十顆對一個還不知道「電是流率」的人來說不是自由，是雜訊。
 	#   一局之內這份清單不會變，所以鈕的位置仍然是固定的（R-15 的同一條理由）。
+	_build_scroll = ScrollContainer.new()
+	_build_scroll.custom_minimum_size = Vector2(112, BUILD_LIST_H)
+	_build_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	col.add_child(_build_scroll)
+	var list := UiKit.vbox(2)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_build_scroll.add_child(list)
+
+	# ★ 生產／防線分段（B2.4.2）。**兩段不是排版，是這一欄的整句話**——
+	#   優先權面板為了同一件事特地做了雙欄（`NodeDefs.PRIORITY_SPLIT`），
+	#   而建造欄是玩家做**同一個決定**的地方（這 40 礦砂餵產線還是餵防線）。
+	#   分段同時讓捲動清單找得到東西：29 顆一模一樣的鈕捲起來是找不到路的。
+	var seen_tower := false
 	for type: String in _buildable():
+		var is_tower: bool = bool(NodeDefs.of(type).get("tower", false))
+		if not seen_tower and is_tower:
+			seen_tower = true
+			list.add_child(_section_label("防線"))
+		elif not seen_tower and list.get_child_count() == 0:
+			list.add_child(_section_label("生產"))
 		# TL_NAKED 連造價都遮：它的語意是「隱藏所有數值標籤」，不是「隱藏狀態數值」。
 		# 鈕上**只有名字**（使用者指定，B1.3.1）：價牌在提示列的第一行，
 		# 而滑鼠移到鈕上時圖鑑浮層也會寫一次。同一個數字印三遍只是把鈕撐長。
@@ -2581,7 +2770,7 @@ func _build_ui() -> void:
 		b.mouse_entered.connect(_on_codex_show.bind(type, b))
 		b.mouse_exited.connect(_on_codex_hide)
 		_build_buttons[type] = b
-		col.add_child(UiKit.touchable(b))
+		list.add_child(UiKit.touchable(b))
 	(_build_buttons[_build_type] as Button).button_pressed = true
 
 	col.add_child(_spacer(4))
@@ -2606,7 +2795,7 @@ func _build_ui() -> void:
 	# 建造欄放不下八種節點再加動作鈕（8×44 已經吃掉 380px），
 	# 所以時間流與面板開關搬到地圖下緣那條 56px 的空帶——那裡本來就空著。
 	var bar := UiKit.hbox(8)
-	bar.position = Vector2(8, 668)
+	bar.position = Vector2(8, BAR_Y)
 	add_child(bar)
 	_ff_button = Button.new()
 	_ff_button.text = "快進 4×"
@@ -3039,6 +3228,16 @@ func _spacer(h: int) -> Control:
 	var c := Control.new()
 	c.custom_minimum_size = Vector2(0, h)
 	return c
+
+
+## 建造欄的段標題（B2.4.2）。`text.xs` ＋ `text.secondary`——它是分界不是內容，
+## 不該和鈕搶注意力。**不畫線**：兩段之間本來就有 2px 間距 ＋ 一個矮標題，
+## 再加一條線就是同一個分界講兩次（§4.3b「同一個位置上的兩個訊息」的同一條）。
+func _section_label(text: String) -> Control:
+	var l := UiKit.label(text, 11, Palette.TEXT_SECONDARY, false)
+	l.custom_minimum_size = Vector2(0, 16)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	return l
 
 
 func _on_build_type(type: String) -> void:
