@@ -41,6 +41,27 @@ const BAR_Y := 668.0
 ## 「差幾個像素」的東西不要用眼睛判**，`TL_CLICKTEST` 的 `pinned_ok` 當場印出來。
 const BUILD_LIST_H := BAR_Y - 56.0 - 100.0
 
+# ── 路徑層的格子偏移（B2.4.2）。**常數，不在 `_draw()` 的內圈裡重建陣列。** ──
+## 一格的四個角（格點偏移），順時鐘。與 `SIDES` 同序：`SIDES[i]` 是 `CORNERS[i]`
+## 到 `CORNERS[i+1]` 那條邊的外向法線方向。
+const CORNERS: Array[Vector2i] = [
+	Vector2i(0, 0), Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1)
+]
+## 四個鄰邊的方向（上、右、下、左）。
+const SIDES: Array[Vector2i] = [
+	Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)
+]
+## 一個格點周圍的四格。
+const AROUND: Array[Vector2i] = [
+	Vector2i(-1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 0)
+]
+## 八方鄰居 ＋ 自己（walk-by 的 Chebyshev 距離 1）。
+const NEIGHBOURS: Array[Vector2i] = [
+	Vector2i(-1, -1), Vector2i(0, -1), Vector2i(1, -1),
+	Vector2i(-1, 0), Vector2i(0, 0), Vector2i(1, 0),
+	Vector2i(-1, 1), Vector2i(0, 1), Vector2i(1, 1),
+]
+
 ## 地圖左上角。36×19 格 ×32px = 1152×608；左側 120px 留給建造欄，
 ## 浮層與地圖**不重疊**（RG-20 的先行實踐，正式驗收在 B0.6）。
 ## ★ 地圖框架（B1.2.2，使用者要求）。**玩家看到的地圖區域恆定**，不隨關卡
@@ -540,7 +561,7 @@ func _click_selftest() -> void:
 		var btn := b as Button
 		if btn.global_position.y + btn.size.y > BAR_Y:
 			pinned_ok = false
-	_build_scroll.scroll_vertical = 999999
+	_build_scroll.scroll_vertical = int(_build_scroll.get_v_scroll_bar().max_value)
 	await get_tree().process_frame
 	var view := Rect2(_build_scroll.global_position, _build_scroll.size)
 	var reachable: bool = (
@@ -548,6 +569,9 @@ func _click_selftest() -> void:
 		and last_button.size.y >= 44.0
 		and view.encloses(Rect2(last_button.global_position, last_button.size))
 	)
+	# ★ 捲回頂端。自檢**不得留下狀態**——`TL_CLICKTEST` 與 `TL_SHOT` 可以一起下
+	#   （CLAUDE.md「拍只有互動才到得了的狀態」），而捲到底的建造欄會被拍進去。
+	_build_scroll.scroll_vertical = 0
 	_press(last_button)
 	_click(Vector2i(12, 12))
 	for _i in 3:
@@ -1826,91 +1850,102 @@ func _draw_frame_matte() -> void:
 ## 兩層都走抖動邊緣（`Shapes.band_jitter`），所以混沌側**看起來像混沌側**。
 func _draw_path() -> void:
 	var pathset: Dictionary = s.sets["path"]
+	# 暈這一層的實心區 ＝ 暈 ∪ 路徑。
+	var solid: Dictionary = _danger_cells(pathset)
+	solid.merge(pathset)
 	# ① 侵蝕暈：路徑外一格。**淡到不搶戲**（0.13）——它是底噪不是訊息，
-	#    玩家要讀的是「我的塔壓在這一圈裡就會被啃」，不是「這裡有東西」。
+	#    玩家要讀的是「我的建築壓在這一圈裡就會被啃」，不是「這裡有東西」。
+	#
+	# ★ **整片畫（暈 ∪ 路徑），不是只畫外圈那一環**（B2.4.2 code review 抓到）。
+	#   只畫環的話，環的**內**緣是不抖的（它對暈這一層而言是內部格點），而路徑帶
+	#   的**外**緣是抖的——同一條邊界兩層各畫各的，中間就會露出最多 4px 的背景，
+	#   或是疊出一條更深的線。整片畫則路徑帶直接疊在暈上面，交界不可能有縫。
 	var halo := Palette.alpha(Palette.TIDE_DEEP, 0.13)
 	# ★ 外緣描一條線（使用者拍板：「要能讀出傷害半徑」）。
 	#   **只有填色是不夠的**——一塊淡淡的顏色說得出「這附近危險」，說不出
-	#   「危險到哪裡為止」，而後者才是玩家要下的那個決定（塔要退開幾格）。
+	#   「危險到哪裡為止」，而後者才是玩家要下的那個決定（建築要退開幾格）。
 	#   線只描**最外圈**，所以它是一條輪廓不是第二條帶子。
 	var edge := Palette.alpha(Palette.TIDE_DEEP, 0.5)
-	for c: Vector2i in _danger_cells():
-		var quad := _band_quad(c, pathset, true)
+	for c: Vector2i in solid:
+		var quad := _band_quad(c, solid)
 		draw_colored_polygon(quad, halo)
-		# 四個邊：鄰居既不是路徑也不是暈 ＝ 這一邊是最外圈。
+		# 這一邊的鄰居不在實心區 ＝ 它是最外圈。
 		for i in 4:
-			var side: Vector2i = [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)][i]
-			var n := c + side
-			if not pathset.has(n) and not _is_danger(n, pathset):
+			if not solid.has(c + SIDES[i]):
 				draw_line(quad[i], quad[(i + 1) % 4], edge, 1.0)
-	# ② 路徑帶本身。
+	# ② 路徑帶本身，疊在暈上面。0.45 疊在 0.13 上 ≈ 0.52。
 	var band := Palette.alpha(Palette.TIDE_DEEP, 0.45)
 	for c: Vector2i in s.path:
-		draw_colored_polygon(_band_quad(c, pathset, false), band)
+		draw_colored_polygon(_band_quad(c, pathset), band)
 	_draw_incoming()
 	for c: Vector2i in s.map.get("crossings", []):
 		_draw_crossing(c)
 
 
-## 路徑外一格（Chebyshev 距離 1），**不含路徑本身**。
-## ＝ `10_GDD.md` §3.5 的 walk-by 傷害範圍，不是另外發明的一個半徑。
+## 路徑外一格（Chebyshev 距離 1），**不含路徑本身**。回傳的是**集合**不是陣列。
 ##
-## 每幀重算：路徑 ~95 格 × 8 個鄰居 ＝ 760 次查表，比快取一份還要便宜
-## （快取要跟著地圖切換失效，而那是一個會忘記的鉤子）。
-func _danger_cells() -> Array[Vector2i]:
-	var pathset: Dictionary = s.sets["path"]
-	var seen: Dictionary = {}
-	var out: Array[Vector2i] = []
+## ＝ `10_GDD.md` §3.5 的 walk-by 傷害範圍，不是另外發明的一個半徑。對得上的是
+## `BattleController.BLAST_CELLS`（Chebyshev ≤ 1 的九格）與 `Tide.BLAST = 1`。
+##
+## ⚠ **它講的是「建築（節點）」，不是導管**（B2.4.2 code review 抓到的一條真的
+##   矛盾，結論是修措辭不是修畫面）。兩條規則在同一片像素上都成立：
+##     · **節點沒有任何免疫** → 蓋在這一圈裡就是會被啃，暈說的是實話。
+##     · **導管在橋與引道上免疫**（`Tide.immune_indices()`，`RAMP = 1`），
+##       而那幾格正好落在這一圈裡。
+##   所以**不要**在橋兩側把暈挖一個缺口去「修正」它——那會讓一個蓋在缺口裡的
+##   中繼看起來安全，而它會被啃。導管的那半邊由**橋的圖形**負責講（§1.6：
+##   「架高」是「橋上導管不受攻擊」的唯一解釋），兩個元素各講各的那一半。
+##
+## ★ **回傳集合是這支函式的重點**（B2.4.2 code review 抓到）：第一版回傳陣列，
+##   於是「這一格是不是暈」在別處只能用一支 `_is_danger()` 重跑一次 3×3 掃描——
+##   同一個 3×3 迴圈寫了兩遍（重複程式碼），而且它落在 `_draw()` 的內圈裡。
+##   實際成本是每幀約 45,000 次查表，**而我在這裡寫的註解說「760 次」**——
+##   那個數字只算了這支函式自己，沒算下游。回傳集合之後查表變 O(1)，
+##   整條路徑層降到每幀約 6,500 次，`_is_danger()` 整支刪掉。
+##
+##   教訓與 `benchmarks-need-their-own-assertions` 同一條：**註解裡的效能宣稱
+##   如果沒有量過，它就只是一個願望。** 這裡的數字是照實際呼叫次數推的。
+##
+## 每幀重算而不快取：快取要跟著地圖切換失效，而那是一個會忘記的鉤子。
+func _danger_cells(pathset: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
 	var size: Vector2i = s.map["size"]
 	for c: Vector2i in s.path:
-		for dy in [-1, 0, 1]:
-			for dx in [-1, 0, 1]:
-				var n := c + Vector2i(dx, dy)
-				if pathset.has(n) or seen.has(n):
-					continue
-				if n.x < 0 or n.y < 0 or n.x >= size.x or n.y >= size.y:
-					continue
-				seen[n] = true
-				out.append(n)
+		for d: Vector2i in NEIGHBOURS:
+			var n := c + d
+			if pathset.has(n) or out.has(n):
+				continue
+			if n.x < 0 or n.y < 0 or n.x >= size.x or n.y >= size.y:
+				continue
+			out[n] = true
 	return out
 
 
 ## 一格的四角多邊形，外緣帶抖動（`Shapes.band_jitter`）。
 ##
 ## **抖動掛在格點上**：相鄰兩格共用的角落算出同一個偏移，所以帶子不會裂開。
-## 內部格點（四周四格都在同一層裡）不偏移，否則帶子中間會出現縫。
-func _band_quad(c: Vector2i, pathset: Dictionary, halo_layer: bool) -> PackedVector2Array:
+## 內部格點（四周四格都在 `solid` 裡）不偏移，否則帶子中間會出現縫。
+##
+## `solid` ＝ 這一層的實心區。路徑帶傳 `pathset`，侵蝕暈傳「暈 ∪ 路徑」。
+## **不是一個 `halo_layer` 布林旗標**：旗標會讓 `_interior_vertex` 裡多一條分支，
+## 而呼叫端本來就知道自己是哪一層——把答案傳進來比把問題傳進來短。
+func _band_quad(c: Vector2i, solid: Dictionary) -> PackedVector2Array:
 	var quad := PackedVector2Array()
-	for corner: Vector2i in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1)]:
+	for corner: Vector2i in CORNERS:
 		var g := c + corner
 		var w := _world(g)
-		if not _interior_vertex(g, pathset, halo_layer):
+		if not _interior_vertex(g, solid):
 			w += Shapes.band_jitter(g.x, g.y)
 		quad.append(w)
 	return quad
 
 
-## 這個格點是不是某一層的**內部**格點（四周四格都屬於該層）。
-func _interior_vertex(g: Vector2i, pathset: Dictionary, halo_layer: bool) -> bool:
-	for d: Vector2i in [Vector2i(-1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 0)]:
-		var cell := g + d
-		var inside: bool = pathset.has(cell)
-		if halo_layer:
-			# 暈的「內部」＝ 這一格屬於暈或屬於路徑（兩層貼在一起，交界不該抖）。
-			inside = inside or _is_danger(cell, pathset)
-		if not inside:
+## 這個格點是不是內部格點（四周四格都在 `solid` 裡）。
+func _interior_vertex(g: Vector2i, solid: Dictionary) -> bool:
+	for d: Vector2i in AROUND:
+		if not solid.has(g + d):
 			return false
 	return true
-
-
-func _is_danger(c: Vector2i, pathset: Dictionary) -> bool:
-	if pathset.has(c):
-		return false
-	for dy in [-1, 0, 1]:
-		for dx in [-1, 0, 1]:
-			if pathset.has(c + Vector2i(dx, dy)):
-				return true
-	return false
 
 
 ## ★ 來襲方向（`20_ART_DIRECTION.md` §1.6）。一條帶子只說「這裡是路」，
@@ -1932,8 +1967,6 @@ func _draw_incoming() -> void:
 
 ## 跨越點（橋）：**「架高」必須用畫的說清楚**——它是「橋上導管不受攻擊」
 ## 這條規則的唯一解釋（`20_ART_DIRECTION.md` §1.6）。硬性要求：一眼可辨。
-## 跨越點（橋）：**「架高」必須用畫的說清楚**——它是「橋上導管不受攻擊」
-## 這條規則的唯一解釋（`20_ART_DIRECTION.md` §1.6）。硬性要求：一眼可辨。
 ##
 ## ★ B2.4.2（§7.1 B-1）：三個元素**本來就都在**，問題是強度與語彙——
 ##   ① 落影內縮 3px、alpha 0.55 → fit 倍率下幾乎看不到。改成**滿格 ＋ 往下偏移**，
@@ -1948,8 +1981,10 @@ func _draw_crossing(cell: Vector2i) -> void:
 	var c := Palette.ORDER_CYAN
 	# 落影：滿格、往行進方向的**側邊**偏 4px。有偏移才讀得出高度。
 	var drop := Vector2(0, 4) if horizontal else Vector2(4, 0)
+	# alpha 0.55 而不是 0.7：§1.6 要的是「橋下留**可見的**路徑帶陰影」——
+	# 陰影要看得見，但帶子也要還在。真正讓它讀成「架高」的是**偏移**不是深度。
 	draw_rect(
-		Rect2(p + drop, Vector2(g, g)), Palette.alpha(Palette.BG_DEEP, 0.7)
+		Rect2(p + drop, Vector2(g, g)), Palette.alpha(Palette.BG_DEEP, 0.55)
 	)
 	if horizontal:
 		# 橋面沿垂直方向（導管要南北橫越）。
@@ -2166,15 +2201,24 @@ func _draw_nodes() -> void:
 				#
 				# 形狀仍是**正方**，和儲槽的同心圓、交戰環、受擊環都分得開
 				# （§4.3b「同一個位置上的兩個訊息，換顏色不夠，要換形狀」）。
-				var half := Vector2(21, 21)
+				# 48 ＝ **1.5 格**（§7.1 A-4 自己訂的數字；第一版寫 42 ＝ 1.3 格，
+				# code review 抓到它低於自己的規格）。
+				var half := Vector2(24, 24)
+				# ★ §1.6 還有一句「**受擊時整體閃 `warn.orange`**」——B2.4.2 之前
+				#   核心只有那條和所有節點共用的 24×3 血條，而**核心掉血是這一局
+				#   唯一不可逆的事**，它不該和一個中繼被啃長得一樣。
+				#   受傷時整顆換成橙色並脈動（`dur.base` ＝ 比心跳急一個量級）。
+				var hurt: bool = float(n["hp"]) < full
+				var body: Color = Palette.WARN_ORANGE if hurt else Palette.ORDER_BRIGHT
+				var alarm := Motion.pulse01(s.tick_count, Motion.BASE * 4.0, 0.5) if hurt else 1.0
 				draw_rect(Rect2(p - half, half * 2.0), Palette.BG_RAISED)
-				draw_rect(Rect2(p - half, half * 2.0), Palette.ORDER_BRIGHT, false, 3.0)
+				draw_rect(Rect2(p - half, half * 2.0), Palette.alpha(body, alarm), false, 3.0)
 				# 極慢的呼吸＝這張圖的心跳。**不是警示**（警示是橙色、而且更急），
 				# 所以週期取 `dur.ambient` 的兩倍、振幅只在透明度上。
 				var beat := Motion.pulse01(s.tick_count, Motion.AMBIENT * 2.0, 0.55)
 				draw_rect(
 					Rect2(p - Vector2(8, 8), Vector2(16, 16)),
-					Palette.alpha(Palette.ORDER_BRIGHT, beat)
+					Palette.alpha(body, beat if not hurt else alarm)
 				)
 			"extractor":
 				draw_circle(p, 11.0, Palette.ORDER_CYAN)
@@ -2753,8 +2797,17 @@ func _build_ui() -> void:
 	#   優先權面板為了同一件事特地做了雙欄（`NodeDefs.PRIORITY_SPLIT`），
 	#   而建造欄是玩家做**同一個決定**的地方（這 40 礦砂餵產線還是餵防線）。
 	#   分段同時讓捲動清單找得到東西：29 顆一模一樣的鈕捲起來是找不到路的。
+	# ★ **自己排序，不假設 `_buildable()` 已經是生產在前**（B2.4.2 code review 抓到）。
+	#   那份清單是各關在 `data/Campaign.gd` 手寫的，目前碰巧都是生產在前——
+	#   而「碰巧」不是不變量。有一關把塔寫在採集器前面時，那顆採集器會安靜地
+	#   歸到「防線」那一段，畫面看起來完全正常。
+	var ordered: Array[String] = []
+	for pass_towers: bool in [false, true]:
+		for type: String in _buildable():
+			if bool(NodeDefs.of(type).get("tower", false)) == pass_towers:
+				ordered.append(type)
 	var seen_tower := false
-	for type: String in _buildable():
+	for type: String in ordered:
 		var is_tower: bool = bool(NodeDefs.of(type).get("tower", false))
 		if not seen_tower and is_tower:
 			seen_tower = true

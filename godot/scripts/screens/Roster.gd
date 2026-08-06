@@ -52,14 +52,14 @@ func _build() -> void:
 		margin.add_theme_constant_override("margin_" + side, 24)
 	add_child(margin)
 
-	var col := UiKit.vbox(10)
+	var col := UiKit.vbox(12)
 	margin.add_child(col)
-	col.add_child(UiKit.label("名冊", 34, Palette.ORDER_BRIGHT, false))
+	col.add_child(UiKit.label("名冊", 32, Palette.ORDER_BRIGHT, false))
 
 	var owned := RosterData.owned(GameState.data)
 	var all := RosterData.all()
 	col.add_child(UiKit.label(
-		"已擁有 %d／%d 隻" % [owned.size(), all.size()], 18, Palette.ENERGY_AMBER, false
+		"已擁有 %d／%d 隻" % [owned.size(), all.size()], 16, Palette.ENERGY_AMBER, false
 	))
 	# ★ §3.9 明文：**券全部都能純靠遊玩取得**。這一行就是那句話的說明書——
 	#   兩條途徑寫出來，玩家才規劃得了「我再推兩關就能拿到下一隻」。
@@ -67,7 +67,7 @@ func _build() -> void:
 		"聲望券：戰役每 %d 顆星 1 張、無盡每 %d 波 1 張。招募池只有 %d 隻且不重複，"
 		% [RosterData.STAR_PER_TOKEN, RosterData.WAVE_PER_TOKEN, RosterData.RECRUIT_POOL.size()]
 		+ "收齊就畢業、不再消耗券。",
-		14, Palette.TEXT_SECONDARY, false
+		13, Palette.TEXT_SECONDARY, false
 	))
 
 	# ★ **招募自己一塊，不和「返回」擠同一排**（使用者回饋）。第一版把它接在
@@ -78,7 +78,7 @@ func _build() -> void:
 	#   沒有轉場）。但「不做演出」不等於「入口可以看不見」——它只表示這個動作
 	#   當場結算，不表示它不重要。所以改成一塊有框、有標題的區域。
 	if on_exit.is_valid():
-		var back_row := UiKit.hbox(10)
+		var back_row := UiKit.hbox(12)
 		col.add_child(back_row)
 		var back := Button.new()
 		back.text = "返回"
@@ -109,7 +109,7 @@ func _build() -> void:
 func _build_recruit() -> Control:
 	var box := UiKit.panel()
 	box.mouse_filter = Control.MOUSE_FILTER_PASS
-	var row := UiKit.hbox(14)
+	var row := UiKit.hbox(12)
 	box.add_child(row)
 
 	var left := RosterData.remaining(GameState.data)
@@ -135,10 +135,10 @@ func _build_recruit() -> Control:
 		note = "還剩 %d 隻未收集・聲望券 %d。抽到的必定是你還沒有的那幾隻。" % [left, tokens]
 		tone = Palette.ENERGY_AMBER
 	# 能按的時候字大一級——這是這個畫面唯一會改變存檔的動作。
-	b.add_theme_font_size_override("font_size", 16 if b.disabled else 19)
+	b.add_theme_font_size_override("font_size", 16 if b.disabled else 22)
 	_recruit_button = b
 	row.add_child(UiKit.touchable(b))
-	_recruit_note = UiKit.label(note, 15, tone, false)
+	_recruit_note = UiKit.label(note, 13, tone, false)
 	_recruit_note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(_recruit_note)
 	return box
@@ -169,7 +169,7 @@ func _card(type: String, owned: bool) -> Control:
 	box.add_child(col)
 
 	var title := UiKit.label(
-		NodeDefs.label(type), 20,
+		NodeDefs.label(type), 22,
 		Palette.ENERGY_AMBER if owned else Palette.TEXT_DISABLED, false
 	)
 	col.add_child(title)
@@ -178,18 +178,18 @@ func _card(type: String, owned: bool) -> Control:
 	# ★ **交戰耗能排第一行**（§7.4：那一欄是全案的心臟）。選塔的問題是
 	#   「這一座要吃我多少電」，不是「它一秒打幾點」。
 	col.add_child(UiKit.label(
-		"交戰耗能　%.0f ／秒" % float(def.get("engage_power", 0.0)), 15,
+		"交戰耗能　%.0f ／秒" % float(def.get("engage_power", 0.0)), 16,
 		Palette.ENERGY_AMBER, false
 	))
 	col.add_child(UiKit.label(
 		"造價　%d 礦砂%s" % [
 			NodeDefs.cost(type),
 			"　＋ %d 合金" % NodeDefs.alloy_cost(type) if NodeDefs.alloy_cost(type) > 0 else ""
-		], 14, Palette.TEXT_SECONDARY, false
+		], 13, Palette.TEXT_SECONDARY, false
 	))
 	col.add_child(UiKit.label(
 		"射程 %.0f 格　生命 %.0f" % [float(def.get("range", 0.0)), NodeDefs.hp(type)],
-		14, Palette.TEXT_SECONDARY, false
+		13, Palette.TEXT_SECONDARY, false
 	))
 	var trait_label := UiKit.label(_trait(type, def), 13, Palette.ORDER_CYAN, false)
 	trait_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -198,7 +198,7 @@ func _card(type: String, owned: bool) -> Control:
 
 	# 已擁有就說「已擁有」，沒有的說**怎麼拿到**——鎖住要說清楚條件。
 	col.add_child(UiKit.label(
-		"已擁有" if owned else RosterData.unlock_hint(type), 14,
+		"已擁有" if owned else RosterData.unlock_hint(type), 13,
 		Palette.OK_GREEN if owned else Palette.WARN_ORANGE, false
 	))
 	return box
@@ -323,7 +323,7 @@ func _click_selftest() -> void:
 	#   互動才到得了的狀態」）。零進度拍出來招募鈕是灰的、抽完拍出來是「已收集
 	#   完畢」——而要看的正是中間那個狀態，它在沒有進度的存檔上到不了。
 	#   放在全部斷言跑完之後，所以一項都沒有被跳過。
-	(GameState.data["roster"] as Dictionary)["recruited"] = []
+	((GameState.data["roster"] as Dictionary)["recruited"] as Array).clear()
 	_build()
 
 
