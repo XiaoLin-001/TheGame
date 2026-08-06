@@ -117,8 +117,11 @@ TL_SHOT="C:/tmp/lv.png" TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> 
 TL_SHOT="C:/tmp/daily.png" TL_PANEL=daily <godot> --path godot --rendering-driver opengl3
 
 # ★ 名冊（B2.4）：TL_PANEL=roster。存檔在有鉤子時是零進度 → 只有「錨」是你的，
-# 其餘七張卡是暗的並寫著怎麼拿到（這正是要拍的那一張圖）。
+# 其餘七張卡是暗的並寫著怎麼拿到。
 TL_SHOT="C:/tmp/roster.png" TL_PANEL=roster <godot> --path godot --rendering-driver opengl3
+# ★ 「有券可招募」那一格**只有互動才到得了**（零進度沒券、抽完就畢業）。
+# 兩個鉤子一起下 → 自檢跑完全部斷言之後把畫面留在那一格再拍。
+TL_CLICKTEST=1 TL_SHOT="C:/tmp/roster_open.png" TL_MUTE=1 TL_PANEL=roster <godot> --path godot --rendering-driver opengl3
 
 # ★ 科技樹（B1.3）：TL_PANEL=tech。存檔在有鉤子時是預設值（研究數據 0），
 # 所以 clicktest 會自己先塞一筆數據進去再點——不寫檔，玩家進度碰不到。

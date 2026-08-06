@@ -22,6 +22,8 @@ const CARD := Vector2(230, 168)
 var on_exit: Callable = Callable()
 
 var _recruit_button: Button = null
+## 招募鈕旁邊那句話（剩餘數／還差多少／畢業）。自檢斷言它真的說了具體的數字。
+var _recruit_note: Label = null
 var _scroll: ScrollContainer = null
 ## 供自檢檢查的卡片標題，與 `RosterData.all()` 同索引。
 var _card_titles: Array[Label] = []
@@ -68,14 +70,21 @@ func _build() -> void:
 		14, Palette.TEXT_SECONDARY, false
 	))
 
-	var back_row := UiKit.hbox(10)
-	col.add_child(back_row)
+	# ★ **招募自己一塊，不和「返回」擠同一排**（使用者回饋）。第一版把它接在
+	#   返回後面，於是這個畫面的**主要動作看起來像導覽列的一部分**——零進度時
+	#   它還是灰的，更像一行狀態文字。使用者的原話是「我沒有看到抽卡畫面」。
+	#
+	#   招募**沒有第二個畫面**是刻意的（§3.9 不使用賭博語彙：沒有十連演出、
+	#   沒有轉場）。但「不做演出」不等於「入口可以看不見」——它只表示這個動作
+	#   當場結算，不表示它不重要。所以改成一塊有框、有標題的區域。
 	if on_exit.is_valid():
+		var back_row := UiKit.hbox(10)
+		col.add_child(back_row)
 		var back := Button.new()
 		back.text = "返回"
 		back.pressed.connect(on_exit)
 		back_row.add_child(UiKit.touchable(back))
-	back_row.add_child(_build_recruit())
+	col.add_child(_build_recruit())
 
 	_scroll = ScrollContainer.new()
 	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -93,25 +102,46 @@ func _build() -> void:
 		grid.add_child(_card(type, owned.has(type)))
 
 
-## 招募鈕。**剩餘數常駐在鈕上**（§3.9 DoD），不藏在按下去之後的彈窗裡。
+## 招募區。**剩餘數常駐**（§3.9 DoD），不藏在按下去之後的彈窗裡。
+##
+## 三個狀態各自要說完整的一句話：**能招募**（幾張券）、**還不能**（還差多少，
+## 具體到湊得出來）、**畢業**（一個要被說出來的狀態，不是一顆變灰的鈕）。
 func _build_recruit() -> Control:
-	var b := Button.new()
+	var box := UiKit.panel()
+	box.mouse_filter = Control.MOUSE_FILTER_PASS
+	var row := UiKit.hbox(14)
+	box.add_child(row)
+
 	var left := RosterData.remaining(GameState.data)
 	var tokens := RosterData.tokens(GameState.data)
+	var b := Button.new()
+	var note := ""
+	var tone := Palette.TEXT_SECONDARY
 	if left <= 0:
-		# 畢業是一個要被說出來的狀態，不是一顆變灰的鈕。
-		b.text = "招募　已收集完畢"
+		b.text = "已收集完畢"
 		b.disabled = true
+		note = "招募池的 %d 隻全在你手上了，聲望券不會再被消耗。" % RosterData.RECRUIT_POOL.size()
+		tone = Palette.OK_GREEN
 	elif tokens <= 0:
+		b.text = "招募"
+		b.disabled = true
 		# 差多少要講具體的（藍圖庫缺口提示的同一條）：「還差 3 顆星」玩家湊得到，
 		# 「聲望券不足」湊不到。
-		b.text = "招募　還剩 %d 隻・聲望券 0（%s）" % [left, _next_token_hint()]
-		b.disabled = true
+		note = "還剩 %d 隻未收集・聲望券 0——%s" % [left, _next_token_hint()]
+		tone = Palette.WARN_ORANGE
 	else:
-		b.text = "招募　還剩 %d 隻・聲望券 %d" % [left, tokens]
+		b.text = "招募（1 張券）"
 		b.pressed.connect(_recruit)
+		note = "還剩 %d 隻未收集・聲望券 %d。抽到的必定是你還沒有的那幾隻。" % [left, tokens]
+		tone = Palette.ENERGY_AMBER
+	# 能按的時候字大一級——這是這個畫面唯一會改變存檔的動作。
+	b.add_theme_font_size_override("font_size", 16 if b.disabled else 19)
 	_recruit_button = b
-	return UiKit.touchable(b)
+	row.add_child(UiKit.touchable(b))
+	_recruit_note = UiKit.label(note, 15, tone, false)
+	_recruit_note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(_recruit_note)
+	return box
 
 
 ## 下一張券還差多少。兩條途徑各報各的，**取近的那一條講在前面**。
@@ -221,7 +251,9 @@ func _click_selftest() -> void:
 	# 零進度：只有第 1 關給的那一隻（錨），招募鈕買不起且說得出還差多少。
 	var start_owned: Array = RosterData.owned(GameState.data)
 	var starts_with_anchor: bool = start_owned.size() == 1 and start_owned.has("anchor")
-	var broke: bool = _recruit_button.disabled and _recruit_button.text.contains("還差")
+	# ★ 「差多少」要在**畫面上**說得具體。斷言看的是那句話，不是鈕的 disabled
+	#   ——灰掉的鈕只說「不行」，湊不出下一步。
+	var broke: bool = _recruit_button.disabled and _recruit_note.text.contains("還差")
 
 	# 塞滿星戰役（15 顆星 ＝ 3 券 ＝ 剛好畢業，§7.13）。
 	var stars: Dictionary = (GameState.data["campaign"] as Dictionary)["stars"]
@@ -232,7 +264,7 @@ func _click_selftest() -> void:
 	# 五關全通＝五隻確定性角色全到手；招募池那三隻仍然一隻都沒有。
 	var deterministic: bool = RosterData.owned(GameState.data).size() == 5
 	var three_tokens: bool = RosterData.tokens(GameState.data) == 3
-	var open: bool = not _recruit_button.disabled and _recruit_button.text.contains("還剩 3 隻")
+	var open: bool = not _recruit_button.disabled and _recruit_note.text.contains("還剩 3 隻")
 
 	# ★ 連按三次＝抽完全池。**每一次都必須是新的一隻**（§3.9 不重複）。
 	var pulls: Array[String] = []
@@ -286,6 +318,13 @@ func _click_selftest() -> void:
 	])
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)
+		return
+	# ★ **配 `TL_SHOT` 時把畫面留在「有券可招募」那一格**（CLAUDE.md「拍只有
+	#   互動才到得了的狀態」）。零進度拍出來招募鈕是灰的、抽完拍出來是「已收集
+	#   完畢」——而要看的正是中間那個狀態，它在沒有進度的存檔上到不了。
+	#   放在全部斷言跑完之後，所以一項都沒有被跳過。
+	(GameState.data["roster"] as Dictionary)["recruited"] = []
+	_build()
 
 
 func _unique(list: Array[String]) -> bool:
