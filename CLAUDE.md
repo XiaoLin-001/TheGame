@@ -225,7 +225,24 @@ TheGame/
 2. `CHANGELOG.md` 加一節
 3. 自檢 L1–L3 並附證據（測試輸出／截圖路徑）
 4. commit（標題含批次編號，如 `B0.3 建造與地圖：網格、節點放置、導管拉線`）
-5. **可玩 build**——絕不讓主線處於「改到一半跑不起來」過夜
+5. **★ 真的匯出 exe 並在 exe 上再驗一次**（`build/TideAndLine.exe`）——**每一次改動都要，不是只有大批次**（使用者 2026-08-06 明確要求）
+
+```bash
+<godot> --headless --path godot --export-release "Windows Desktop"
+# 匯出完在 **exe 上**跑一輪 clicktest（不是在原始碼樹上）
+TL_CLICKTEST=1 TL_PANEL=<panel> TL_MUTE=1 ./build/TideAndLine.exe --rendering-driver opengl3
+TL_SHOT="C:/tmp/exe.png" TL_PANEL=title ./build/TideAndLine.exe --rendering-driver opengl3
+```
+
+> **為什麼要在 exe 上再跑一次，而不是信原始碼樹的綠燈**：匯出會**打包**資源
+> （`export_filter="all_resources"`、`exclude_filter="tests/*"`）。新加的
+> `.wav`／`.gd` 沒被打包進去時，**原始碼樹的測試全綠而 exe 缺檔**——而 `tests/`
+> 本身不在包裡，headless 測試在 exe 上根本跑不到。exe 上唯一還在的驗證是
+> clicktest（它寫在畫面自己裡面）與 `TL_SHOT`。截圖要**確認版本號是新的那一個**，
+> 否則你看的是上一次的 exe。
+>
+> **絕不讓主線處於「改到一半跑不起來」過夜**，而且**沒有匯出的 build 不算交付**
+> ——使用者玩的是 exe，不是我的 git 工作區。
 
 ---
 
