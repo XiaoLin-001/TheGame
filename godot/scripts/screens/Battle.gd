@@ -1847,7 +1847,11 @@ func _draw_frame_matte() -> void:
 ##      元素——一個元素答兩題，和來襲箭羽是同一條理由（§1.6）。
 ##   ② **路徑帶本身**。
 ##
-## 兩層都走抖動邊緣（`Shapes.band_jitter`），所以混沌側**看起來像混沌側**。
+## ★ **只有路徑帶抖動，侵蝕暈是直的**（使用者 2026-08-06 拍板）。
+##   第一版兩層都抖，讀起來是「兩條扭來扭去的東西」——而這兩層**要答的問題不同**：
+##     · 路徑帶講**氣氛**（潮＝混沌，§0 的視覺論題）→ 抖動。
+##     · 侵蝕暈講**規則**（我的建築要退開幾格）→ 一條抖動的線量不出格數。
+##   規則層走格線是對的：它讓玩家用格子數邊界，而格子正是他放建築的單位。
 func _draw_path() -> void:
 	var pathset: Dictionary = s.sets["path"]
 	# 暈這一層的實心區 ＝ 暈 ∪ 路徑。
@@ -1857,9 +1861,8 @@ func _draw_path() -> void:
 	#    玩家要讀的是「我的建築壓在這一圈裡就會被啃」，不是「這裡有東西」。
 	#
 	# ★ **整片畫（暈 ∪ 路徑），不是只畫外圈那一環**（B2.4.2 code review 抓到）。
-	#   只畫環的話，環的**內**緣是不抖的（它對暈這一層而言是內部格點），而路徑帶
-	#   的**外**緣是抖的——同一條邊界兩層各畫各的，中間就會露出最多 4px 的背景，
-	#   或是疊出一條更深的線。整片畫則路徑帶直接疊在暈上面，交界不可能有縫。
+	#   只畫環的話，路徑帶抖出去的那 4px 會蓋不到暈，交界露出背景。整片畫則
+	#   路徑帶直接疊在暈上面，不管抖多少都不可能有縫。
 	var halo := Palette.alpha(Palette.TIDE_DEEP, 0.13)
 	# ★ 外緣描一條線（使用者拍板：「要能讀出傷害半徑」）。
 	#   **只有填色是不夠的**——一塊淡淡的顏色說得出「這附近危險」，說不出
@@ -1867,7 +1870,7 @@ func _draw_path() -> void:
 	#   線只描**最外圈**，所以它是一條輪廓不是第二條帶子。
 	var edge := Palette.alpha(Palette.TIDE_DEEP, 0.5)
 	for c: Vector2i in solid:
-		var quad := _band_quad(c, solid)
+		var quad := _cell_quad(c)
 		draw_colored_polygon(quad, halo)
 		# 這一邊的鄰居不在實心區 ＝ 它是最外圈。
 		for i in 4:
@@ -1921,14 +1924,19 @@ func _danger_cells(pathset: Dictionary) -> Dictionary:
 	return out
 
 
-## 一格的四角多邊形，外緣帶抖動（`Shapes.band_jitter`）。
+## 一格的四角多邊形，**貼齊格線**。角的順序與 `SIDES` 對得上（第 i 邊 ＝ i→i+1）。
+func _cell_quad(c: Vector2i) -> PackedVector2Array:
+	var quad := PackedVector2Array()
+	for corner: Vector2i in CORNERS:
+		quad.append(_world(c + corner))
+	return quad
+
+
+## 一格的四角多邊形，外緣帶抖動（`Shapes.band_jitter`）。**只有路徑帶用它**
+## （侵蝕暈走 `_cell_quad`，理由見 `_draw_path`）。
 ##
 ## **抖動掛在格點上**：相鄰兩格共用的角落算出同一個偏移，所以帶子不會裂開。
 ## 內部格點（四周四格都在 `solid` 裡）不偏移，否則帶子中間會出現縫。
-##
-## `solid` ＝ 這一層的實心區。路徑帶傳 `pathset`，侵蝕暈傳「暈 ∪ 路徑」。
-## **不是一個 `halo_layer` 布林旗標**：旗標會讓 `_interior_vertex` 裡多一條分支，
-## 而呼叫端本來就知道自己是哪一層——把答案傳進來比把問題傳進來短。
 func _band_quad(c: Vector2i, solid: Dictionary) -> PackedVector2Array:
 	var quad := PackedVector2Array()
 	for corner: Vector2i in CORNERS:
