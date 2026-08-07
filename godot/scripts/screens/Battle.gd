@@ -233,6 +233,11 @@ var _stress_worst: float = 0.0
 ## 本幀「正在被啃」的格（敵人相鄰 1 格內）。**純渲染推導，不新增任何狀態**
 ## ——同一份判定模擬層每 tick 都在做（`Tide.in_blast`），這裡只是把它畫出來。
 var _threat: Dictionary = {}
+## ★ 本幀「畫不出圖形」的節點類型（B2.4.6）。`_draw_nodes()` 的 match 每漏一種
+## 就往這裡記一筆，`TL_CLICKTEST` 拿它當斷言。**這不是防禦性程式碼，是一支感測器**
+## ——漏掉一種的後果是那座塔在地圖上完全隱形（蓋得下去、會開火、會吃電、會被
+## 打壞，就是看不見），而十五支測試沒有一支會紅：它們驗數值與流量，沒有一支看畫面。
+var _no_glyph: Dictionary = {}
 
 
 func _ready() -> void:
@@ -450,9 +455,62 @@ func _buildable() -> Array:
 ## 檢查——這也正是它抓得到的東西別的檢查都抓不到的原因。
 ##   `TL_CLICKTEST=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3`
 ## 約 1 秒後自己退出（0 ＝ PASS）。
+## ★ 每一種可建造節點都要畫得出一個圖形（B2.4.6）。
+##
+## **這一條是使用者用眼睛抓到的**（「長哨沒有模型顯示」），而 B2.4 當批
+## 1290 條斷言全綠——因為十五支測試驗的是數值與流量，**沒有一支看畫面**。
+## 三隻招募塔的資料表、戰鬥、耗電、存檔、招募全部正確，只是在地圖上是透明的。
+##
+## 手法：把每一種 `BUILDABLE` 直接塞進 `s.nodes`（`add_node` 不走成本與放置規則），
+## 逼 `_draw_nodes()` 跑過每一個分支，再看 `_no_glyph` 有沒有東西。測完立刻移除，
+## 所以它對後面每一條斷言都是不可見的。
+##
+## 探針格 `(-9, -9)` 在地圖外：任何實際格都可能被後面的建造斷言用到。
+func _glyph_selftest() -> void:
+	var before: int = s.nodes.size()   # `s.nodes` 未標型別 → `:=` 推不出來，會編譯錯
+	# ★ 同時給 `TL_SHOT` 時排成一列**留在畫面上**：斷言只證明「有畫東西」，
+	#   證明不了「一眼分得出是哪一隻」。後者只有人眼判得了，而那張圖沒有這個
+	#   鉤子就拍不到——招募塔要有券才蓋得出來，零進度存檔永遠擺不出這一排。
+	var gallery: bool = Hooks.shot_path != ""
+	for i in NodeDefs.BUILDABLE.size():
+		var ty := String(NodeDefs.BUILDABLE[i])
+		s.add_node(ty, Vector2i(4 + i * 2, 14) if gallery else Vector2i(-9, -9))
+	_no_glyph.clear()
+	queue_redraw()
+	for _i in 2:
+		await get_tree().process_frame
+	var missing := PackedStringArray()
+	for ty: Variant in _no_glyph:
+		missing.append(String(ty))
+	missing.sort()
+	if not gallery:
+		s.nodes.resize(before)
+	_no_glyph.clear()
+	queue_redraw()
+	# ★ 圖鑑說明是**同一個缺陷的另一半**：`_codex_lines()` 也是一張以 type 為鍵的
+	#   表，`.get(type, "")` 漏掉時的症狀是「說明那一行是空白的」——一樣不會報錯。
+	#   兩件事一起驗，因為它們是同一個錯法。
+	var blank := PackedStringArray()
+	for ty: String in NodeDefs.BUILDABLE:
+		if _codex_lines(ty).size() < 2 or String(_codex_lines(ty)[1]).strip_edges() == "":
+			blank.append(ty)
+	blank.sort()
+	var ok: bool = missing.is_empty() and blank.is_empty()
+	print("[TL_CLICKTEST/glyph] %d 種節點｜畫不出來的：%s｜圖鑑沒說明的：%s → %s" % [
+		NodeDefs.BUILDABLE.size(),
+		"（無）" if missing.is_empty() else ",".join(missing),
+		"（無）" if blank.is_empty() else ",".join(blank),
+		"PASS" if ok else "FAIL",
+	])
+	# 隱形的塔是完整缺陷，不併進後面那個 `ok` ——直接擋掉。
+	if not ok and Hooks.shot_path == "":
+		get_tree().quit(1)
+
+
 func _click_selftest() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
+	await _glyph_selftest()
 	if Hooks.panel == "endless":
 		await _guide_selftest()
 		return
@@ -2273,6 +2331,35 @@ func _draw_nodes() -> void:
 				# 外框**：稜鏡是三角、碎浪是方——不靠顏色分辨（§1.6）。
 				draw_rect(Rect2(p - Vector2(9, 9), Vector2(18, 18)), Palette.ALLOY_STEEL)
 				draw_rect(Rect2(p - Vector2(13, 13), Vector2(26, 26)), Palette.ALLOY_STEEL, false, 1.5)
+				# ── 招募專屬的三隻（B2.4.6）───────────────────────────────
+				# 形狀規則同上：**不靠顏色分辨**（§1.6）。方（錨／碎浪）、圓（採集器
+				# ／潮鳴）、三角（稜鏡）、菱（中繼）、六邊（熔爐）都已經被佔走了，
+				# 所以這三隻各取一個沒人用過的輪廓。
+			"longcall":
+				# 細長的桅杆，橫桿在**頂端**＝一座瞭望塔。射程 12 是它唯一的賣點，
+				# 而「又高又細」是最短的講法。不用合金 → 秩序青。
+				# ★ 第一版橫桿在中間，截圖上讀起來是一個**十字**不是一座塔
+				#   （分辨得出來，但講錯了話）。移到頂端才成立。
+				draw_rect(Rect2(p - Vector2(3, 13), Vector2(6, 26)), Palette.ORDER_CYAN)
+				draw_rect(Rect2(p - Vector2(8, 13), Vector2(16, 4)), Palette.ORDER_CYAN)
+			"frostreef":
+				# 六芒星（三條穿心線）＝發散，和潮鳴的同心圓同一族但認得出是兩隻。
+				# 要 40 合金 → 合金銀（與稜鏡／碎浪同一條規則）。
+				for k in 3:
+					var spoke := Vector2(12, 0).rotated(PI * float(k) / 3.0)
+					draw_line(p - spoke, p + spoke, Palette.ALLOY_STEEL, 2.5)
+			"ballast":
+				# 倒三角 ＋ 頂桿＝一塊吊著的配重。與稜鏡的正三角互為鏡像，
+				# 在同一張圖上一眼分得開。要 100 合金 → 合金銀。
+				draw_rect(Rect2(p - Vector2(13, 12), Vector2(26, 4)), Palette.ALLOY_STEEL)
+				draw_colored_polygon(PackedVector2Array([
+					p + Vector2(-11, -5), p + Vector2(11, -5), p + Vector2(0, 12)
+				]), Palette.ALLOY_STEEL)
+			_:
+				# ★ **沒有這條 default 的時候，漏掉一種的症狀是「隱形」而不是「報錯」**
+				#   ——GDScript 的 `match` 沒對到就靜靜地什麼都不做。B2.4 加三隻招募塔
+				#   時三隻全中，而使用者是**用眼睛**發現的（「長哨沒有模型顯示」）。
+				_no_glyph[String(n["type"])] = true
 		_draw_threat(n["cell"], p)
 		_draw_engaged(n, p)
 		_draw_badge(n, p)
@@ -3228,6 +3315,9 @@ func _codex_lines(type: String) -> Array[String]:
 		# `Label` 不解析 Markdown——`**任何**` 會原樣印出兩排星號（B0.7.1／B0.7.3
 		# 各犯過一次，這裡是第三處，B1.1 一併掃掉）。強調一律用「」。
 		"reclaimer": "射程內「任何」敵人死亡就回收能量（不限自己擊殺）。蹲在擊殺點上，不是蹲在它自己射得爽的地方。",
+		"longcall": "射程 12，一座蓋掉大圖的一個象限。每瓦傷害只是中等——買的是覆蓋範圍不是輸出，也是唯一夠得到漏網之魚的塔。",
+		"frostreef": "不開火。減速 65%（潮鳴 40%）但「沒有」破甲，射程只有 3，電費是潮鳴的 1.8 倍。減速與破甲各自取最大，所以它和潮鳴疊在一起是真的組合技——代價是兩座都要吃電。",
+		"ballast": "血量 90（其餘塔 60），每瓦傷害全場最高。代價是 240 礦砂＋100 合金，而合金要一座待機也吃 10 電的熔爐——「便宜的電」是拿一整條產線換來的。",
 	}.get(type, ""))
 	if def.has("ore_out"):
 		out.append("產出　＋%.0f 礦砂/秒" % float(def["ore_out"]))
