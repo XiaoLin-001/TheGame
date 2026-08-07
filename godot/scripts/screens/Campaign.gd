@@ -106,14 +106,14 @@ func _build() -> void:
 	var col := UiKit.vbox(14)
 	col.position = Vector2(24, 40)
 	add_child(col)
-	col.add_child(UiKit.label("戰役", 34, Palette.ORDER_BRIGHT, false))
+	col.add_child(UiKit.label("戰役", 32, Palette.ORDER_BRIGHT, false))
 	col.add_child(UiKit.label(
 		"每一關解鎖一種新的建造選項——那一顆鈕就是它要教的東西。", 15,
 		Palette.TEXT_SECONDARY, false
 	))
 	var data := int(float((GameState.data.get("tech", {}) as Dictionary).get("data", 0)))
 	col.add_child(UiKit.label(
-		"研究數據 %s" % UiKit.commas(data), 15, Palette.ENERGY_AMBER, false
+		"研究數據 %s" % UiKit.commas(data), 16, Palette.ENERGY_AMBER, false
 	))
 	var back_row := UiKit.hbox(8)
 	col.add_child(back_row)

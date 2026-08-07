@@ -138,7 +138,7 @@ func _build() -> void:
 	var col := UiKit.vbox(8)
 	_col = col
 	margin.add_child(col)
-	col.add_child(UiKit.label("設定", 34, Palette.ORDER_BRIGHT, false))
+	col.add_child(UiKit.label("設定", 32, Palette.ORDER_BRIGHT, false))
 	if on_exit.is_valid():
 		var back := Button.new()
 		back.text = "返回"

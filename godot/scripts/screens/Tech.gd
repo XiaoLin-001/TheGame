@@ -128,9 +128,9 @@ func _build() -> void:
 
 	var col := UiKit.vbox(10)
 	margin.add_child(col)
-	col.add_child(UiKit.label("科技樹", 34, Palette.ORDER_BRIGHT, false))
+	col.add_child(UiKit.label("科技樹", 32, Palette.ORDER_BRIGHT, false))
 	_data_label = UiKit.label(
-		"研究數據 %s" % UiKit.commas(int(_data())), 18, Palette.ENERGY_AMBER, false
+		"研究數據 %s" % UiKit.commas(int(_data())), 16, Palette.ENERGY_AMBER, false
 	)
 	col.add_child(_data_label)
 	col.add_child(UiKit.label(

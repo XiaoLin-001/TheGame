@@ -110,7 +110,7 @@ const BEAD_MIN_RATE := 0.05
 ## 能量收支面板的**固定列序**。列數與順序恆定，沒有值的列留在原位變暗，
 ## 面板才不會每個 tick 抖一次（B0.7.4）。`short0..2` 是餵不飽的節點清單。
 const ENERGY_ROWS := [
-	"gen", "silo_out", "reclaim", "sep1", "tower", "smelt", "silo_in", "sep2", "net",
+	"gen", "silo_out", "reclaim", "sep1", "tower", "smelt", "silo_in", "silo_store", "sep2", "net",
 	"short0", "short1", "short2", "tip", "tip2",
 ]
 ## 「餵不飽」最多列幾座，其餘收成一行「…還有 N 座」。
@@ -182,7 +182,44 @@ var _hover: Vector2i = Vector2i(-999, -999)
 var _accum: float = 0.0
 var _message: String = ""
 
+## 頂欄六欄的版面（B2.4.4，§7.2 的 B-2 ＋ B-3）。
+##
+## 每一欄 ＝ `[標籤 sm] [數值 vs 級·固定寬·右對齊] [註腳 sm·固定寬·右對齊]`。
+##
+## **三階不是為了好看，是為了回答不同的問題**（§7.2 B-2）：
+##   · 主（22 ＝ `text.lg`）＝**能量／波次／核心**——「我現在會不會輸」的全部答案
+##   · 次（16 ＝ `text.base`）＝礦砂、合金——「我買不買得起」
+##   · 附屬（13 ＝ `text.sm`）＝`▲/秒`、儲槽、交戰、擊殺——上面那幾個的**註腳**
+##
+## **固定寬度是 §3 那條硬性要求的正解**（「資源數字跳動時不得左右位移」）。
+## ⚠ 原稿說要開 OpenType `tnum`——**量過之後那是修一個不存在的問題**：微軟正黑體
+## 的數字本來就等寬，同位數換數字（1111→8888）本來就不位移。真正會位移的是
+## **跨位數**（999→1000），而 `tnum` 對它無效，只有固定寬度擋得住。
+## 量測留在 `_topbar_selftest()`，兩種情況各一條斷言。
+##
+## 寬度是**猜的，然後由 `bar_clear` 驗**（頂欄不得長到撞上縮放鈕）。固定寬度讓
+## 那條斷言從「這一刻的數值排得下」升級成「任何數值都排得下」。
+##
+## ★ **從七欄縮成五欄**：三階字級排不下 11 個數字（第一版實測超出 166px），
+##   而 §2 反模式清單自己就寫著「每個畫面最多 4 個『主要數字』」。
+##   **搬家不是刪除**（B-2 說資訊完備性不能砍）：
+##     · 儲槽存量 → 能量面板（它是「充放電」那兩列的分母），地圖上每顆儲槽
+##       身上還有一圈琥珀弧，「哪一顆滿了」讀得到
+##     · 交戰座數 → 併進能量那一格的註腳（它就是能量需求的解釋）
+##     · 擊殺 → 併進波次那一格的註腳（兩個都在講「這一波打得怎樣」）
+const TOP_CELLS := [
+	{"tag": "礦砂", "vw": 64, "vs": 16, "nw": 48},
+	{"tag": "合金", "vw": 56, "vs": 16, "nw": 48},
+	{"tag": "能量", "vw": 88, "vs": 22, "nw": 72},
+	{"tag": "",     "vw": 144, "vs": 22, "nw": 120},
+	{"tag": "核心", "vw": 116, "vs": 22, "nw": 0},
+]
+
 var _top: HBoxContainer = null
+## 頂欄每一欄的數值／註腳標籤。**存參照而不是每次 `get_child(i).get_child(j)`**
+## ——那種索引在版面改一次就會安靜地指到別格（RG-134 是同一個錯法的按鈕版）。
+var _top_values: Array[Label] = []
+var _top_notes: Array[Label] = []
 var _hint: Label = null
 var _mode_buttons: Dictionary = {}
 var _build_buttons: Dictionary = {}
@@ -507,10 +544,54 @@ func _glyph_selftest() -> void:
 		get_tree().quit(1)
 
 
+## ★ 頂欄的版面不得隨數值變動（§3 硬性要求：「資源數字跳動時不得左右位移」，B-3）。
+##
+## **這一條原本是用 grep 推的**（`tabular|FontVariation|monospace` 零命中 → 宣稱
+## 「每秒橫向抖十次」），而 A-3 已經教過一次：沒有量過的宣稱只是一個願望（RG-141）。
+## 所以先有這支量測，再談要不要修。
+##
+## 量兩件事，因為它們的難度不同：
+##   ① **同位數不同數字**（1111 → 8888）：等寬數字（tabular figures）就擋得住。
+##   ② **不同位數**（1111 → 99）：等寬數字擋不住，只有固定寬度容器擋得住。
+## §3 的正文要的是②（「數字跳動時不得左右位移」沒有限定位數），備案也是②。
+func _topbar_selftest() -> void:
+	var ore_before: float = s.ore
+	var xs := func() -> PackedFloat32Array:
+		var out := PackedFloat32Array()
+		for c: Node in _top.get_children():
+			out.append((c as Control).global_position.x)
+		return out
+	var same := func(a: PackedFloat32Array, b: PackedFloat32Array) -> bool:
+		if a.size() != b.size():
+			return false
+		for i in a.size():
+			if absf(a[i] - b[i]) > 0.5:
+				return false
+		return true
+	s.ore = 1111.0
+	_refresh_top()
+	await get_tree().process_frame
+	var base: PackedFloat32Array = xs.call()
+	s.ore = 8888.0
+	_refresh_top()
+	await get_tree().process_frame
+	var digits_ok: bool = same.call(base, xs.call())
+	s.ore = 99.0
+	_refresh_top()
+	await get_tree().process_frame
+	var width_ok: bool = same.call(base, xs.call())
+	s.ore = ore_before
+	_refresh_top()
+	print("[TL_CLICKTEST/topbar] 同位數不位移=%s 任意位數不位移=%s → %s" % [
+		digits_ok, width_ok, "PASS" if (digits_ok and width_ok) else "FAIL",
+	])
+
+
 func _click_selftest() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	await _glyph_selftest()
+	await _topbar_selftest()
 	if Hooks.panel == "endless":
 		await _guide_selftest()
 		return
@@ -1011,6 +1092,16 @@ func _view_selftest() -> bool:
 	print("[TL_CLICKTEST/view] fit=%s fills=%s inside=%s bar_clear=%s zoom_in=%s centered=%s anchored=%s pan_clamp=%s reset=%s floor=%s hit_after_zoom=%s　（fit=%.3f，格 %.1f px）" % [
 		at_fit, filled, inside, bar_clear, zoomed_in, centered, anchored, pan_clamped,
 		reset_ok, floor_ok, hit_ok, _fit, Shapes.GRID * _fit
+	])
+	# ★ `bar_clear` 紅掉時要**知道差多少**才改得動 `TOP_CELLS` 的欄寬——
+	#   「太寬了」這三個字修不了東西，「超出 63px」可以。
+	var widths := PackedStringArray()
+	for c: Node in _top.get_children():
+		widths.append("%.0f" % (c as Control).size.x)
+	print("[TL_CLICKTEST/view/bar] 頂欄 %.0f→%.0f（寬 %.0f＝%s），縮放鈕在 %.0f，餘裕 %.0f px" % [
+		_top.position.x, _top.position.x + _top.size.x, _top.size.x, "+".join(widths),
+		_zoom_button.get_parent().position.x,
+		_zoom_button.get_parent().position.x - (_top.position.x + _top.size.x),
 	])
 	return (
 		at_fit and filled and inside and bar_clear and zoomed_in and centered and anchored
@@ -2817,11 +2908,29 @@ func _to_screen(p: Vector2) -> Vector2:
 # ── 浮層 ──────────────────────────────────────────────────────────────
 
 func _build_ui() -> void:
-	_top = UiKit.hbox(18)
-	_top.position = Vector2(120, 14)
+	# ★ 頂欄三階 ＋ 固定寬度（B2.4.4）。舊版是七個 15px（**階外**）的 Label 直接
+	#   丟進 HBox——11 個數字同一階，而且寬度隨數值變。規格見 `TOP_CELLS`。
+	_top = UiKit.hbox(8)
+	_top.position = Vector2(120, 12)
 	add_child(_top)
-	for i in 7:
-		_top.add_child(UiKit.label("", 15, Palette.TEXT_PRIMARY, false))
+	_top_values.clear()
+	_top_notes.clear()
+	for spec: Dictionary in TOP_CELLS:
+		var cell := UiKit.hbox(4)
+		cell.alignment = BoxContainer.ALIGNMENT_CENTER
+		if String(spec["tag"]) != "":
+			cell.add_child(UiKit.label(String(spec["tag"]), 13, Palette.TEXT_SECONDARY, false))
+		var v := UiKit.label("", int(spec["vs"]), Palette.TEXT_PRIMARY, false)
+		v.custom_minimum_size.x = float(spec["vw"])
+		v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		cell.add_child(v)
+		_top_values.append(v)
+		var n := UiKit.label("", 13, Palette.TEXT_SECONDARY, false)
+		n.custom_minimum_size.x = float(spec["nw"])
+		n.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		cell.add_child(n)
+		_top_notes.append(n)
+		_top.add_child(cell)
 
 	# ★ 選單（B1.4.1）。ESC 是快捷，**不是唯一的路**（P3：操作不得只靠鍵盤）。
 	#   放左上角 x<120、y<56 那塊角落——頂欄從 x=120 起、建造欄從 y=56 起，
@@ -2942,16 +3051,32 @@ func _build_ui() -> void:
 
 	# 建造欄放不下八種節點再加動作鈕（8×44 已經吃掉 380px），
 	# 所以時間流與面板開關搬到地圖下緣那條 56px 的空帶——那裡本來就空著。
-	var bar := UiKit.hbox(8)
+	# ★ 三群（B2.4.4，§7.2 B-5）：**時間流｜浮層開關｜說明**。
+	#   群間 24、群內 8（§1.3 間距階），**不加分隔線**——七顆同權重的鈕裡有一顆
+	#   是不可逆的，而視覺重量要對應後果的重量。
+	var bar := UiKit.hbox(24)
 	bar.position = Vector2(8, BAR_Y)
 	add_child(bar)
+	var g_time := UiKit.hbox(8)
+	var g_panels := UiKit.hbox(8)
+	var g_help := UiKit.hbox(8)
+	bar.add_child(g_time)
+	bar.add_child(g_panels)
+	bar.add_child(g_help)
 	_ff_button = Button.new()
 	_ff_button.text = "快進 4×"
 	_ff_button.pressed.connect(_on_fast_forward)
-	bar.add_child(UiKit.touchable(_ff_button))
+	g_time.add_child(UiKit.touchable(_ff_button))
 	_summon_button = Button.new()
 	_summon_button.pressed.connect(_on_summon_now)
-	bar.add_child(UiKit.touchable(_summon_button))
+	# ★ **全底欄唯一一顆不可逆的鈕**：按下去這一波就提早來，獎勵倍率也定了。
+	#   §7.2 B-5 原本開的處方是 `energy.amber` 描邊——**那違反 §1.1 配色紀律 2**
+	#   （琥珀專屬於能量，而提前召喚跟耗能無關）。改用 `warn.orange`：紀律 1 說
+	#   橙／品紅專屬於「敵人與危險狀態」，而這顆鈕做的事**就是把敵潮叫過來**，
+	#   它是玩家自己選的危險。同一條紀律，剛好也是更強的編碼。
+	_summon_button.add_theme_color_override("font_color", Palette.WARN_ORANGE)
+	_summon_button.add_theme_color_override("font_hover_color", Palette.WARN_ORANGE)
+	g_time.add_child(UiKit.touchable(_summon_button))
 	# 抽屜開關本來就是一個開關：做成 toggle，按下狀態才**真的**等於「抽屜開著」。
 	# 之前是普通按鈕，它拿到焦點時的外框看起來就像被選中，玩家會以為抽屜開了。
 	var prio := Button.new()
@@ -2959,31 +3084,32 @@ func _build_ui() -> void:
 
 	prio.toggle_mode = true
 	prio.toggled.connect(_on_toggle_priority)
-	bar.add_child(UiKit.touchable(prio))
+	g_panels.add_child(UiKit.touchable(prio))
 	# ★ 藍圖庫（B2.3）。放底欄抽屜而不是左欄：左欄的八種節點加動作鈕已經
 	#   吃掉 380px，而藍圖是**每局用一兩次**的東西，不該和每秒都在點的建造欄搶位置。
 	var bp_btn := Button.new()
 	bp_btn.text = "藍圖"
 	bp_btn.toggle_mode = true
 	bp_btn.toggled.connect(_on_toggle_blueprint)
-	bar.add_child(UiKit.touchable(bp_btn))
+	g_panels.add_child(UiKit.touchable(bp_btn))
 	_help_button = Button.new()
 	_help_button.text = "說明"
 	_help_button.toggle_mode = true
 	_help_button.toggled.connect(_on_toggle_help)
-	bar.add_child(UiKit.touchable(_help_button))
 
 	_energy_button = Button.new()
 	_energy_button.text = "能量"
 	_energy_button.toggle_mode = true
 	_energy_button.toggled.connect(_on_toggle_energy)
-	bar.add_child(UiKit.touchable(_energy_button))
+	g_panels.add_child(UiKit.touchable(_energy_button))
 	_codex_button = Button.new()
 	_codex_button.text = "圖鑑"
 	_codex_button.toggle_mode = true
 	_codex_button.button_pressed = true   # 預設開：它只在滑鼠停在建造鈕上時才出現
 	_codex_button.toggled.connect(func(on: bool) -> void: _codex_on = on)
-	bar.add_child(UiKit.touchable(_codex_button))
+	g_panels.add_child(UiKit.touchable(_codex_button))
+	# 說明自己一群：它是唯一一顆**跟局面無關**的鈕（不改狀態、不開資料浮層）。
+	g_help.add_child(UiKit.touchable(_help_button))
 
 	_build_priority_panel()
 	_build_blueprint_panel()
@@ -3035,7 +3161,7 @@ func _build_priority_panel() -> void:
 	box.visible = false
 	var outer := UiKit.vbox(4)
 	box.add_child(outer)
-	outer.add_child(UiKit.label("能量／礦砂不足時，誰先餓死", 14, Palette.TEXT_SECONDARY, false))
+	outer.add_child(UiKit.label("能量／礦砂不足時，誰先餓死", 13, Palette.TEXT_SECONDARY, false))
 	var cols := UiKit.hbox(10)
 	outer.add_child(cols)
 	var lanes := [UiKit.vbox(4), UiKit.vbox(4)]
@@ -3064,7 +3190,7 @@ func _build_priority_panel() -> void:
 	for i in rows.size():
 		var type := String(rows[i])
 		var row := UiKit.hbox(4)
-		var name_label := UiKit.label(NodeDefs.label(type), 15, Palette.TEXT_PRIMARY, false)
+		var name_label := UiKit.label(NodeDefs.label(type), 13, Palette.TEXT_PRIMARY, false)
 		name_label.custom_minimum_size = Vector2(52, 0)
 		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		row.add_child(name_label)
@@ -3072,7 +3198,7 @@ func _build_priority_panel() -> void:
 		down.text = "◀"
 		down.pressed.connect(_on_priority.bind(type, -1))
 		row.add_child(UiKit.touchable(down))
-		var value := UiKit.label("", 17, Palette.ENERGY_AMBER)
+		var value := UiKit.label("", 16, Palette.ENERGY_AMBER)
 		value.custom_minimum_size = Vector2(24, 0)
 		value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		row.add_child(value)
@@ -3173,7 +3299,7 @@ func _build_energy_panel() -> void:
 	box.custom_minimum_size = Vector2(392, 320)
 	var col := UiKit.vbox(3)
 	box.add_child(col)
-	col.add_child(UiKit.label("能量收支（每秒）", 15, Palette.ENERGY_AMBER, false))
+	col.add_child(UiKit.label("能量收支（每秒）", 16, Palette.ENERGY_AMBER, false))
 	for key: String in ENERGY_ROWS:
 		var l := UiKit.label("", 13, Palette.TEXT_SECONDARY, false)
 		l.custom_minimum_size = Vector2(380, 17)
@@ -3222,6 +3348,13 @@ func _refresh_energy() -> void:
 	_set_row("smelt", "− 熔爐 ×%d　%.0f（待機也吃）" % [s.count_of("smelter"), smelt],
 		smelt > 0.05)
 	_set_row("silo_in", "− 儲槽充能　%.0f（受自己那條線限速）" % silo_in, silo_in > 0.05)
+	# ★ 儲槽**存量**（B2.4.4）。它原本掛在頂欄，而頂欄的三階層次容不下 11 個
+	#   數字（§2 反模式：每畫面最多 4 個主要數字）。搬到這裡而不是刪掉：
+	#   這一格是「充放電」那兩列的分母，放在它們旁邊比放在頂欄更講得通。
+	#   ★ **每一顆儲槽自己身上還有一圈琥珀弧**，所以「哪一顆滿了」在地圖上讀得到，
+	#     頂欄少的只是那個總和數字。
+	_set_row("silo_store", "　　儲槽存量　%.0f/%.0f" % [r["silo_charge"], r["silo_capacity"]],
+		float(r["silo_capacity"]) > 0.05, Palette.ENERGY_AMBER)
 	_set_row("sep2", "─────────────────", false)
 
 	# ★ 「誰餵不飽」（使用者要求）。淨值只說「差多少」，不說「誰在挨餓」——
@@ -3274,7 +3407,7 @@ func _build_codex_panel() -> void:
 	# 角色簡介刻意半透明：它浮在地圖上，要讓人看得見底下是什麼（使用者指定）。
 	var box := UiKit.panel(0.88)
 	box.visible = false
-	_codex_label = UiKit.label("", 14, Palette.TEXT_PRIMARY, false)
+	_codex_label = UiKit.label("", 13, Palette.TEXT_PRIMARY, false)
 	# ★ 不設寬度的話它會長到最長那一行那麼寬（熔爐那一行 850px），
 	#   從 x=124 一路蓋掉 x=870 的能量面板——兩個浮層同時開就疊在一起。
 	_codex_label.custom_minimum_size.x = 640.0
@@ -3525,6 +3658,10 @@ func _on_mode(mode: int) -> void:
 
 func _refresh_top() -> void:
 	_refresh_summon()
+	# ★ 快進鈕自己講自己開沒開（B2.4.4）。它不是 toggle（按下去只是切換 tick 倍率），
+	#   所以在此之前**畫面上唯一的指示是頂欄那段「▶4×」**——因在底欄、果在頂欄。
+	if _ff_button != null:
+		_ff_button.text = "▶ 快進中 4×" if s.speed_mult > 1 else "快進 4×"
 	# TL_NAKED：隱藏所有數值標籤，只留線寬／顏色（`30_TECH_DESIGN.md` §4.1）。
 	# **能量條不在此列**——它是圖形，長度即資訊（§6.2 硬性要求 1），畫在 `_draw()`。
 	if Hooks.naked:
@@ -3535,27 +3672,39 @@ func _refresh_top() -> void:
 	var core_col: Color = (
 		Palette.WARN_ORANGE if s.core_hp() < core_full else Palette.ORDER_BRIGHT
 	)
+	# 一欄一列：[數值, 註腳, 顏色]。順序與 `TOP_CELLS` 一致。
+	# 合金緊貼礦砂：**兩個都是造價貨幣**，玩家看的是同一個問題（我買得起嗎）。
+	# 「能量需求為什麼突然翻倍」這個問題的答案永遠是交戰座數（§7.4 峰值約束），
+	# 所以它掛在能量那一格旁邊當註腳，不是一個獨立的數字。
 	var texts := [
-		["礦砂 %s　▲%.1f/秒" % [UiKit.commas(int(s.ore)), r["ore_in"]], Palette.ORDER_CYAN],
-		# 合金緊貼礦砂：**兩個都是造價貨幣**，玩家看的是同一個問題（我買得起嗎）。
-		# 它擠掉的是「節點 N　導管 M」——那是開發用的計數，沒有任何決定依賴它，
-		# 而頂欄的寬度是有限的（B1.1）。
-		["合金 %s　▲%.1f/秒" % [UiKit.commas(int(s.alloy)), r["alloy_in"]], Palette.ALLOY_VIOLET],
-		["能量 %.0f/%.0f" % [r["power_supply"], r["power_demand"]], Palette.ENERGY_AMBER],
-		["儲槽 %.0f/%.0f" % [r["silo_charge"], r["silo_capacity"]], Palette.ENERGY_AMBER],
-		# 「能量需求為什麼突然翻倍」這個問題的答案永遠是交戰座數（§7.4 峰值約束）。
-		["交戰 %d 座　擊殺 %d" % [int(r["engaged"]), s.kills], Palette.ENERGY_AMBER],
-		[_phase_text(), Palette.TIDE_MAGENTA if s.phase == "wave" else Palette.TEXT_SECONDARY],
-		["核心 %.0f/%.0f" % [maxf(0.0, s.core_hp()), core_full], core_col],
+		[UiKit.commas(int(s.ore)), "▲%.1f/秒" % r["ore_in"], Palette.ORDER_CYAN],
+		[UiKit.commas(int(s.alloy)), "▲%.1f/秒" % r["alloy_in"], Palette.ALLOY_VIOLET],
+		[
+			"%.0f/%.0f" % [r["power_supply"], r["power_demand"]],
+			"交戰 %d 座" % int(r["engaged"]),
+			Palette.ENERGY_AMBER,
+		],
+		# ★ 擊殺數**不在頂欄**（B2.4.4）：它是計分不是決策輸入——沒有任何一個
+		#   當下的操作取決於它，而頂欄的每一格都要為「我現在該做什麼」服務。
+		#   它在局末結算裡；回收者換到的能量在能量面板有專屬一列。
+		[
+			_phase_parts()[0], _phase_parts()[1],
+			Palette.TIDE_MAGENTA if s.phase == "wave" else Palette.TEXT_SECONDARY,
+		],
+		["%.0f/%.0f" % [maxf(0.0, s.core_hp()), core_full], "", core_col],
 	]
 	for i in texts.size():
-		var l := _top.get_child(i) as Label
-		l.text = String(texts[i][0])
-		l.add_theme_color_override("font_color", texts[i][1])
+		var col: Color = texts[i][2]
+		_top_values[i].text = String(texts[i][0])
+		_top_values[i].add_theme_color_override("font_color", col)
+		_top_notes[i].text = String(texts[i][1])
+		# 註腳走同一個色相但降一階字級：**顏色維持分群，層級交給字級**
+		# （§7.2 B-2：顏色分群是這一批做對的事，要留著）。
+		_top_notes[i].add_theme_color_override("font_color", Palette.alpha(col, 0.7))
 	# ★ 倒數最後 10 秒脈動（`20_ART_DIRECTION.md` §4.3「一定要動」清單，B1.6）。
 	#   **它動的是階段那一格**，不是整條頂欄——脈動要指向「時間快到了」這一件事。
 	#   週期用 `dur.slow`：比環境呼吸急、又不到讓人分心的程度。
-	var phase_label := _top.get_child(5) as Label
+	var phase_label := _top_values[3]
 	var urgent: bool = s.phase == "prep" and s.prep_time() - s.phase_time <= 10.0
 	phase_label.modulate = Color(1, 1, 1, 1)
 	if urgent:
@@ -3564,21 +3713,32 @@ func _refresh_top() -> void:
 
 
 ## 準備期顯示倒數（**計時器就在畫面上**——它是關卡參數不是隱藏係數，§7.7）。
+##
+## ★ 回傳 `[主, 附屬]` 兩段（B2.4.4）：主的是「我還有多少時間／現在第幾波」
+## （`text.lg`），附屬的是波號、快進倍率、殘敵（`text.sm`）。
+## **原本是一整串塞在同一個 22px 的標籤裡**，量到那一格 299px、把整條頂欄
+## 撐出畫面 —— 而它裡面本來就有兩階資訊。
 func _phase_text() -> String:
+	return _phase_parts()[0]
+
+
+func _phase_parts() -> Array:
 	match s.phase:
 		"prep":
 			var left: float = maxf(0.0, s.prep_time() - s.phase_time)
-			var ff := "　▶%d×" % s.speed_mult if s.speed_mult > 1 else ""
+			# ★ 快進倍率**不在這裡**（B2.4.4）：它原本同時出現在頂欄與底欄那顆
+			#   「快進 4×」鈕上，而那顆鈕自己**看不出開沒開**（它不是 toggle）。
+			#   指示搬到按鈕上——因與果放在同一個地方，頂欄也省下一段會變長的字。
 			# 駐足在核心的敵人不會隨波次結束而消失（§3.5）。不講的話，
 			# 玩家會看到核心在準備期掉血卻找不到原因。
 			var left_over := "　殘敵 %d" % s.enemies.size() if not s.enemies.is_empty() else ""
-			return "準備期 %0.1fs　下一波 %d%s%s" % [left, s.wave_index + 1, ff, left_over]
+			return ["準備期 %0.1fs" % left, "下一波 %d%s" % [s.wave_index + 1, left_over]]
 		"wave":
-			return "第 %d 波　敵人 %d" % [s.wave_index, s.enemies.size()]
+			return ["第 %d 波" % s.wave_index, "敵人 %d" % s.enemies.size()]
 		"won":
-			return "通關"
+			return ["通關", ""]
 		_:
-			return "核心已毀"
+			return ["核心已毀", ""]
 
 
 ## 快進只在準備期能按（`10_GDD.md` B5：可跳過等待，戰鬥期不可加速也不可減速）。
@@ -3663,7 +3823,7 @@ func _refresh_over() -> void:
 			col.add_child(UiKit.label(
 				"每日挑戰　%s　%s" % [
 					daily_date, "統一配置" if daily_board == Daily.UNIFORM else "自由配置"
-				], 15, Palette.ORDER_CYAN, false
+				], 13, Palette.ORDER_CYAN, false
 			))
 		for line: Array in [
 			["最高波次　%d 波" % waves, bool(fresh["wave"]), "前次 %d 波" % prev_wave],
@@ -3684,13 +3844,13 @@ func _refresh_over() -> void:
 		)
 		SaveService.save_from(GameState.data)
 		col.add_child(UiKit.label(
-			"★★★".substr(0, stars) + "☆☆☆".substr(0, 3 - stars), 28, Palette.ENERGY_AMBER
+			"★★★".substr(0, stars) + "☆☆☆".substr(0, 3 - stars), 32, Palette.ENERGY_AMBER
 		))
 		for line: String in _star_lines(stars, score):
-			col.add_child(UiKit.label(line, 14, Palette.TEXT_SECONDARY, false))
+			col.add_child(UiKit.label(line, 13, Palette.TEXT_SECONDARY, false))
 		if gain > 0.0:
 			col.add_child(UiKit.label(
-				"關卡獎勵　＋%.0f 研究數據" % gain, 15, Palette.OK_GREEN, false
+				"關卡獎勵　＋%.0f 研究數據" % gain, 13, Palette.OK_GREEN, false
 			))
 	for line: String in [
 		"撐過 %d 波　　＋%.0f 研究數據" % [waves, Score.DATA_PER_WAVE * float(waves)],
@@ -3704,14 +3864,14 @@ func _refresh_over() -> void:
 		"失敗不扣任何東西" if not won else "",
 	]:
 		if line != "":
-			col.add_child(UiKit.label(line, 15, Palette.TEXT_SECONDARY, false))
+			col.add_child(UiKit.label(line, 13, Palette.TEXT_SECONDARY, false))
 	# ★ 死因歸因（B1.7）。M1 的驗收句子是「說得出自己為什麼輸」——
 	#   上面那幾行是**成績**，這一行才是**原因**。放在按鈕正上方：
 	#   玩家的視線在按「立刻重來」之前一定會經過這裡。
 	var why := _diag_line(won)
 	if why != "":
 		var lbl := UiKit.label(
-			why, 14, Palette.WARN_ORANGE if not won else Palette.ORDER_CYAN, false
+			why, 13, Palette.WARN_ORANGE if not won else Palette.ORDER_CYAN, false
 		)
 		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		lbl.custom_minimum_size.x = 400.0
@@ -3798,7 +3958,7 @@ func _open_menu() -> void:
 	center.add_child(box)
 	var col := UiKit.vbox(8)
 	box.add_child(col)
-	col.add_child(UiKit.label("選單", 28, Palette.ORDER_BRIGHT))
+	col.add_child(UiKit.label("選單", 32, Palette.ORDER_BRIGHT))
 	col.add_child(UiKit.label("時間仍在走——這款遊戲不能暫停。", 13, Palette.WARN_ORANGE))
 	_menu_buttons.clear()
 	# 「重來」與「退出」的代價寫在鈕上。**不做二次確認**：R1 說失敗只花時間，
@@ -3860,6 +4020,9 @@ func _restart() -> void:
 	_menu_buttons.clear()
 	_over_panel = null
 	_top = null
+	# 這兩個陣列裝的是已經 `queue_free()` 掉的 Label——不清就會拿到斷裂的參照。
+	_top_values.clear()
+	_top_notes.clear()
 	_hint = null
 	_ff_button = null
 	_summon_button = null

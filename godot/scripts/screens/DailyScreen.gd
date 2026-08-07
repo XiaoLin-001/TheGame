@@ -59,7 +59,7 @@ func _build() -> void:
 	var col := UiKit.vbox(12)
 	center.add_child(col)
 
-	col.add_child(UiKit.label("每日挑戰", 40, Palette.ORDER_BRIGHT))
+	col.add_child(UiKit.label("每日挑戰", 32, Palette.ORDER_BRIGHT))
 	col.add_child(UiKit.label(
 		"%s　　地圖種子 %d" % [date, seed_v], 16, Palette.ORDER_CYAN
 	))
@@ -120,7 +120,7 @@ func _card(
 	col.add_child(UiKit.label(
 		"今日最佳　尚未挑戰" if wave <= 0 else "今日最佳　%d 波　產能 %.1f" % [
 			wave, float(slot.get("output", 0.0))
-		], 15, Palette.TEXT_PRIMARY, false
+		], 16, Palette.TEXT_PRIMARY, false
 	))
 	var btn := Button.new()
 	btn.text = "開始（統一配置）" if uniform else "開始（自由配置）"
@@ -137,11 +137,11 @@ func _history(rows: Array) -> Control:
 	var box := UiKit.panel()
 	var col := UiKit.vbox(4)
 	box.add_child(col)
-	col.add_child(UiKit.label("歷史紀錄", 18, Palette.TEXT_PRIMARY))
+	col.add_child(UiKit.label("歷史紀錄", 16, Palette.TEXT_PRIMARY))
 	if rows.is_empty():
 		# 「尚無紀錄」而不是一張空表或一排 0——0 波看起來像一個很爛的成績，
 		# 而事實是還沒玩過（主選單的無盡那一顆同一條理由）。
-		col.add_child(UiKit.label("尚無紀錄", 14, Palette.TEXT_SECONDARY, false))
+		col.add_child(UiKit.label("尚無紀錄", 13, Palette.TEXT_SECONDARY, false))
 		return box
 	for i in mini(rows.size(), 8):
 		var r: Dictionary = rows[i]
@@ -149,7 +149,7 @@ func _history(rows: Array) -> Control:
 			String(r.get("date", "")),
 			"統一" if String(r.get("board", "")) == Daily.UNIFORM else "自由",
 			int(r.get("wave", 0)), float(r.get("output", 0.0)),
-		], 14, Palette.TEXT_SECONDARY, false))
+		], 13, Palette.TEXT_SECONDARY, false))
 	return box
 
 
