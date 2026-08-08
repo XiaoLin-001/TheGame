@@ -10,6 +10,8 @@ const TechScreen := preload("res://scripts/screens/Tech.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
 const DailyScreen := preload("res://scripts/screens/DailyScreen.gd")
 const RosterScreen := preload("res://scripts/screens/Roster.gd")
+const TycoonScreen := preload("res://scripts/screens/TycoonOrders.gd")
+const TycoonSim := preload("res://scripts/meta/TycoonSim.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 const RosterData := preload("res://data/Roster.gd")
 
@@ -32,6 +34,10 @@ const PANEL_SCREENS := {
 	"endless": BattleScreen,
 	"daily": DailyScreen,
 	"roster": RosterScreen,
+	# ★ `tycoon` 指的是**訂單板**（第一個畫面）。產線編輯不在這張表上——
+	#   它只從訂單板進得去，而那正是「UI 深度兩個畫面」的意思：
+	#   **兩個畫面，一條路**，不是兩個各自可以從主選單直達的分頁。
+	"tycoon": TycoonScreen,
 	"tech": TechScreen,
 	"settings": SettingsScreen,
 }
@@ -96,14 +102,21 @@ func _menu_button(prefix: String) -> Button:
 func _click_selftest() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
-	var count: bool = _menu_buttons.size() == 8
+	var count: bool = _menu_buttons.size() == 9
+	# ★ **每一顆鈕都要整顆在畫面內**（RG-139：按得到不等於看得到）。
+	#   加第九顆的那一批當場溢出 7px——而合成點擊照樣按得到，
+	#   斷言也照樣說「九顆」。只有 exe 截圖看得出來，所以把它變成一條斷言。
+	var on_screen := true
+	for b: Button in _menu_buttons:
+		if b.global_position.y < 0.0 or b.global_position.y + b.size.y > float(size.y):
+			on_screen = false
 
 	await _press(_menu_button("戰役"))
 	var to_campaign: bool = _child_script() == CampaignScreen
 
 	await _escape()
-	# 回到標題＝八顆鈕**重新長出來**（`_build()` 有跑），不是舊的那八顆還在。
-	var back_home: bool = _child_script() == null and _menu_buttons.size() == 8
+	# 回到標題＝九顆鈕**重新長出來**（`_build()` 有跑），不是舊的那九顆還在。
+	var back_home: bool = _child_script() == null and _menu_buttons.size() == 9
 
 	await _press(_menu_button("科技樹"))
 	var to_tech: bool = _child_script() == TechScreen
@@ -115,6 +128,10 @@ func _click_selftest() -> void:
 	await _escape()
 	await _press(_menu_button("名冊"))
 	var to_roster: bool = _child_script() == RosterScreen
+
+	await _escape()
+	await _press(_menu_button("潮汐公司"))
+	var to_tycoon: bool = _child_script() == TycoonScreen
 
 	await _escape()
 	await _press(_menu_button("無盡"))
@@ -130,11 +147,12 @@ func _click_selftest() -> void:
 	var to_endless: bool = seeded != 0 and generated
 
 	var ok: bool = (
-		count and to_campaign and back_home and to_tech and to_daily and to_roster and to_endless
+		count and on_screen and to_campaign and back_home and to_tech and to_daily
+		and to_roster and to_tycoon and to_endless
 	)
-	print("[TL_CLICKTEST/title] buttons=%s campaign=%s esc_home=%s tech=%s daily=%s roster=%s endless=%s(seed=%d gen=%s) → %s" % [
-		count, to_campaign, back_home, to_tech, to_daily, to_roster, to_endless, seeded,
-		generated, "PASS" if ok else "FAIL"
+	print("[TL_CLICKTEST/title] buttons=%s on_screen=%s campaign=%s esc_home=%s tech=%s daily=%s roster=%s tycoon=%s endless=%s(seed=%d gen=%s) → %s" % [
+		count, on_screen, to_campaign, back_home, to_tech, to_daily, to_roster, to_tycoon,
+		to_endless, seeded, generated, "PASS" if ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)
@@ -235,14 +253,19 @@ func _build() -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
 
-	var col := UiKit.vbox(16)
+	# ★ 間隔 16 → 12（B2.5）。加上「潮汐公司」之後是九顆鈕：
+	#   標題 48 ＋ 英文 22 ＋ 間隔物 ＋ 標語 16 ＋ 9×44 ＋ 版本 13 ＋ 8 段間隔
+	#   ＝ **727px > 720**，於是「離開遊戲」被切掉、版本號整行掉出畫面。
+	#   **exe 截圖抓到的**——`TL_CLICKTEST/title` 只數了鈕的數量（RG-139 的同一課：
+	#   按得到不等於看得到），所以現在它也量位置。
+	var col := UiKit.vbox(12)
 	center.add_child(col)
 
 	col.add_child(UiKit.label(GameState.GAME_NAME, 48, Palette.ORDER_BRIGHT))
 	col.add_child(UiKit.label(GameState.GAME_NAME_EN, 22, Palette.ORDER_CYAN))
 
 	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(0, 24)
+	gap.custom_minimum_size = Vector2(0, 16)
 	col.add_child(gap)
 
 	col.add_child(UiKit.label(GameState.TAGLINE, 16, Palette.TEXT_SECONDARY))
@@ -255,6 +278,7 @@ func _build() -> void:
 		["無盡　%s" % _endless_best(), _enter.bind(BattleScreen, _endless)],
 		["每日挑戰", _enter.bind(DailyScreen, _daily)],
 		["名冊　%s" % _roster_progress(), _enter.bind(RosterScreen)],
+		["潮汐公司　%s" % _tycoon_progress(), _enter.bind(TycoonScreen)],
 		["科技樹　%s 研究數據" % UiKit.commas(int(_research_data())), _enter.bind(TechScreen)],
 		["設定", _enter.bind(SettingsScreen)],
 		["測試圖　淺灘", _enter.bind(BattleScreen)],
@@ -306,6 +330,19 @@ func _roster_progress() -> String:
 	var total := RosterData.all().size()
 	var tokens := RosterData.tokens(GameState.data)
 	return "%d／%d 隻%s" % [owned, total, "・聲望券 %d" % tokens if tokens > 0 else ""]
+
+
+## 公司進度。**有東西可收的時候就在主選單上說**（同 `_roster_progress` 的精神：
+## 回來的理由要在按下去之前就成立）——一張做完的訂單躺在產線位上是看不到的。
+func _tycoon_progress() -> String:
+	var s: Dictionary = GameState.data.get("tycoon", {})
+	var ready := 0
+	for o: Variant in s.get("orders", []):
+		if TycoonSim.is_done(o as Dictionary):
+			ready += 1
+	return "廠等 %d%s" % [
+		int(s.get("level", 1)), "・%d 張可收成" % ready if ready > 0 else ""
+	]
 
 
 func _research_data() -> float:

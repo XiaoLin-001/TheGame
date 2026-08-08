@@ -66,6 +66,18 @@ const DEFAULTS := {
 	# （`data/Roster.gd` 的說明）——存進來的每一份平行事實都會漂，而漂掉的那天
 	# 玩家會看到「第 3 關通了但潮鳴還鎖著」，兩邊各自都「對」。
 	"roster": {"recruited": []},
+	# ★ B2.5 落地的鍵。同樣**沒有 bump `SAVE_VERSION`**（加鍵不是結構改動）。
+	#
+	# `orders` 的每一筆是 `{tier, done, line}`，`line` ＝ 第幾格產線位（−1 ＝ 沒上線）。
+	# **「哪一格產線位被佔著」是推導的**（`TycoonSim.order_on_line()`）——存一份
+	# slots 陣列等於讓同一個事實有兩個版本，而收成一張訂單會讓後面每個索引位移。
+	#
+	# `last_seen` ＝ Unix 秒，離線結算的基準（`TycoonSim.settle()`）。
+	# 0 ＝ 從沒開過公司，**不結算**（否則會把 1970 年到現在整段算進去）。
+	"tycoon": {
+		"level": 1, "credits": 0, "components": 0, "tokens": 0,
+		"last_seen": 0, "orders": [],
+	},
 	"settings": {
 		"master": 0.8, "bgm": 0.6, "sfx": 0.8,
 		"reduce_motion": false, "fullscreen": false, "resolution": 0,

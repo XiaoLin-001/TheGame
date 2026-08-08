@@ -87,7 +87,7 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（15 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster）
+# 自動化測試（16 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -119,6 +119,12 @@ TL_SHOT="C:/tmp/daily.png" TL_PANEL=daily <godot> --path godot --rendering-drive
 # ★ 名冊（B2.4）：TL_PANEL=roster。存檔在有鉤子時是零進度 → 只有「錨」是你的，
 # 其餘七張卡是暗的並寫著怎麼拿到。
 TL_SHOT="C:/tmp/roster.png" TL_PANEL=roster <godot> --path godot --rendering-driver opengl3
+
+# ★ 潮汐公司（B2.5）：TL_PANEL=tycoon 是**訂單板**。產線編輯不在 PANEL_SCREENS 上
+# （兩個畫面、一條路），所以拍它要**配 clicktest ＋ TL_LEVEL=2**——自檢跑完之後
+# 再往前一步開產線編輯。零進度的公司是空的，要看的是它忙起來的樣子。
+TL_CLICKTEST=1 TL_SHOT="C:/tmp/ty_orders.png" TL_MUTE=1 TL_PANEL=tycoon <godot> --path godot --rendering-driver opengl3
+TL_CLICKTEST=1 TL_SHOT="C:/tmp/ty_lines.png" TL_MUTE=1 TL_PANEL=tycoon TL_LEVEL=2 <godot> --path godot --rendering-driver opengl3
 # ★ 「有券可招募」那一格**只有互動才到得了**（零進度沒券、抽完就畢業）。
 # 兩個鉤子一起下 → 自檢跑完全部斷言之後把畫面留在那一格再拍。
 TL_CLICKTEST=1 TL_SHOT="C:/tmp/roster_open.png" TL_MUTE=1 TL_PANEL=roster <godot> --path godot --rendering-driver opengl3
@@ -151,6 +157,8 @@ TL_CLICKTEST=1 TL_PANEL=daily TL_MUTE=1 <godot> --path godot --rendering-driver 
 # 名冊（招募鈕真的扣券、連抽三次不重複、畢業後再按也不扣、抽到的進得了建造欄）
 # ★ 存檔在有鉤子時是零進度＝零券，所以自檢自己先把戰役塞成滿星再點——不寫檔。
 TL_CLICKTEST=1 TL_PANEL=roster TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
+# ★ 潮汐公司（B2.5）：一整條循環——接單 → 產線編輯指派 → 回來 → 收成 → 擴廠
+TL_CLICKTEST=1 TL_PANEL=tycoon TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 設定（音量真的接到匯流排、reduce_motion 當場生效、視窗真的變大再變回來）
 TL_CLICKTEST=1 TL_PANEL=settings TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 主選單（六顆鈕、ESC 往返、無盡那一顆真的開出生成圖）
@@ -211,7 +219,7 @@ TheGame/
     ├── scripts/screens/       各畫面
     ├── scripts/render/        Palette / Shapes / Motion（美術 token 實作）
     ├── scripts/ui/            UiKit
-    ├── scripts/meta/          RosterData / TycoonSim（尚未建立；科技樹是 data/Tech.gd）
+    ├── scripts/meta/          TycoonSim（純函式；名冊是 data/Roster.gd、科技樹是 data/Tech.gd）
     ├── data/                  節點、角色、敵人、地圖、戰役、**科技**資料表
     ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless
     └── assets/audio/          bgm/ 3 首、sfx/ 14 支（`assetgen/gen_audio.py` 生成）
