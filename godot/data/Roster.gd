@@ -12,6 +12,7 @@ extends RefCounted
 
 const CampaignData := preload("res://data/Campaign.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
+const Achievements := preload("res://data/Achievements.gd")
 
 ## 招募池（§3.9：6 隻稀有角色；M2 的內容矩陣是 3 隻，§5）。
 ##
@@ -100,6 +101,10 @@ static func graduated(save: Dictionary) -> bool:
 ##   它是**加法**不是替代——`roster_test._free_to_play_can_graduate()` 仍然斷言
 ##   「純戰役滿星就能畢業」，所以 tycoon 只是讓不想再刷星的人多一條路，
 ##   不是把畢業綁到掛機上（憲法 B6：所有東西都能純靠遊玩取得）。
+##
+## ★ **第四條路是成就**（B2.7）：六條成就各附一張券（§7.15）。同樣是加法。
+##   ⚠ 這裡 preload `Achievements` 是**單向的**——那邊刻意不 preload 這一份
+##   （見它開頭的說明），否則兩個檔案互相 preload 就是一個環。
 static func earned(save: Dictionary) -> int:
 	var stars: Dictionary = (save.get("campaign", {}) as Dictionary).get("stars", {})
 	var total := 0
@@ -107,7 +112,10 @@ static func earned(save: Dictionary) -> int:
 		total += int(stars.get(id, 0))
 	var best_wave := int((save.get("endless", {}) as Dictionary).get("best_wave", 0))
 	var from_tycoon := int((save.get("tycoon", {}) as Dictionary).get("tokens", 0))
-	return total / STAR_PER_TOKEN + best_wave / WAVE_PER_TOKEN + from_tycoon
+	return (
+		total / STAR_PER_TOKEN + best_wave / WAVE_PER_TOKEN + from_tycoon
+		+ Achievements.tokens(save)
+	)
 
 
 ## 手上還有幾張券 ＝ 賺到的 − 花掉的。

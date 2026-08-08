@@ -9,6 +9,7 @@ extends Control
 ## 已解鎖的節點**留在畫面上並標成已解鎖**，不隱藏——科技樹同時是路線圖。
 
 const Tech := preload("res://data/Tech.gd")
+const Levels := preload("res://data/Levels.gd")
 
 const CARD := Vector2(300, 116)
 
@@ -19,6 +20,8 @@ var on_exit: Callable = Callable()
 ## 供自檢按的解鎖鈕，與 `Tech.NODES` 同索引。
 var _buttons: Array[Button] = []
 var _data_label: Label = null
+## 供自檢按的等級軸升級鈕，與 `Levels.AXES` 同索引。
+var _level_buttons: Array[Button] = []
 var _scroll: ScrollContainer = null
 
 
@@ -48,6 +51,12 @@ func _click_selftest() -> void:
 	var twelve: bool = _buttons.size() == Tech.count()
 	# 新存檔：研究數據 0 → 每一顆都買不起；第二階還要前置。
 	var all_broke: bool = twelve and _buttons[0].disabled
+	# ★ 等級軸（B2.7）也一樣：零材料 → 兩顆都是關的。
+	#
+	# ⚠ **這一條要在買科技之前量。** 第一版放在後面，量到的是 `disabled=false`
+	#   ——因為買下 `cap1` 當場達成了成就「第一項科技」，15 材料立刻進帳。
+	#   斷言是錯的，程式是對的：那正是「成就沒有領取鈕」該有的樣子。
+	var broke_levels: bool = _level_buttons.size() == 2 and _level_buttons[0].disabled
 
 	var tech: Dictionary = GameState.data["tech"]
 	tech["data"] = 500.0
@@ -57,17 +66,7 @@ func _click_selftest() -> void:
 	# 第二階（cap2）在第一階還沒買之前必須是鎖著的，而且要說出原因。
 	var tier2_locked: bool = _buttons[1].disabled and _buttons[1].text.contains("導管擴容 I")
 
-	var b: Button = _buttons[0]
-	var at := b.global_position + b.size * 0.5
-	for pressed: bool in [true, false]:
-		var ev := InputEventMouseButton.new()
-		ev.button_index = MOUSE_BUTTON_LEFT
-		ev.pressed = pressed
-		ev.position = at
-		ev.global_position = at
-		Input.parse_input_event(ev)
-	for _i in 4:
-		await get_tree().process_frame
+	await _click(_buttons[0])
 	var unlocked: Array = tech["unlocked"]
 	var bought: bool = unlocked.has("cap1")
 	var charged: bool = is_equal_approx(float(tech["data"]), 500.0 - float(Tech.cost("cap1")))
@@ -86,6 +85,19 @@ func _click_selftest() -> void:
 		and last.global_position.y >= 0.0
 	)
 
+	# ★ 等級軸（B2.7）。存檔在有鉤子時是零級零材料 → 兩顆都該是關的；
+	#   塞一筆局末材料進去（**不寫檔**）之後才點得下去。
+	(GameState.data["levels"] as Dictionary)["from_battle"] = 500
+	_build()
+	await get_tree().process_frame
+	var lv_open: bool = not _level_buttons[0].disabled
+	var before := _components()
+	await _click(_level_buttons[0])
+	var lv_up: bool = Levels.level_of(GameState.data, Levels.TOWER) == 1
+	# **餘額是推導的**（`SaveService.components()`），所以「有沒有真的扣款」
+	# 問的是那一支——不是去看某個欄位有沒有被減。
+	var lv_charged: bool = _components() == before - Levels.cost(0)
+
 	# ★ ESC ＝ 返回（B1.4.1）。**不能真的呼叫 `on_exit`**（那會把這個畫面拆掉，
 	#   後面的 print 就落在一個正在被釋放的節點上），所以暫時換成一個只翻旗標的
 	#   Callable：要驗的是「事件到不到得了這支處理器」，不是返回本身。
@@ -94,17 +106,94 @@ func _click_selftest() -> void:
 	var ok: bool = (
 		twelve and all_broke and first_open and tier2_locked
 		and bought and charged and tier2_open and reachable and esc_back
+		and broke_levels and lv_open and lv_up and lv_charged
 	)
-	print("[TL_CLICKTEST/tech] twelve=%s broke=%s first_open=%s tier2_locked=%s bought=%s charged=%s tier2_open=%s last_reachable=%s esc_back=%s → %s" % [
+	print("[TL_CLICKTEST/tech] twelve=%s broke=%s first_open=%s tier2_locked=%s bought=%s charged=%s tier2_open=%s last_reachable=%s esc_back=%s lv_broke=%s lv_open=%s lv_up=%s lv_charged=%s → %s" % [
 		twelve, all_broke, first_open, tier2_locked, bought, charged, tier2_open, reachable,
-		esc_back, "PASS" if ok else "FAIL"
+		esc_back, broke_levels, lv_open, lv_up, lv_charged, "PASS" if ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)
 
 
+## 合成一次真的滑鼠點擊（不是直接 emit `pressed`）——要驗的是事件路由得到。
+func _click(b: Button) -> void:
+	var at := b.global_position + b.size * 0.5
+	for pressed: bool in [true, false]:
+		var ev := InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_LEFT
+		ev.pressed = pressed
+		ev.position = at
+		ev.global_position = at
+		Input.parse_input_event(ev)
+	for _i in 4:
+		await get_tree().process_frame
+
+
 func _data() -> float:
 	return float((GameState.data.get("tech", {}) as Dictionary).get("data", 0))
+
+
+func _components() -> int:
+	return SaveService.components(GameState.data)
+
+
+## ★ 等級軸兩張卡（B2.7、§7.15）。橫向一列放在捲動區**外面**：
+## 它只有兩張、而且是「先看這裡」的東西——藏進 12 張科技卡裡要捲才看得到。
+func _level_row() -> Control:
+	var row := UiKit.hbox(16)
+	_level_buttons.clear()
+	for axis: String in Levels.AXES:
+		row.add_child(_level_card(axis))
+	return row
+
+
+func _level_card(axis: String) -> Control:
+	var lv := Levels.level_of(GameState.data, axis)
+	var box := UiKit.panel()
+	box.custom_minimum_size = Vector2(CARD.x, 0)
+	box.mouse_filter = Control.MOUSE_FILTER_PASS
+	var col := UiKit.vbox(4)
+	box.add_child(col)
+
+	col.add_child(UiKit.label(
+		"%s　%d／%d 級" % [String(Levels.AXIS_NAMES[axis]), lv, Levels.MAX_LEVEL], 17,
+		Palette.ENERGY_AMBER if lv > 0 else Palette.TEXT_PRIMARY, false
+	))
+	# **效果寫成局內看得到的數字**（這個畫面開頭那兩個問題的第二個）。
+	var desc := UiKit.label(
+		"%s　現在 ×%.2f" % [String(Levels.AXIS_DESC[axis]), Levels.mult(lv)],
+		13, Palette.TEXT_SECONDARY, false
+	)
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.custom_minimum_size = Vector2(CARD.x - 24, 0)
+	col.add_child(desc)
+
+	var b := Button.new()
+	match Levels.can_upgrade(GameState.data, axis, _components()):
+		Levels.MAXED:
+			b.text = "已滿級　×%.2f" % Levels.mult(Levels.MAX_LEVEL)
+			b.disabled = true
+		Levels.NO_COMPONENTS:
+			b.text = "%d 材料（還差 %d）" % [
+				Levels.cost(lv), Levels.cost(lv) - _components()
+			]
+			b.disabled = true
+		_:
+			b.text = "升級　%d 材料　→ ×%.2f" % [Levels.cost(lv), Levels.mult(lv + 1)]
+			b.pressed.connect(_level_up.bind(axis))
+	_level_buttons.append(b)
+	col.add_child(UiKit.touchable(b))
+	return box
+
+
+## 升一級。**規則判定回頭問 `SaveService.apply_level_up()`**（同 `_unlock()`）。
+func _level_up(axis: String) -> void:
+	if not SaveService.apply_level_up(GameState.data, axis):
+		return
+	AudioBus.play("ui_unlock")
+	SaveService.save_from(GameState.data)
+	_build()
 
 
 func _unlocked() -> Array:
@@ -128,15 +217,28 @@ func _build() -> void:
 
 	var col := UiKit.vbox(10)
 	margin.add_child(col)
-	col.add_child(UiKit.label("科技樹", 32, Palette.ORDER_BRIGHT, false))
+	# ★ 這個畫面從 B2.7 起裝的是**局外成長的兩軸**（§1 B2）——等級軸沒有自己的
+	#   入口，因為它和科技樹回答的是同一個問題（我的永久強化買到哪裡了）。
+	#   主選單已經九顆鈕塞滿 720px，多一顆的代價是把「離開遊戲」推出畫面。
+	col.add_child(UiKit.label("局外成長", 32, Palette.ORDER_BRIGHT, false))
 	_data_label = UiKit.label(
-		"研究數據 %s" % UiKit.commas(int(_data())), 16, Palette.ENERGY_AMBER, false
+		"研究數據 %s　　升級材料 %s" % [
+			UiKit.commas(int(_data())), UiKit.commas(_components())
+		], 16, Palette.ENERGY_AMBER, false
 	)
 	col.add_child(_data_label)
-	col.add_child(UiKit.label(
-		"研究數據只能靠遊玩取得（戰役每顆星都有），買不到。科技是永久的，下一局起就生效。",
+	# ★ **要換行**：這一段比一張卡寬，不設 autowrap 就會直接切在畫面右緣
+	#   （B2.7 截圖抓到）。`UiKit.label()` 預設不換行，長句一律自己開。
+	var intro := UiKit.label(
+		"兩種貨幣、兩把各自獨立的尺。研究數據只能靠遊玩取得（戰役每顆星都有），"
+		+ "科技全解鎖對戰鬥數值的總增幅上限 +35%；升級材料來自局末波數、潮汐公司"
+		+ "與成就，等級軸的兩軸各自最多 +80%。兩者都是永久的，下一局起就生效。",
 		14, Palette.TEXT_SECONDARY, false
-	))
+	)
+	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	intro.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(intro)
+	col.add_child(_level_row())
 	if on_exit.is_valid():
 		var back := Button.new()
 		back.text = "返回"

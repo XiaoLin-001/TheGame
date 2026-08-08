@@ -307,8 +307,10 @@ func _setup_session() -> void:
 	#   → `unlocked` 為空 → mods 全中性，所以 `TL_*` 的任何一張截圖與任何一支自檢
 	#   都不會因為這台機器上玩家買了什麼科技而改變（RG-61 的同一條紀律）。
 	var tech: Array = (GameState.data.get("tech", {}) as Dictionary).get("unlocked", [])
+	# ★ 局外等級軸（B2.7）。同上：有測試鉤子時是零級，所以截圖與自檢不受影響。
+	var levels: Dictionary = GameState.data.get("levels", {})
 	if not level.is_empty():
-		s.setup(level["map"], level["unlocked"], tech)
+		s.setup(level["map"], level["unlocked"], tech, levels)
 	elif endless_seed != 0:
 		# ★ 建造欄不再是「空陣列＝全部」（B2.4）。無盡與每日自由配置榜給的是
 		#   **這名玩家的名冊**——招募池的三隻是抽到才有的，發給所有人等於沒有名冊。
@@ -323,12 +325,17 @@ func _setup_session() -> void:
 			Daily.UNIFORM_BUILD.duplicate() if daily_board == Daily.UNIFORM
 			else RosterData.buildable(GameState.data)
 		)
-		s.setup(MapGen.generate(endless_seed), build_list, Daily.tech_for(daily_board, tech))
+		# ★ 等級軸在統一配置榜上也要歸零（`Daily.levels_for()`）——它比科技軸
+		#   更該被堵住，因為它是**可以課金加速的那一軸**（憲法 B3）。
+		s.setup(
+			MapGen.generate(endless_seed), build_list, Daily.tech_for(daily_board, tech),
+			Daily.levels_for(daily_board, levels)
+		)
 	elif Hooks.stress:
 		# ★ 壓力情境（B1.7、RG-8）：只為了量渲染。模擬在 `_process` 裡凍結——
 		#   這一份佈局的單 tick 要 30 秒（`perf_test.gd` 的說明），不凍結的話
 		#   量到的會是模擬的耗時，而渲染一幀都畫不完。
-		s.setup(MapsData.stress_map(), [], tech)
+		s.setup(MapsData.stress_map(), [], tech, levels)
 		s.ore = 9999999.0
 		s.alloy = 9999999.0
 		BuildController.apply_ops(s, MapsData.stress_ops())
@@ -336,7 +343,7 @@ func _setup_session() -> void:
 			s.add_enemy(["drifter", "carapace", "ember"][i % 3])
 		s.phase = "wave"
 	else:
-		s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL, [], tech)
+		s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL, [], tech, levels)
 	_reset_view()
 	_audio_reset()
 	# 兩層一起起跑，戰鬥層先靜音（`AudioBus.music()` 的無縫切層前提）。
@@ -3921,6 +3928,19 @@ func _refresh_over() -> void:
 		if gain > 0.0:
 			col.add_child(UiKit.label(
 				"關卡獎勵　＋%.0f 研究數據" % gain, 13, Palette.OK_GREEN, false
+			))
+	# ★ 升級材料（B2.7、§7.15 的第一條路）。**只有戰役與無盡算**——
+	#   測試圖與沙盤沒有進度可寫（星等與研究數據的同一條線）。
+	#   只數波數：加星數加成的話，重刷第 1 關會比打完第 5 關划算。
+	var comps := 0
+	if not level.is_empty() or endless_seed != 0:
+		comps = SaveService.apply_components(GameState.data, waves)
+		if comps > 0:
+			SaveService.save_from(GameState.data)
+			col.add_child(UiKit.label(
+				"升級材料　＋%d（撐過的波數）　現有 %d" % [
+					comps, SaveService.components(GameState.data)
+				], 13, Palette.OK_GREEN, false
 			))
 	for line: String in [
 		"撐過 %d 波　　＋%.0f 研究數據" % [waves, Score.DATA_PER_WAVE * float(waves)],

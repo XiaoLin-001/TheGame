@@ -48,6 +48,15 @@ static func tech_for(board: String, player_tech: Array) -> Array:
 	return [] if board == UNIFORM else player_tech
 
 
+## ★ 這一榜的等級軸（B2.7）。**統一配置榜拿到的是空字典＝零級。**
+##
+## 等級軸是**可以課金加速的那一軸**（§1 B2 ②），所以它比科技軸更該被這張榜堵住：
+## 憲法 B3 說統一配置榜是「對 P2W 的唯一制衡」。上面那段註解說第三個參數是
+## 「所有局外成長的入口」——B2.7 開了第四個參數，這一支就是它的同一道閘。
+static func levels_for(board: String, player_levels: Dictionary) -> Dictionary:
+	return {} if board == UNIFORM else player_levels
+
+
 ## ★ 統一配置榜的固定角色組（§3.10「固定角色組」、§7.11；B2.4 還的債）。
 ##
 ## **一份明列的清單，不是「空陣列＝全部」。** 後者在名冊落地的當下就會出事：

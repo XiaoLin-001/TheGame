@@ -11,7 +11,9 @@ const SettingsScreen := preload("res://scripts/screens/Settings.gd")
 const DailyScreen := preload("res://scripts/screens/DailyScreen.gd")
 const RosterScreen := preload("res://scripts/screens/Roster.gd")
 const TycoonScreen := preload("res://scripts/screens/TycoonOrders.gd")
+const AchievementsScreen := preload("res://scripts/screens/Achievements.gd")
 const TycoonSim := preload("res://scripts/meta/TycoonSim.gd")
+const AchievementsData := preload("res://data/Achievements.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 const RosterData := preload("res://data/Roster.gd")
 
@@ -39,12 +41,15 @@ const PANEL_SCREENS := {
 	#   **兩個畫面，一條路**，不是兩個各自可以從主選單直達的分頁。
 	"tycoon": TycoonScreen,
 	"tech": TechScreen,
+	"achievements": AchievementsScreen,
 	"settings": SettingsScreen,
 }
 
 
 ## 主選單的七顆鈕（自檢要按得到）。
 var _menu_buttons: Array[Button] = []
+## 主選單那一欄本身（自檢要量它每一個子節點的位置，不只是鈕）。
+var _menu_col: VBoxContainer = null
 
 
 func _ready() -> void:
@@ -103,13 +108,21 @@ func _click_selftest() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	var count: bool = _menu_buttons.size() == 9
-	# ★ **每一顆鈕都要整顆在畫面內**（RG-139：按得到不等於看得到）。
-	#   加第九顆的那一批當場溢出 7px——而合成點擊照樣按得到，
-	#   斷言也照樣說「九顆」。只有 exe 截圖看得出來，所以把它變成一條斷言。
+	# ★ **這一欄的每一個子節點都要整個在畫面內**（RG-139：按得到不等於看得到）。
+	#
+	#   B2.5 加這條檢查時只走 `_menu_buttons`，於是 B2.7 多一行字把版本號推出
+	#   畫面時它照樣是綠的——**沒有被列舉的東西不會被守住**。現在問的是容器：
+	#   日後再加任何一行，這條會自己攔下來。
 	var on_screen := true
-	for b: Button in _menu_buttons:
-		if b.global_position.y < 0.0 or b.global_position.y + b.size.y > float(size.y):
+	var clipped := "（無）"
+	for c: Node in _menu_col.get_children():
+		var ctl := c as Control
+		if ctl == null:
+			continue
+		if ctl.global_position.y < 0.0 or ctl.global_position.y + ctl.size.y > float(size.y):
 			on_screen = false
+			if clipped == "（無）":
+				clipped = ctl.name + "@" + str(int(ctl.global_position.y))
 
 	await _press(_menu_button("戰役"))
 	var to_campaign: bool = _child_script() == CampaignScreen
@@ -118,8 +131,12 @@ func _click_selftest() -> void:
 	# 回到標題＝九顆鈕**重新長出來**（`_build()` 有跑），不是舊的那九顆還在。
 	var back_home: bool = _child_script() == null and _menu_buttons.size() == 9
 
-	await _press(_menu_button("科技樹"))
+	await _press(_menu_button("局外成長"))
 	var to_tech: bool = _child_script() == TechScreen
+
+	await _escape()
+	await _press(_menu_button("成就"))
+	var to_ach: bool = _child_script() == AchievementsScreen
 
 	await _escape()
 	await _press(_menu_button("每日挑戰"))
@@ -147,12 +164,12 @@ func _click_selftest() -> void:
 	var to_endless: bool = seeded != 0 and generated
 
 	var ok: bool = (
-		count and on_screen and to_campaign and back_home and to_tech and to_daily
+		count and on_screen and to_campaign and back_home and to_tech and to_ach and to_daily
 		and to_roster and to_tycoon and to_endless
 	)
-	print("[TL_CLICKTEST/title] buttons=%s on_screen=%s campaign=%s esc_home=%s tech=%s daily=%s roster=%s tycoon=%s endless=%s(seed=%d gen=%s) → %s" % [
-		count, on_screen, to_campaign, back_home, to_tech, to_daily, to_roster, to_tycoon,
-		to_endless, seeded, generated, "PASS" if ok else "FAIL"
+	print("[TL_CLICKTEST/title] buttons=%s on_screen=%s(切到 %s) campaign=%s esc_home=%s tech=%s ach=%s daily=%s roster=%s tycoon=%s endless=%s(seed=%d gen=%s) → %s" % [
+		count, on_screen, clipped, to_campaign, back_home, to_tech, to_ach, to_daily, to_roster,
+		to_tycoon, to_endless, seeded, generated, "PASS" if ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)
@@ -253,22 +270,28 @@ func _build() -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
 
-	# ★ 間隔 16 → 12（B2.5）。加上「潮汐公司」之後是九顆鈕：
-	#   標題 48 ＋ 英文 22 ＋ 間隔物 ＋ 標語 16 ＋ 9×44 ＋ 版本 13 ＋ 8 段間隔
-	#   ＝ **727px > 720**，於是「離開遊戲」被切掉、版本號整行掉出畫面。
-	#   **exe 截圖抓到的**——`TL_CLICKTEST/title` 只數了鈕的數量（RG-139 的同一課：
-	#   按得到不等於看得到），所以現在它也量位置。
-	var col := UiKit.vbox(12)
+	# ★ 間隔 16 → 12（B2.5）→ 8（B2.7）。這個版面一直在 720px 的邊緣上：
+	#   九顆鈕實際各 56px（主題的內距），加上標題／英文／標語／版本就是 700 出頭，
+	#   每加一行字都會把版本號推出畫面。B2.7 又踩了一次（截圖抓到），所以這一批
+	#   除了縮間隔，還把「公司等級」併進標語那一行、拿掉純留白的間隔物。
+	#
+	#   ⚠ **斷言從此量的是這一欄的每一個子節點，不只是鈕**——B2.5 加上位置檢查時
+	#   只走 `_menu_buttons`，於是版本號被切掉兩次都沒變紅（RG-139 的第三次）。
+	var col := UiKit.vbox(8)
+	_menu_col = col
 	center.add_child(col)
 
 	col.add_child(UiKit.label(GameState.GAME_NAME, 48, Palette.ORDER_BRIGHT))
 	col.add_child(UiKit.label(GameState.GAME_NAME_EN, 22, Palette.ORDER_CYAN))
 
-	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(0, 16)
-	col.add_child(gap)
-
-	col.add_child(UiKit.label(GameState.TAGLINE, 16, Palette.TEXT_SECONDARY))
+	# ★ 公司等級（B2.7）。**兩層的進度彙總在一個數字上**（§7.15）。
+	#   併在標語**同一行**而不是自己一行：它不是一個入口，是一句「你到哪了」，
+	#   而這個版面沒有一整行的空間可以給它（見上面那段）。
+	col.add_child(UiKit.label(
+		"%s　　公司等級 %d" % [
+			GameState.TAGLINE, AchievementsData.company_level(GameState.data)
+		], 16, Palette.TEXT_SECONDARY
+	))
 
 	# ★ 主選單（B1.4）。**戰役排第一顆**：它是這款遊戲；科技樹與設定是它的周邊，
 	#   測試圖是給我自己用的。順序就是「玩家最可能想按的東西」由上而下。
@@ -279,9 +302,9 @@ func _build() -> void:
 		["每日挑戰", _enter.bind(DailyScreen, _daily)],
 		["名冊　%s" % _roster_progress(), _enter.bind(RosterScreen)],
 		["潮汐公司　%s" % _tycoon_progress(), _enter.bind(TycoonScreen)],
-		["科技樹　%s 研究數據" % UiKit.commas(int(_research_data())), _enter.bind(TechScreen)],
+		["局外成長　%s" % _growth_progress(), _enter.bind(TechScreen)],
+		["成就　%s" % _achievement_progress(), _enter.bind(AchievementsScreen)],
 		["設定", _enter.bind(SettingsScreen)],
-		["測試圖　淺灘", _enter.bind(BattleScreen)],
 		["離開遊戲", _quit],
 	]:
 		var b := Button.new()
@@ -347,6 +370,20 @@ func _tycoon_progress() -> String:
 
 func _research_data() -> float:
 	return float((GameState.data.get("tech", {}) as Dictionary).get("data", 0))
+
+
+## 局外成長的兩種貨幣（B2.7）。同 `_roster_progress()` 的精神：
+## **回來的理由要在按下去之前就成立**——躺著沒花的材料在主選單上是看不到的。
+func _growth_progress() -> String:
+	return "%s 研究數據・%s 材料" % [
+		UiKit.commas(int(_research_data())), UiKit.commas(SaveService.components(GameState.data))
+	]
+
+
+func _achievement_progress() -> String:
+	return "%d／%d" % [
+		AchievementsData.done(GameState.data).size(), AchievementsData.count()
+	]
 
 
 ## 離開。**存一次再走**——設定畫面雖然改一次存一次，但戰役結算那條路徑

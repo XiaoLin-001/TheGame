@@ -13,6 +13,8 @@ const Score := preload("res://scripts/sim/Score.gd")
 const Daily := preload("res://scripts/sim/Daily.gd")
 const Blueprint := preload("res://scripts/sim/Blueprint.gd")
 const Roster := preload("res://data/Roster.gd")
+const Levels := preload("res://data/Levels.gd")
+const Achievements := preload("res://data/Achievements.gd")
 
 ## sv2（B1.4）：`campaign.cleared` 移除，改由 `campaign.stars` 推導。
 const SAVE_VERSION := 2
@@ -78,6 +80,13 @@ const DEFAULTS := {
 		"level": 1, "credits": 0, "components": 0, "tokens": 0,
 		"last_seen": 0, "orders": [],
 	},
+	# ★ B2.7 落地的鍵。同樣**沒有 bump `SAVE_VERSION`**（加鍵不是結構改動）。
+	#
+	# 只有三格，而且**沒有一格是「我還剩多少材料」**：餘額是推導的
+	# （`components()`）。存餘額的話，等級與材料會變成兩個各自可以「對」的事實，
+	# 而漂掉的那天玩家看到的是「我 10 級但材料只花了三級的錢」。
+	# `from_battle` ＝ 局末結算的**累計**（只增），`tower`／`line` 反推花掉多少。
+	"levels": {"tower": 0, "line": 0, "from_battle": 0},
 	"settings": {
 		"master": 0.8, "bgm": 0.6, "sfx": 0.8,
 		"reduce_motion": false, "fullscreen": false, "resolution": 0,
@@ -251,6 +260,64 @@ static func apply_recruit(d: Dictionary, rng: RandomNumberGenerator) -> String:
 	r["recruited"] = list
 	d["roster"] = r
 	return got
+
+
+## ★ 升級材料的餘額（B2.7、`10_GDD.md` §7.15）。**推導，不存。**
+##
+## 三條路各自只增不減（成就是推導的、tycoon 與局末是累計欄位），花掉多少
+## 則由**現在的等級**反推。所以「等級」與「材料」不可能互相矛盾——
+## 這是 sv2 砍掉 `campaign.cleared`、B2.4 不存 `owned`、B2.5 不存產線佔用的同一條。
+##
+## 放在 `SaveService` 而不是 `Levels`：這一支要同時問 `Achievements` 與 `Levels`，
+## 而 `Achievements` 已經 preload 了 `Levels`——寫進 `Levels` 就是一個環。
+static func components(d: Dictionary) -> int:
+	return maxi(0, earned_components(d) - spent_components(d))
+
+
+## 一路上總共賺到多少材料（三條路，§4.1）。
+static func earned_components(d: Dictionary) -> int:
+	var lv: Dictionary = d.get("levels", {})
+	return (
+		int(lv.get("from_battle", 0))
+		+ int((d.get("tycoon", {}) as Dictionary).get("components", 0))
+		+ Achievements.components(d)
+	)
+
+
+## 已經花掉多少 ＝ 兩軸各自從 0 升到現在那一級的價錢總和。
+static func spent_components(d: Dictionary) -> int:
+	var sum := 0
+	for axis: String in Levels.AXES:
+		for i in Levels.level_of(d, axis):
+			sum += Levels.cost(i)
+	return sum
+
+
+## ★ 局末結算的升級材料（§7.15 的第一條路）。**只數波數**。
+##
+## 加星數加成的話，「重刷第 1 關（3 波 3 星）」會比「打完第 5 關（5 波）」划算
+## ——一條讓最短的局付最多錢的曲線是退化的。回傳這一局實得，讓結算面板講得出來。
+static func apply_components(d: Dictionary, waves: int) -> int:
+	var got := maxi(0, waves)
+	if got <= 0:
+		return 0
+	var lv: Dictionary = d.get("levels", {})
+	lv["from_battle"] = int(lv.get("from_battle", 0)) + got
+	d["levels"] = lv
+	return got
+
+
+## ★ 升一級等級軸（§7.15）。回傳成功與否。
+##
+## 規則判定回頭問 `Levels.can_upgrade()`（`Tech._unlock()` 的同一條分工）：
+## 鈕的 `disabled` 是畫面狀態不是規則。**不扣任何欄位**——花費由等級本身反推。
+static func apply_level_up(d: Dictionary, axis: String) -> bool:
+	if Levels.can_upgrade(d, axis, components(d)) != Levels.OK:
+		return false
+	var lv: Dictionary = d.get("levels", {})
+	lv[axis] = Levels.level_of(d, axis) + 1
+	d["levels"] = lv
+	return true
 
 
 ## 遞迴補預設值：defaults 有而 target 沒有的鍵才補；兩邊都是 Dictionary 就往下走。

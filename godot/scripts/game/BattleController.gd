@@ -411,7 +411,9 @@ static func _solve_ore(s: RefCounted, edges: Array, topo: Dictionary = {}) -> Di
 		# 科技「採集精煉」只加採集器（§7.8）。用 `ore_out > 0` 當條件會在日後
 		# 出現第二種產礦節點時靜靜地一起加上去——那不是這個科技買的東西。
 		var out_bonus := float(s.mods["extractor_ore"]) if n["type"] == "extractor" else 0.0
-		var supply := (float(def.get("ore_out", 0.0)) + out_bonus) * TICK
+		# ★ 等級軸的生產乘數（B2.7）。乘在**科技加成之後**：科技是「這座採集器
+		#   每秒多挖 1」，等級是「我的整條生產線都好 8%」——後者該把前者也含進去。
+		var supply := (float(def.get("ore_out", 0.0)) + out_bonus) * float(s.mods["produce_mult"]) * TICK
 		var demand := float(def.get("ore_in", 0.0)) * TICK
 		supply_total += supply
 		demand_total += demand
@@ -448,7 +450,7 @@ static func _solve_alloy(
 		#   因為兩樣都缺就降兩次——那會讓 50% 電 ＋ 50% 礦變成 25% 產出，
 		#   比玩家從畫面上讀到的兩條線任何一條都糟，因果就斷了。
 		var k := minf(float(ore_sat.get(n["id"], 1.0)), float(power_sat.get(n["id"], 1.0)))
-		var supply := float(def.get("alloy_out", 0.0)) * TICK * k
+		var supply := float(def.get("alloy_out", 0.0)) * float(s.mods["produce_mult"]) * TICK * k
 		var demand := float(def.get("alloy_in", 0.0)) * TICK
 		supply_total += supply
 		demand_total += demand
@@ -475,7 +477,8 @@ static func _solve_power(
 		var type := String(n["type"])
 		var def := NodeDefs.of(type)
 		# 發電機的產出 × 它自己的礦砂滿足率（按比例降速，不停機）。
-		var supply := float(def.get("power_out", 0.0)) * TICK * float(sat.get(n["id"], 1.0))
+		var supply := (float(def.get("power_out", 0.0)) * float(s.mods["produce_mult"])
+			* TICK * float(sat.get(n["id"], 1.0)))
 		var demand := float(def.get("power_in", 0.0)) * TICK
 		# ★ 交戰耗能：**射程內有敵人才扣，待機 0**（§7.4）。全案的心臟就在這一行。
 		if engaged.get(int(n["id"]), false):

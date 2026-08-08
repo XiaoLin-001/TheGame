@@ -256,6 +256,16 @@ static func _index_of(s: RefCounted, a: Vector2i, b: Vector2i) -> int:
 	return -1
 
 
+## 整數就寫整數，有小數才寫一位。
+##
+## ★ 等級軸（B2.7）讓這些數字第一次可能不是整數（6 → 7.44）。一律 `%.1f` 的話
+## 沒買等級的玩家會看到「＋6.0 礦砂/秒」——那是為了 8% 的情況去弄髒 92% 的情況；
+## 一律 `%.0f` 則是把 7.44 顯示成 7，那是一個**說謊的數字**，而這一列的全部工作
+## 就是「在花錢之前看得到後果」。
+static func _num(v: float) -> String:
+	return "%.0f" % v if is_equal_approx(v, roundf(v)) else "%.1f" % v
+
+
 ## 放置前的預覽（DoD：`+X/秒` 與總耗能變化）。
 ## 回傳 `{cost, ok, reason, lines: [String]}`——**在花錢之前就看得到後果**。
 static func preview_place(s: RefCounted, type: String, cell: Vector2i) -> Dictionary:
@@ -265,15 +275,18 @@ static func preview_place(s: RefCounted, type: String, cell: Vector2i) -> Dictio
 	var def := NodeDefs.of(type)
 	var lines: Array[String] = [price_text(type)]
 
+	# ★ 等級軸的生產乘數（B2.7）。**提示列上的數字要和局內實際跑的一致**——
+	#   這幾行是「在花錢之前就看得到後果」的全部內容，差 8% 就是差在那裡。
+	var pm := float(s.mods["produce_mult"])
 	if def.has("ore_out"):
 		var bonus := float(s.mods["extractor_ore"]) if type == "extractor" else 0.0
-		lines.append("＋%.0f 礦砂/秒（要接到核心才入帳）" % (float(def["ore_out"]) + bonus))
+		lines.append("＋%s 礦砂/秒（要接到核心才入帳）" % _num((float(def["ore_out"]) + bonus) * pm))
 	if def.has("ore_in"):
 		lines.append("−%.0f 礦砂/秒（燃料）" % float(def["ore_in"]))
 	if def.has("power_out"):
-		lines.append("＋%.0f 能量/秒" % float(def["power_out"]))
+		lines.append("＋%s 能量/秒" % _num(float(def["power_out"]) * pm))
 	if def.has("alloy_out"):
-		lines.append("＋%.0f 合金/秒（要接到核心才入帳）" % float(def["alloy_out"]))
+		lines.append("＋%s 合金/秒（要接到核心才入帳）" % _num(float(def["alloy_out"]) * pm))
 	# 熔爐的 `power_in` 是**待機也吃**的，不是交戰耗能——說法要和塔區分開，
 	# 不然玩家會以為它跟塔一樣沒事不耗電。
 	if def.has("power_in"):
@@ -295,7 +308,7 @@ static func preview_place(s: RefCounted, type: String, cell: Vector2i) -> Dictio
 	# 總供需變化：本作最重要的資訊通道，**在花錢之前**就要看得到（§3.1）。
 	var supply_now := float(s.rates.get("power_supply", 0.0))
 	var demand_now := float(s.rates.get("power_demand", 0.0))
-	var d_supply := float(def.get("power_out", 0.0))
+	var d_supply := float(def.get("power_out", 0.0)) * pm
 	var d_demand := _power_demand_of(type, float(s.mods["cap_bonus"]), float(s.mods["engage_mult"]))
 	if not is_zero_approx(d_supply):
 		lines.append("總能量供給 %.0f → %.0f /秒" % [supply_now, supply_now + d_supply])

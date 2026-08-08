@@ -87,7 +87,7 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（16 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon）
+# 自動化測試（17 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -129,9 +129,14 @@ TL_CLICKTEST=1 TL_SHOT="C:/tmp/ty_lines.png" TL_MUTE=1 TL_PANEL=tycoon TL_LEVEL=
 # 兩個鉤子一起下 → 自檢跑完全部斷言之後把畫面留在那一格再拍。
 TL_CLICKTEST=1 TL_SHOT="C:/tmp/roster_open.png" TL_MUTE=1 TL_PANEL=roster <godot> --path godot --rendering-driver opengl3
 
-# ★ 科技樹（B1.3）：TL_PANEL=tech。存檔在有鉤子時是預設值（研究數據 0），
-# 所以 clicktest 會自己先塞一筆數據進去再點——不寫檔，玩家進度碰不到。
-TL_SHOT="C:/tmp/tech.png" TL_PANEL=tech <godot> --path godot --rendering-driver opengl3
+# ★ 局外成長（B1.3 科技樹 ＋ B2.7 等級軸）：TL_PANEL=tech。存檔在有鉤子時是預設值
+# （研究數據 0、等級軸零級零材料），所以 clicktest 會自己先塞數據與材料再點——
+# 不寫檔，玩家進度碰不到。★ 兩軸的卡片在捲動區**外面**，配 TL_CLICKTEST 才拍得到買過的樣子。
+TL_CLICKTEST=1 TL_SHOT="C:/tmp/growth.png" TL_MUTE=1 TL_PANEL=tech <godot> --path godot --rendering-driver opengl3
+
+# ★ 成就（B2.7）：TL_PANEL=achievements。零進度的清單是**全暗的**（那是誠實的，
+# 但看不出東西），所以配 TL_CLICKTEST——它會塞一顆星進去讓第一條亮起來再拍。
+TL_CLICKTEST=1 TL_SHOT="C:/tmp/ach.png" TL_MUTE=1 TL_PANEL=achievements <godot> --path godot --rendering-driver opengl3
 
 # ★ 無盡（B2.1a）：TL_PANEL=endless 直接進一局程序生成圖。
 # 種子走 Rng.next_seed()，所以**同一個 TL_SEED 開出的永遠是同一張圖**。
@@ -150,8 +155,13 @@ TL_SHOT="C:/tmp/fx.png" TL_PANEL=campaign TL_LEVEL=5 TL_DEMO_TICKS=581 TL_FOCUS=
 TL_CLICKTEST=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 關卡選擇畫面的同一件事（那個畫面的全部價值就是「一顆鈕點得到」）
 TL_CLICKTEST=1 TL_PANEL=campaign TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
-# 科技樹（解鎖鈕點得到、真的扣款、捲到底最後一顆鈕還在畫面內）
+# 局外成長（科技解鎖鈕點得到、真的扣款、捲到底最後一顆鈕還在畫面內；
+# 等級軸零材料時是關的、塞材料後升得了級、餘額真的少一級的價）
+# ⚠ 等級軸「買不起」那一條要在**買科技之前**量——買下第一個科技會當場達成成就
+#   「第一項科技」，15 材料立刻進帳（成就沒有領取鈕）。
 TL_CLICKTEST=1 TL_PANEL=tech TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
+# 成就（20 列全部建得出來、零進度時一條都沒有、達成的當下獎勵就在餘額裡、捲到底看得到最後一列）
+TL_CLICKTEST=1 TL_PANEL=achievements TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 每日挑戰（兩顆鈕點得到、種子是今天那一個、離線註記真的在畫面上）
 TL_CLICKTEST=1 TL_PANEL=daily TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 名冊（招募鈕真的扣券、連抽三次不重複、畢業後再按也不扣、抽到的進得了建造欄）
@@ -161,7 +171,9 @@ TL_CLICKTEST=1 TL_PANEL=roster TL_MUTE=1 <godot> --path godot --rendering-driver
 TL_CLICKTEST=1 TL_PANEL=tycoon TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 設定（音量真的接到匯流排、reduce_motion 當場生效、視窗真的變大再變回來）
 TL_CLICKTEST=1 TL_PANEL=settings TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
-# 主選單（六顆鈕、ESC 往返、無盡那一顆真的開出生成圖）
+# 主選單（九顆鈕、ESC 往返、無盡那一顆真的開出生成圖）
+# ★ on_screen 量的是**那一欄的每一個子節點**，不只是鈕——B2.5 只列舉鈕，
+#   於是 B2.7 多一行字把版本號切出畫面時它照樣是綠的（RG-149）。
 # ★ 斷言看的是**局面裡的地圖帶不帶 endless 旗標**，不是 `endless_seed` 有沒有值
 #   ——後者在畫面已經用錯地圖之後才被設上一樣是 true（B2.1a 的假綠燈）
 TL_CLICKTEST=1 TL_PANEL=title TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
