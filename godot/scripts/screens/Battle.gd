@@ -231,9 +231,6 @@ var _over_panel: Control = null
 var _prio_panel: Control = null
 var _help_panel: Control = null
 var _help_button: Button = null
-## 說明面板是「自動開的」還是玩家自己開的。自動開的那一份在玩家放下第一個
-## 節點時自己收起來——他已經證明會操作了，再擋著就只是擋著。
-var _help_auto: bool = false
 var _energy_panel: Control = null
 var _energy_button: Button = null
 var _energy_rows: Dictionary = {}
@@ -1089,6 +1086,25 @@ func _view_selftest() -> bool:
 		await get_tree().process_frame
 	var hit_ok: bool = s.nodes.size() == before + 1 and not s.node_at(target).is_empty()
 
+	# ★ 滾輪只在地圖框架裡縮放（B2.4.7，使用者實玩回報：「選單滑到最上面，
+	#   繼續滑會導致畫面放大」）。`ScrollContainer` 捲到邊界就不再吃掉滾輪事件。
+	#   **兩條一起驗**：欄外不縮放 ＋ 欄內照樣縮放——只驗前者的話，把整段滾輪
+	#   邏輯刪掉也會全綠。
+	_reset_view()
+	await get_tree().process_frame
+	var z0 := _zoom
+	_wheel(_build_scroll.global_position + Vector2(20.0, 20.0), true)
+	await get_tree().process_frame
+	var wheel_outside_ok: bool = is_equal_approx(_zoom, z0)
+	_wheel(FRAME.get_center(), true)
+	await get_tree().process_frame
+	var wheel_inside_ok: bool = _zoom > z0
+	_reset_view()
+	await get_tree().process_frame
+
+	print("[TL_CLICKTEST/view] 滾輪：欄上不縮放=%s 圖上縮放=%s" % [
+		wheel_outside_ok, wheel_inside_ok,
+	])
 	print("[TL_CLICKTEST/view] fit=%s fills=%s inside=%s bar_clear=%s zoom_in=%s centered=%s anchored=%s pan_clamp=%s reset=%s floor=%s hit_after_zoom=%s　（fit=%.3f，格 %.1f px）" % [
 		at_fit, filled, inside, bar_clear, zoomed_in, centered, anchored, pan_clamped,
 		reset_ok, floor_ok, hit_ok, _fit, Shapes.GRID * _fit
@@ -1106,6 +1122,7 @@ func _view_selftest() -> bool:
 	return (
 		at_fit and filled and inside and bar_clear and zoomed_in and centered and anchored
 		and pan_clamped and reset_ok and floor_ok and hit_ok
+		and wheel_outside_ok and wheel_inside_ok
 	)
 
 
@@ -1174,6 +1191,23 @@ func _press_at(at: Vector2, pressed: bool, button: int = MOUSE_BUTTON_LEFT) -> v
 	Input.parse_input_event(ev)
 
 
+## 合成一次滾輪。**位置是重點**：`ScrollContainer` 捲到邊界之後就不再吃掉
+## 滾輪事件，於是它會落回 `_gui_input` ——而在建造欄上滾滾輪不該縮放地圖。
+func _wheel(at: Vector2, up: bool) -> void:
+	Input.use_accumulated_input = false
+	var mm := InputEventMouseMotion.new()
+	mm.position = at
+	mm.global_position = at
+	Input.parse_input_event(mm)
+	for pressed: bool in [true, false]:
+		var ev := InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_WHEEL_UP if up else MOUSE_BUTTON_WHEEL_DOWN
+		ev.pressed = pressed
+		ev.position = at
+		ev.global_position = at
+		Input.parse_input_event(ev)
+
+
 ## 像素座標版。**加粗要點的是兩個節點「之間」**，那不是任何一格的中心。
 func _click_at(at: Vector2) -> void:
 	Input.use_accumulated_input = false
@@ -1235,9 +1269,6 @@ func _process(delta: float) -> void:
 				BattleController.step(s)
 			_accum -= BattleController.TICK
 			guard += mult
-	if _help_auto and s.nodes.size() > 1:
-		_help_auto = false
-		_help_button.button_pressed = false  # → `toggled` → 面板收起
 	_refresh_top()
 	# 提示列每幀重算：它講的是**當前狀態**下的下一步，而狀態每 tick 都在變。
 	# B0.7 之前它只在滑鼠移動時更新，於是「礦砂開始入帳了」「波次開打了」這類
@@ -1453,11 +1484,18 @@ func _gui_input(event: InputEvent) -> void:
 			_release(mb.position)
 		return
 	# 滾輪縮放是桌面的便利，不是唯一的路：底欄有 ＋／−／全景 三顆鈕（P3）。
-	if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-		_zoom_by(ZOOM_STEP, mb.position)
-		return
-	if mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-		_zoom_by(1.0 / ZOOM_STEP, mb.position)
+	#
+	# ★ **只有游標在地圖框架裡才縮放**（B2.4.7，使用者實玩回報）。
+	#   `ScrollContainer` 只在**捲得動的時候**吃掉滾輪事件；捲到頂還往上滾，
+	#   事件就落回這裡——於是「建造欄滑到最上面再滑一下，地圖就放大了」。
+	#   這條守衛同時擋掉底欄與頂欄上的滾輪，那本來也不該縮放地圖。
+	#   ⚠ 不要改成「捲動容器把事件標記為已處理」——那要它在邊界也吞掉事件，
+	#     而那會讓「滑到底之後想捲外層」這個標準行為壞掉。**限制範圍才是對的層級。**
+	if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		if not FRAME.has_point(mb.position):
+			return
+		_zoom_by(ZOOM_STEP if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / ZOOM_STEP,
+			mb.position)
 		return
 	if mb.button_index != MOUSE_BUTTON_LEFT:
 		return
@@ -3267,11 +3305,12 @@ func _build_help_panel() -> void:
 	#   節點的位置上並把那片點擊整片吞掉，等於教學把遊戲擋住了。RG-39）
 	add_child(box)
 	_help_panel = box
-	# 空地圖＝這局還沒開始，正是需要它的時刻。TL_NAKED 下不開（它整片都是文字）。
-	var fresh: bool = s.nodes.size() <= 1 and not Hooks.naked
-	box.visible = fresh
-	_help_auto = fresh
-	_help_button.set_pressed_no_signal(fresh)
+	# ★ **預設不開**（B2.4.7，使用者指定）。原本空地圖時自動彈出，理由是
+	#   「這局還沒開始，正是需要它的時刻」——但它整片是文字，蓋在地圖上，
+	#   而每一局開頭都會再來一次。提示列（`_hint`）本來就在講下一步，
+	#   說明鈕也一直在底欄。**要看的人按得到，不要看的人不必關掉它。**
+	box.visible = false
+	_help_button.set_pressed_no_signal(false)
 
 
 func _on_toggle_help(open: bool) -> void:
