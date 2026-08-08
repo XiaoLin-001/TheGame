@@ -2442,7 +2442,16 @@ func _draw_nodes() -> void:
 				# 四隻塔各給一個一眼可辨的幾何體（`20_ART_DIRECTION.md` §1.6）。
 				# 全部嚴格對齊格中心——與敵潮的不規則凸包形成對比，那個對比就是主題。
 			"anchor":
-				draw_rect(Rect2(p - Vector2(8, 8), Vector2(16, 16)), Palette.ORDER_CYAN)
+				# ★ **上寬下窄的梯形＝打進地裡的樁**（B2.4.8，遊玩測試 P3-1）。
+				#   舊版是 16px 的青色實心方，而發電機是 22px 的琥珀實心方——
+				#   **同一個形狀，只差 6px 與顏色**，違反 §1.6「不靠顏色分辨」。
+				#   而這兩個分屬生產側與防線側，正是「這 40 礦砂餵產線還是餵防線」
+				#   那個核心決定的兩端，也是最不該混淆的一對。
+				#   改錨不改發電機：琥珀實心方和「能量」的關係更強，波及也更大。
+				draw_colored_polygon(PackedVector2Array([
+					p + Vector2(-11, -9), p + Vector2(11, -9),
+					p + Vector2(6, 10), p + Vector2(-6, 10),
+				]), Palette.ORDER_CYAN)
 			"prism":
 				# 三角形＝稜鏡。合金銀把「它是最貴的那一座」講出來。
 				draw_colored_polygon(PackedVector2Array([
@@ -2456,10 +2465,16 @@ func _draw_nodes() -> void:
 				draw_rect(Rect2(p - Vector2(10, 10), Vector2(20, 20)), Palette.ORDER_CYAN, false, 2.0)
 				draw_circle(p, 6.0, Palette.ORDER_BRIGHT)
 			"breaker":
-				# 合金銀＝要合金才蓋得起（與稜鏡同一族），但形狀是**厚實方塊 ＋
-				# 外框**：稜鏡是三角、碎浪是方——不靠顏色分辨（§1.6）。
-				draw_rect(Rect2(p - Vector2(9, 9), Vector2(18, 18)), Palette.ALLOY_STEEL)
-				draw_rect(Rect2(p - Vector2(13, 13), Vector2(26, 26)), Palette.ALLOY_STEEL, false, 1.5)
+				# ★ **四角爆散星＝濺射**（B2.4.8，遊玩測試 P3-2）。舊版是「實心方
+				#   ＋外框」，和回收者的「空心方＋內圓」在 fit 倍率下都讀成
+				#   「方框裡包了東西」，內部差異要盯著看。
+				#   換成向外炸開的形狀之後，它同時**把自己的機制講出來**——
+				#   碎浪是全遊戲唯一一隻範圍傷害的塔（§1.6：形狀要說得出角色是什麼）。
+				var burst := PackedVector2Array()
+				for k in 8:
+					var rad: float = 13.0 if k % 2 == 0 else 5.0
+					burst.append(p + Vector2(rad, 0).rotated(TAU * float(k) / 8.0))
+				draw_colored_polygon(burst, Palette.ALLOY_STEEL)
 				# ── 招募專屬的三隻（B2.4.6）───────────────────────────────
 				# 形狀規則同上：**不靠顏色分辨**（§1.6）。方（錨／碎浪）、圓（採集器
 				# ／潮鳴）、三角（稜鏡）、菱（中繼）、六邊（熔爐）都已經被佔走了，
@@ -2505,12 +2520,25 @@ func _draw_engaged(n: Dictionary, p: Vector2) -> void:
 ## ★ 節點三態徽章（`10_GDD.md` §3.1）。**`正常` 不畫任何東西**——徽章是例外
 ## 標記，一屏 14 個節點全掛上「我很好」等於把要找的那兩個埋進雜訊裡。
 ## 靠**形狀**分辨而不只是顏色：倒三角＝空的（缺料）、正三角＝滿的（滿溢）。
+##
+## ★ **缺料再分兩種**（B2.4.8，遊玩測試 P2-1）：倒三角＝缺礦砂、閃電＝缺電。
+##   舊版兩種共用一個橙色倒三角，於是這個「地圖上唯一指出瓶頸的元素」
+##   說得出誰在餓、說不出餓的是什麼——而那正是全案核心命題的那一刀。
+##   形狀與顏色**同時**不同（§1.6 說換顏色不夠、要換形狀，這裡兩個都換）：
+##   閃電走 `energy.amber`，因為 §1.1 配色紀律 2 說琥珀專屬於能量——
+##   這一次那條紀律是在幫忙，不是在擋路。
 func _draw_badge(n: Dictionary, p: Vector2) -> void:
 	match int((s.rates["node_state"] as Dictionary).get(int(n["id"]), SessionState.NORMAL)):
 		SessionState.STARVED:
 			draw_colored_polygon(PackedVector2Array([
 				p + Vector2(-7, -25), p + Vector2(7, -25), p + Vector2(0, -16)
 			]), Palette.WARN_ORANGE)
+		SessionState.STARVED_POWER:
+			# 五點折線的閃電。**不用描邊**：14px 高的東西加外框只會糊掉。
+			draw_colored_polygon(PackedVector2Array([
+				p + Vector2(2, -27), p + Vector2(-6, -19), p + Vector2(-1, -19),
+				p + Vector2(-3, -13), p + Vector2(6, -22), p + Vector2(1, -22),
+			]), Palette.ENERGY_AMBER)
 		SessionState.OVERFLOW:
 			draw_colored_polygon(PackedVector2Array([
 				p + Vector2(0, -25), p + Vector2(7, -16), p + Vector2(-7, -16)
@@ -3402,7 +3430,10 @@ func _refresh_energy() -> void:
 	var short_list: Array[String] = []
 	var states: Dictionary = r["node_state"]
 	for n: Dictionary in s.nodes:
-		if int(states.get(int(n["id"]), 0)) != SessionState.STARVED:
+		# ★ `is_starved()` 而不是 `== STARVED`（B2.4.8）：缺料分成礦／電兩態之後，
+		#   寫死等號的地方會安靜地漏掉一半的節點——而「安靜地漏掉」正是這一整批
+		#   在修的東西。
+		if not SessionState.is_starved(int(states.get(int(n["id"]), 0))):
 			continue
 		short_list.append("%s%s %.0f%%" % [
 			NodeDefs.label(String(n["type"])), n["cell"],

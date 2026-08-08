@@ -678,7 +678,12 @@ static func _node_states(
 			def.has("ore_out") or def.has("power_out") or def.has("alloy_out")
 		)
 		if declares_demand and float(sat.get(nid, 1.0)) < STARVED_BELOW:
-			out[nid] = SessionState.STARVED
+			# ★ **餓的是哪一種**（B2.4.8，遊玩測試 P2-1）。`sat` 是兩者取小
+			#   （見上），所以「誰比較低」就是答案。相等時算缺電——峰值電力是
+			#   本作的核心約束，而且兩邊都缺時先補電比較有機會一次解決。
+			var ore_s := float((ore_res["satisfaction"] as Dictionary).get(nid, 1.0))
+			var pow_s := float((power_res["satisfaction"] as Dictionary).get(nid, 1.0))
+			out[nid] = SessionState.STARVED if ore_s < pow_s else SessionState.STARVED_POWER
 		elif produces and maxf(float(alloy_stuck.get(nid, 0.0)), maxf(
 			float(ore_stuck.get(nid, 0.0)), float(power_stuck.get(nid, 0.0))
 		)) > OVERFLOW_ABOVE:

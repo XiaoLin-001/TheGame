@@ -113,7 +113,21 @@ var rates: Dictionary = {
 }
 
 ## 節點三態（`10_GDD.md` §3.1）。`NORMAL` 不畫任何東西——徽章是例外標記。
-enum { NORMAL, STARVED, OVERFLOW }
+##
+## ★ `STARVED_POWER` 是 B2.4.8 從 `STARVED` 分出來的（遊玩測試 P2-1）。
+##   舊版一律掛同一個徽章，於是地圖上唯一指出瓶頸的元素**說得出「誰在挨餓」，
+##   說不出「餓的是礦砂還是電」**——而全案的核心命題就是峰值電力（§3.1），
+##   「我現在缺的是電還是礦」是玩家每分鐘都要答的問題。
+##
+##   **新值接在最後**，既有的 `NORMAL/STARVED/OVERFLOW` 數值不動；
+##   凡是問「有沒有在挨餓」的地方一律用 `is_starved()`，不要自己寫 `== STARVED`
+##   ——那種寫法在新增第四態的當下就會安靜地漏掉一半的節點。
+enum { NORMAL, STARVED, OVERFLOW, STARVED_POWER }
+
+
+## 這個狀態算不算「在挨餓」（兩種缺料都算）。
+static func is_starved(state: int) -> bool:
+	return state == STARVED or state == STARVED_POWER
 
 var _next_id: int = 1
 

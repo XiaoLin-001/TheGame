@@ -146,9 +146,13 @@ func _three_resource_networks(t: T) -> void:
 		BattleController.step(dark)
 	t.ok(before > 1.9, "前置：斷線前合金確實在流")
 	t.near(float(dark.rates["alloy_in"]), 0.0, "★ 沒電 → 合金產出歸零（取兩個滿足率的較低者）")
+	# ★ B2.4.8：缺料分成兩態。斷電的熔爐掛的是**缺電**那一個（琥珀閃電），
+	#   不是缺礦那一個（橙色倒三角）。這條與 `hud_test` 的「發電機沒礦砂 →
+	#   `STARVED`」互為對照——**兩條合起來才證明得了那個分岔真的在分**，
+	#   單獨一條可以靠「永遠回傳同一個值」矇混過去。
 	t.eq(
-		_state(dark, Vector2i(2, 6)), SessionState.STARVED,
-		"★ 斷電的熔爐掛「缺料」——它宣告過需求，這是玩家該去看的那一格"
+		_state(dark, Vector2i(2, 6)), SessionState.STARVED_POWER,
+		"★ 斷電的熔爐掛「缺電」——地圖上要說得出餓的是電還是礦（遊玩測試 P2-1）"
 	)
 
 	# ④ 產得出來但送不掉 → `滿溢`，而且帳上一毛都不會多。

@@ -163,9 +163,17 @@ func _node_states(t: T) -> void:
 	var hungry := _session()
 	BuildController.place(hungry, "generator", Vector2i(16, 11))
 	BattleController.step(hungry)
+	# ★ B2.4.8：缺**礦砂**掛橙色倒三角。對照組在 `flow_test`（斷電的熔爐 →
+	#   `STARVED_POWER`，琥珀閃電）。兩條合起來才證明得了分岔真的在分。
 	t.eq(
 		_state(hungry, Vector2i(16, 11)), SessionState.STARVED,
-		"★ 缺料：發電機要 4 礦砂/秒而沒人給它"
+		"★ 缺礦砂：發電機要 4 礦砂/秒而沒人給它（遊玩測試 P2-1 的另一半）"
+	)
+	t.ok(
+		SessionState.is_starved(SessionState.STARVED)
+		and SessionState.is_starved(SessionState.STARVED_POWER)
+		and not SessionState.is_starved(SessionState.OVERFLOW),
+		"★ `is_starved()` 兩種缺料都算、滿溢不算——凡是問「有沒有在餓」的地方都走它"
 	)
 
 
