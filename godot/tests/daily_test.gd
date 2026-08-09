@@ -6,6 +6,7 @@ extends SceneTree
 ##
 ## 跑法：<godot> --headless --path godot --script res://tests/daily_test.gd
 
+const Loadout := preload("res://scripts/sim/Loadout.gd")
 const T := preload("res://tests/_assert.gd")
 const Daily := preload("res://scripts/sim/Daily.gd")
 const MapGen := preload("res://scripts/sim/MapGen.gd")
@@ -62,13 +63,15 @@ func _saves() -> Array[Dictionary]:
 	maxed["tech"] = {"unlocked": all, "data": 9999.0}
 	maxed["campaign"] = {"stars": {"shoal": 3}}
 	maxed["endless"] = {"best_wave": 99, "best_output": 12.0}
+	# ★ 等級軸也要在這份「天差地遠」的存檔裡（B2.7.1）——不放的話，
+	#   下面那條 `state_hash()` 斷言只驗得到科技軸，而等級軸才是**可以課金的那一軸**。
+	maxed["levels"] = {"tower": 10, "line": 10, "from_battle": 9999}
 	return [fresh, half, maxed] as Array[Dictionary]
 
 
 func _session(board: String, save: Dictionary, sd: int) -> RefCounted:
 	var s: RefCounted = SessionState.new()
-	var tech: Array = (save.get("tech", {}) as Dictionary).get("unlocked", [])
-	s.setup(MapGen.generate(sd), [], Daily.tech_for(board, tech))
+	s.setup(MapGen.generate(sd), [], Daily.meta_for(board, Loadout.of(save)))
 	return s
 
 

@@ -226,7 +226,8 @@ TheGame/
 ├── tools/godot/               （gitignore）Godot console exe
 └── godot/
     ├── scripts/core/          GameState / SaveService / Hooks / AudioBus / Rng
-    ├── scripts/sim/     ★     FlowNetwork / Combat / WaveGen / MapGen / Score（純函式、零 RNG）
+    ├── scripts/sim/     ★     FlowNetwork / Combat / WaveGen / MapGen / Score / Daily /
+    │                          Loadout（局外成長進局的唯一入口）——純函式、零 RNG
     ├── scripts/game/          BattleController / BuildController / SessionState
     ├── scripts/screens/       各畫面
     ├── scripts/render/        Palette / Shapes / Motion（美術 token 實作）

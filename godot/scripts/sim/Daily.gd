@@ -10,6 +10,8 @@ extends RefCounted
 ## 地圖、波次、模擬、計分全部沿用 §7.10 那一套，一行都不改。
 ## 兩榜的差異**只在 `SessionState` 的初始化參數**（§3.10 明文：不得為此拆成兩套邏輯）。
 
+const Loadout := preload("res://scripts/sim/Loadout.gd")
+
 ## 兩張榜的鍵。字串而不是 enum：它要進存檔，而存檔裡的數字之後沒有人看得懂。
 const UNIFORM := "uniform"
 const FREE := "free"
@@ -38,23 +40,20 @@ static func date_key(y: int, m: int, d: int) -> String:
 	return "%04d-%02d-%02d" % [y, m, d]
 
 
-## 這一榜的起始科技。
+## ★★ 這一榜帶得進去的局外成長。**統一配置榜拿到的是 `Loadout.NEUTRAL`。**
 ##
-## ★ **統一配置榜拿到的是空陣列＝完全沒有科技**（憲法 B3）。這是「與玩家的
-##   任何進度與課金完全無關」在程式碼裡唯一的落點——`SessionState.setup()`
-##   的第三個參數是這一局所有局外成長的入口，堵住它就堵住全部。
-##   `daily_test` 拿三份進度／課金天差地遠的存檔開局，斷言 `state_hash()` 相同。
-static func tech_for(board: String, player_tech: Array) -> Array:
-	return [] if board == UNIFORM else player_tech
-
-
-## ★ 這一榜的等級軸（B2.7）。**統一配置榜拿到的是空字典＝零級。**
+## 這是「與玩家的任何進度與課金完全無關」（憲法 B3）在程式碼裡**唯一的落點**：
+## `SessionState.setup()` 的 `meta` 是這一局所有局外成長的入口，堵住它就堵住全部。
 ##
-## 等級軸是**可以課金加速的那一軸**（§1 B2 ②），所以它比科技軸更該被這張榜堵住：
-## 憲法 B3 說統一配置榜是「對 P2W 的唯一制衡」。上面那段註解說第三個參數是
-## 「所有局外成長的入口」——B2.7 開了第四個參數，這一支就是它的同一道閘。
-static func levels_for(board: String, player_levels: Dictionary) -> Dictionary:
-	return {} if board == UNIFORM else player_levels
+## ★ B2.7.1 之前這裡是一軸一支（`tech_for`／`levels_for`，B2.6 還要再加一支）。
+##   **一軸一道閘等於靠列舉守住憲法**，而漏掉一道不會有任何東西報錯——
+##   一條可以課金加速的軸就這樣洩進「對 P2W 的唯一制衡」那張榜。
+##   現在是一道：新增一軸只要進 `Loadout.KEYS`，這裡不必動，而
+##   `daily_test._uniform_gate_covers_every_axis()` 會列舉那些鍵逐一斷言。
+##
+## `daily_test` 另外拿三份進度／課金天差地遠的存檔開局，斷言 `state_hash()` 相同。
+static func meta_for(board: String, player_meta: Dictionary) -> Dictionary:
+	return Loadout.NEUTRAL.duplicate() if board == UNIFORM else player_meta
 
 
 ## ★ 統一配置榜的固定角色組（§3.10「固定角色組」、§7.11；B2.4 還的債）。

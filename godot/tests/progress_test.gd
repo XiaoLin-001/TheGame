@@ -18,6 +18,7 @@ const Achievements := preload("res://data/Achievements.gd")
 const Tech := preload("res://data/Tech.gd")
 const Roster := preload("res://data/Roster.gd")
 const Daily := preload("res://scripts/sim/Daily.gd")
+const Loadout := preload("res://scripts/sim/Loadout.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
@@ -104,7 +105,7 @@ func _axis_actually_moves_the_sim(t: T) -> void:
 ## 跑 300 tick，回傳毛能量供給與淨送達量。
 func _run(map_def: Dictionary, ops: Array, levels: Dictionary) -> Dictionary:
 	var s := SessionState.new()
-	s.setup(map_def, [], [], levels)
+	s.setup(map_def, [], {"levels": levels})
 	s.ore = 99999.0
 	s.alloy = 99999.0
 	BuildController.apply_ops(s, ops)
@@ -281,18 +282,37 @@ func _free_to_play_can_max_levels(t: T) -> void:
 ## 憲法 B3：統一配置榜「與玩家的任何進度與課金完全無關」。等級軸是**可以課金
 ## 加速的那一軸**，所以它比科技軸更該被這道閘堵住。
 func _uniform_board_ignores_levels(t: T) -> void:
-	var maxed := {"tower": Levels.MAX_LEVEL, "line": Levels.MAX_LEVEL}
-	t.eq(Daily.levels_for(Daily.UNIFORM, maxed), {}, "★ 統一配置榜的等級軸是空的")
-	t.eq(Daily.levels_for(Daily.FREE, maxed), maxed, "自由配置榜吃玩家自己的等級軸")
+	var rich := _fresh()
+	var all_tech: Array = []
+	for n: Dictionary in Tech.NODES:
+		all_tech.append(n["id"])
+	(rich["tech"] as Dictionary)["unlocked"] = all_tech
+	rich["levels"] = {"tower": Levels.MAX_LEVEL, "line": Levels.MAX_LEVEL, "from_battle": 9999}
+	var mine := Loadout.of(rich)
+
+	# ★★ **逐鍵列舉**，不是釘住那兩軸（B2.7.1）。
+	#
+	# B2.6 加難度層、M4 加任何一根付費軸時，只要它進了 `Loadout.KEYS`，
+	# 這一條就自動涵蓋它。一軸一條手寫斷言等於靠「記得寫」守住憲法。
+	var gated := Daily.meta_for(Daily.UNIFORM, mine)
+	t.ok(Loadout.is_neutral(gated), "★★ 統一配置榜：loadout 的每一個軸都是中性的（憲法 B3）")
+	for key: String in Loadout.KEYS:
+		var v: Variant = gated.get(key, null)
+		t.ok(v == null or (v is Array and (v as Array).is_empty())
+			or (v is Dictionary and (v as Dictionary).is_empty()),
+			"★ 統一配置榜上「%s」被歸零" % key)
+	t.eq(Daily.meta_for(Daily.FREE, mine), mine, "自由配置榜吃玩家自己的全部成長")
+
+	# 反向對照：那份 loadout 本來真的不中性（不然上面兩條是空跑的）。
+	t.ok(not Loadout.is_neutral(mine), "★ 反向對照：玩家那份 loadout 確實不中性")
 
 	# 端到端：兩份天差地遠的存檔在統一榜上開局，`mods` 必須一模一樣。
 	var a := SessionState.new()
 	var b := SessionState.new()
-	a.setup(MapsData.SANDBOX, [], Daily.tech_for(Daily.UNIFORM, ["cal1", "cal2"]),
-		Daily.levels_for(Daily.UNIFORM, maxed))
-	b.setup(MapsData.SANDBOX, [], Daily.tech_for(Daily.UNIFORM, []),
-		Daily.levels_for(Daily.UNIFORM, {}))
+	a.setup(MapsData.SANDBOX, [], Daily.meta_for(Daily.UNIFORM, mine))
+	b.setup(MapsData.SANDBOX, [], Daily.meta_for(Daily.UNIFORM, Loadout.of(_fresh())))
 	t.eq(a.mods, b.mods, "★ 統一配置榜上，滿級滿科技與零進度拿到同一組 mods")
+	t.eq(a.mods, Levels.apply(Tech.mods([]), {}), "★ 而那一組就是中性值")
 
 
 # ── 公司等級 ─────────────────────────────────────────────────────────

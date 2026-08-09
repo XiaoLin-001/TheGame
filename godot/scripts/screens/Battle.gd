@@ -5,6 +5,7 @@ extends Control
 ## 真正的 HUD（三態徽章、能量列脈動、提前召喚、局末結算）是 B0.6；
 ## 敵人與波次是 B0.4。**這一批要證明的是：線會亮、線會滿載、加粗會變粗。**
 
+const Loadout := preload("res://scripts/sim/Loadout.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
@@ -306,11 +307,9 @@ func _setup_session() -> void:
 	# ★ 局外科技（B1.3）。有測試鉤子時 `SaveService.persist=false` → 存檔是預設值
 	#   → `unlocked` 為空 → mods 全中性，所以 `TL_*` 的任何一張截圖與任何一支自檢
 	#   都不會因為這台機器上玩家買了什麼科技而改變（RG-61 的同一條紀律）。
-	var tech: Array = (GameState.data.get("tech", {}) as Dictionary).get("unlocked", [])
-	# ★ 局外等級軸（B2.7）。同上：有測試鉤子時是零級，所以截圖與自檢不受影響。
-	var levels: Dictionary = GameState.data.get("levels", {})
+	var meta := Loadout.of(GameState.data)
 	if not level.is_empty():
-		s.setup(level["map"], level["unlocked"], tech, levels)
+		s.setup(level["map"], level["unlocked"], meta)
 	elif endless_seed != 0:
 		# ★ 建造欄不再是「空陣列＝全部」（B2.4）。無盡與每日自由配置榜給的是
 		#   **這名玩家的名冊**——招募池的三隻是抽到才有的，發給所有人等於沒有名冊。
@@ -325,17 +324,14 @@ func _setup_session() -> void:
 			Daily.UNIFORM_BUILD.duplicate() if daily_board == Daily.UNIFORM
 			else RosterData.buildable(GameState.data)
 		)
-		# ★ 等級軸在統一配置榜上也要歸零（`Daily.levels_for()`）——它比科技軸
-		#   更該被堵住，因為它是**可以課金加速的那一軸**（憲法 B3）。
-		s.setup(
-			MapGen.generate(endless_seed), build_list, Daily.tech_for(daily_board, tech),
-			Daily.levels_for(daily_board, levels)
-		)
+		# ★ 統一配置榜的**全部**局外成長由 `Daily.meta_for()` 一次歸零（憲法 B3）。
+		#   一軸一道閘等於靠列舉守住憲法（`sim/Loadout.gd` 開頭）。
+		s.setup(MapGen.generate(endless_seed), build_list, Daily.meta_for(daily_board, meta))
 	elif Hooks.stress:
 		# ★ 壓力情境（B1.7、RG-8）：只為了量渲染。模擬在 `_process` 裡凍結——
 		#   這一份佈局的單 tick 要 30 秒（`perf_test.gd` 的說明），不凍結的話
 		#   量到的會是模擬的耗時，而渲染一幀都畫不完。
-		s.setup(MapsData.stress_map(), [], tech, levels)
+		s.setup(MapsData.stress_map(), [], meta)
 		s.ore = 9999999.0
 		s.alloy = 9999999.0
 		BuildController.apply_ops(s, MapsData.stress_ops())
@@ -343,7 +339,7 @@ func _setup_session() -> void:
 			s.add_enemy(["drifter", "carapace", "ember"][i % 3])
 		s.phase = "wave"
 	else:
-		s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL, [], tech, levels)
+		s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL, [], meta)
 	_reset_view()
 	_audio_reset()
 	# 兩層一起起跑，戰鬥層先靜音（`AudioBus.music()` 的無縫切層前提）。

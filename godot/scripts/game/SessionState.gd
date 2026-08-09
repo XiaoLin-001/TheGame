@@ -14,6 +14,7 @@ const NodeDefs := preload("res://data/NodeDefs.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const Tech := preload("res://data/Tech.gd")
 const Levels := preload("res://data/Levels.gd")
+const Loadout := preload("res://scripts/sim/Loadout.gd")
 
 ## 地圖原始資料與它的集合形式（查詢用，每局只轉一次）。
 var map: Dictionary = {}
@@ -135,18 +136,20 @@ var _next_id: int = 1
 
 ## `unlocked` ＝ 這一關可蓋的節點類型（`10_GDD.md` §7.9）。
 ## **空陣列＝不限制**——測試圖「淺灘」與沙盤「靜水」走的是這條。
-## ★ `levels` ＝ 存檔的 `levels` 那一格（B2.7 的等級軸）。**預設空字典＝零級**，
-## 所以既有的呼叫端（測試圖、沙盤、全部測試）一個字都不必改，而且拿到的是 ×1.0。
+## ★ `meta` ＝ 這一局帶進去的**全部局外成長**（`sim/Loadout.gd`）。
 ##
-## 傳的是那一格而不是整份存檔：第三、第四個參數合起來是**這一局所有局外成長的
-## 唯一入口**（`sim/Daily.gd` 的說明），遞整份存檔進來等於在旁邊開一扇沒人看的門。
-func setup(
-	map_def: Dictionary, unlocked: Array = [], tech: Array = [], levels: Dictionary = {}
-) -> void:
+## B2.7.1 之前這裡是「一軸一個位置參數」（`tech`、`levels`、然後是 B2.6 的難度層…）。
+## 換成一個字典不只是為了少幾個參數：**憲法 B3 那道閘（統一配置榜與玩家的任何
+## 進度與課金完全無關）從此是一道，不是一軸一道**——而一軸一道就是靠列舉守住的，
+## 漏掉一道不會有任何東西報錯（`sim/Loadout.gd` 開頭的說明）。
+##
+## 傳的是 loadout 而不是整份存檔：遞整份存檔進來等於給模擬層一條讀任何進度的路。
+## **預設空字典＝什麼成長都沒有**，所以只傳一兩個參數的呼叫端拿到的是中性值。
+func setup(map_def: Dictionary, unlocked: Array = [], meta: Dictionary = {}) -> void:
 	map = map_def
 	sets = Maps.to_sets(map_def)
 	sets["unlocked"] = unlocked
-	mods = Levels.apply(Tech.mods(tech), levels)
+	mods = Levels.apply(Tech.mods(Loadout.tech_of(meta)), Loadout.levels_of(meta))
 	path = Maps.path_of(map_def)
 	ore = float(map_def.get("start_ore", 0))
 	priorities = NodeDefs.DEFAULT_PRIORITY.duplicate()

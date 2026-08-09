@@ -170,7 +170,7 @@ func _two_line_ore(tech: Array) -> float:
 
 func _sandbox(tech: Array) -> RefCounted:
 	var s := SessionState.new()
-	s.setup(Maps.SANDBOX, [], tech)
+	s.setup(Maps.SANDBOX, [], {"tech": tech})
 	s.ore = 99999.0
 	return s
 
@@ -205,7 +205,7 @@ func _engaged_demand(tech: Array) -> float:
 ## 敵人 (14,4) 在射程 4 之內、三條線都不共線（B1.6.1 的重疊規則）。
 func _armed_anchor(tech: Array) -> RefCounted:
 	var s := SessionState.new()
-	s.setup(Maps.SHOAL, [], tech)
+	s.setup(Maps.SHOAL, [], {"tech": tech})
 	s.ore = 99999.0
 	_build(s, [
 		["place", "anchor", Vector2i(14, 6)],
