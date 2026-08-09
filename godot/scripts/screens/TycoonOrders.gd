@@ -55,14 +55,7 @@ func _build() -> void:
 	_accept_buttons.clear()
 	_collect_buttons.clear()
 
-	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 24)
-	add_child(margin)
-
-	var col := UiKit.vbox(12)
-	margin.add_child(col)
+	var col := UiKit.screen(self, 12)
 	var s := _state()
 	var level := int(s["level"])
 
@@ -288,18 +281,18 @@ func _click_selftest() -> void:
 	# 廠等 1 只接得到第 1 階，而且接單上限是 3。
 	var offers_one_tier: bool = _accept_buttons.size() == 1
 
-	await _press(_accept_buttons[0])
+	await UiKit.click(_accept_buttons[0])
 	var accepted: bool = (s["orders"] as Array).size() == 1
 
 	# 產線編輯：進得去、指派得了、回得來。
-	await _press(_lines_button)
+	await UiKit.click(_lines_button)
 	var lines_screen := _lines_child()
 	var opened: bool = lines_screen != null
 	var assigned := false
 	if opened:
-		await _press(lines_screen._assign_buttons[0])
+		await UiKit.click(lines_screen._assign_buttons[0])
 		assigned = TycoonSim.order_on_line(s, 0) == 0
-		await _press(lines_screen._back_button)
+		await UiKit.click(lines_screen._back_button)
 	# ★ 回來之後**訂單板要重畫**——`_build()` 沒被呼叫的話畫面會停在舊資料上，
 	#   而它看起來完全正常（就是不會更新）。斷言看的是「有沒有收成鈕」。
 	var returned: bool = _lines_child() == null and _accept_buttons.size() == 1
@@ -310,7 +303,7 @@ func _click_selftest() -> void:
 	await get_tree().process_frame
 	var collectable: bool = _collect_buttons.size() == 1
 
-	await _press(_collect_buttons[0])
+	await UiKit.click(_collect_buttons[0])
 	var collected: bool = (
 		int(s["credits"]) == TycoonSim.reward_of(1) and (s["orders"] as Array).is_empty()
 	)
@@ -320,7 +313,7 @@ func _click_selftest() -> void:
 	s["credits"] = TycoonSim.expand_cost(1)
 	_build()
 	await get_tree().process_frame
-	await _press(_expand_button)
+	await UiKit.click(_expand_button)
 	var expanded: bool = int(s["level"]) == 2 and int(s["credits"]) == 0
 
 	var esc_back: bool = await UiKit.esc_reaches(self)
@@ -364,14 +357,3 @@ func _lines_child() -> Control:
 	return null
 
 
-func _press(b: Button) -> void:
-	var at := b.global_position + b.size * 0.5
-	for pressed: bool in [true, false]:
-		var ev := InputEventMouseButton.new()
-		ev.button_index = MOUSE_BUTTON_LEFT
-		ev.pressed = pressed
-		ev.position = at
-		ev.global_position = at
-		Input.parse_input_event(ev)
-	for _i in 4:
-		await get_tree().process_frame

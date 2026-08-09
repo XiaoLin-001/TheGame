@@ -54,17 +54,7 @@ func _click_selftest() -> void:
 	var second_locked: bool = five and _enter_buttons[1].disabled
 	var says_why: bool = five and _enter_buttons[1].text.contains("第 1 關")
 
-	var b: Button = _enter_buttons[0]
-	var at := b.global_position + b.size * 0.5
-	for pressed: bool in [true, false]:
-		var ev := InputEventMouseButton.new()
-		ev.button_index = MOUSE_BUTTON_LEFT
-		ev.pressed = pressed
-		ev.position = at
-		ev.global_position = at
-		Input.parse_input_event(ev)
-	for _i in 4:
-		await get_tree().process_frame
+	await UiKit.click(_enter_buttons[0])
 	# 真的進了局內畫面嗎？（卡片被清掉、Battle 掛上來了）
 	var battle: Node = null
 	for c: Node in get_children():

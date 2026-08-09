@@ -46,14 +46,7 @@ func _build() -> void:
 	UiKit.clear(self)
 	_card_titles.clear()
 
-	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 24)
-	add_child(margin)
-
-	var col := UiKit.vbox(12)
-	margin.add_child(col)
+	var col := UiKit.screen(self, 12)
 	col.add_child(UiKit.label("名冊", 32, Palette.ORDER_BRIGHT, false))
 
 	var owned := RosterData.owned(GameState.data)
@@ -78,12 +71,7 @@ func _build() -> void:
 	#   沒有轉場）。但「不做演出」不等於「入口可以看不見」——它只表示這個動作
 	#   當場結算，不表示它不重要。所以改成一塊有框、有標題的區域。
 	if on_exit.is_valid():
-		var back_row := UiKit.hbox(12)
-		col.add_child(back_row)
-		var back := Button.new()
-		back.text = "返回"
-		back.pressed.connect(on_exit)
-		back_row.add_child(UiKit.touchable(back))
+		col.add_child(UiKit.back_row("返回", on_exit))
 	col.add_child(_build_recruit())
 
 	_scroll = ScrollContainer.new()
@@ -270,7 +258,7 @@ func _click_selftest() -> void:
 	var pulls: Array[String] = []
 	for _i in 3:
 		var before: Array = RosterData.recruited(GameState.data).duplicate()
-		await _press(_recruit_button)
+		await UiKit.click(_recruit_button)
 		var after: Array = RosterData.recruited(GameState.data)
 		if after.size() == before.size() + 1:
 			pulls.append(String(after[after.size() - 1]))
@@ -283,7 +271,7 @@ func _click_selftest() -> void:
 	#   只驗鈕的話，「畢業後不再消耗券」這條規則其實是靠一顆 `disabled` 撐著的
 	#   ——那不是規則，那是版面。
 	var spent_before: int = RosterData.recruited(GameState.data).size()
-	await _press(_recruit_button)
+	await UiKit.click(_recruit_button)
 	var rule_refuses: bool = SaveService.apply_recruit(
 		GameState.data, Rng.stream(1)
 	) == ""
@@ -343,15 +331,3 @@ func _covers_pool(list: Array[String]) -> bool:
 	return true
 
 
-## 合成一次真的滑鼠點擊（不是直接 emit `pressed`）——要驗的是事件路由得到。
-func _press(b: Button) -> void:
-	var at := b.global_position + b.size * 0.5
-	for pressed: bool in [true, false]:
-		var ev := InputEventMouseButton.new()
-		ev.button_index = MOUSE_BUTTON_LEFT
-		ev.pressed = pressed
-		ev.position = at
-		ev.global_position = at
-		Input.parse_input_event(ev)
-	for _i in 4:
-		await get_tree().process_frame

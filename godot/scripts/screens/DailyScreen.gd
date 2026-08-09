@@ -86,11 +86,11 @@ func _build() -> void:
 
 	col.add_child(_history(day.get("history", [])))
 
-	if on_exit.is_valid():
-		var back := Button.new()
-		back.text = "返回標題"
-		back.pressed.connect(on_exit)
-		col.add_child(UiKit.touchable(back))
+	# ★ 走 `UiKit.back_row()`（B2.7.2）。這一顆原本直接丟進 `VBox`，
+	#   於是被拉成整欄寬——全案八顆返回鈕裡唯一沒包 `HBox` 的那一顆（RG-152）。
+	var nav := UiKit.back_row("返回標題", on_exit)
+	if nav != null:
+		col.add_child(nav)
 
 
 ## 一張榜的卡。

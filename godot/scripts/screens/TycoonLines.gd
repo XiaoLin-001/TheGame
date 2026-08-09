@@ -39,14 +39,7 @@ func _build() -> void:
 	UiKit.clear(self)
 	_assign_buttons.clear()
 
-	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 24)
-	add_child(margin)
-
-	var col := UiKit.vbox(12)
-	margin.add_child(col)
+	var col := UiKit.screen(self, 12)
 	var s := _state()
 	var level := int(s["level"])
 	var orders: Array = s["orders"]
@@ -64,15 +57,10 @@ func _build() -> void:
 		13, Palette.TEXT_SECONDARY, false
 	))
 
-	if on_exit.is_valid():
-		# ★ 包一層 `HBox`，否則按鈕會被 `VBox` 拉成整個畫面寬（截圖抓到）。
-		var nav := UiKit.hbox(12)
+	var nav := UiKit.back_row("返回訂單板", on_exit)
+	if nav != null:
 		col.add_child(nav)
-		var back := Button.new()
-		back.text = "返回訂單板"
-		back.pressed.connect(on_exit)
-		_back_button = back
-		nav.add_child(UiKit.touchable(back))
+		_back_button = nav.get_child(0) as Button
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL

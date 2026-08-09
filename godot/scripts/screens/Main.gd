@@ -124,34 +124,34 @@ func _click_selftest() -> void:
 			if clipped == "（無）":
 				clipped = ctl.name + "@" + str(int(ctl.global_position.y))
 
-	await _press(_menu_button("戰役"))
+	await UiKit.click(_menu_button("戰役"))
 	var to_campaign: bool = _child_script() == CampaignScreen
 
 	await _escape()
 	# 回到標題＝九顆鈕**重新長出來**（`_build()` 有跑），不是舊的那九顆還在。
 	var back_home: bool = _child_script() == null and _menu_buttons.size() == 9
 
-	await _press(_menu_button("局外成長"))
+	await UiKit.click(_menu_button("局外成長"))
 	var to_tech: bool = _child_script() == TechScreen
 
 	await _escape()
-	await _press(_menu_button("成就"))
+	await UiKit.click(_menu_button("成就"))
 	var to_ach: bool = _child_script() == AchievementsScreen
 
 	await _escape()
-	await _press(_menu_button("每日挑戰"))
+	await UiKit.click(_menu_button("每日挑戰"))
 	var to_daily: bool = _child_script() == DailyScreen
 
 	await _escape()
-	await _press(_menu_button("名冊"))
+	await UiKit.click(_menu_button("名冊"))
 	var to_roster: bool = _child_script() == RosterScreen
 
 	await _escape()
-	await _press(_menu_button("潮汐公司"))
+	await UiKit.click(_menu_button("潮汐公司"))
 	var to_tycoon: bool = _child_script() == TycoonScreen
 
 	await _escape()
-	await _press(_menu_button("無盡"))
+	await UiKit.click(_menu_button("無盡"))
 	# ★ **不是看 `endless_seed` 有沒有值**——那個欄位在畫面已經用錯地圖之後
 	#   才被設上一樣是 true（B2.1a 第一版斷言就是這樣綠的，截圖才抓到打開的
 	#   是淺灘）。要問的是「這一局真的用了生成圖嗎」，所以看局面裡的地圖。
@@ -187,19 +187,6 @@ func _escape() -> void:
 		await get_tree().process_frame
 
 
-## 合成一次真的滑鼠點擊（不是直接 emit `pressed`）——要驗的是事件路由得到，
-## 而那正是 B0.7.2 靜靜壞掉五個批次的地方。
-func _press(b: Button) -> void:
-	var at := b.global_position + b.size * 0.5
-	for pressed: bool in [true, false]:
-		var ev := InputEventMouseButton.new()
-		ev.button_index = MOUSE_BUTTON_LEFT
-		ev.pressed = pressed
-		ev.position = at
-		ev.global_position = at
-		Input.parse_input_event(ev)
-	for _i in 4:
-		await get_tree().process_frame
 
 
 ## 現在掛在底下的是哪一個畫面？（標題畫面本身沒有 script 為 screen 的子節點）

@@ -127,25 +127,14 @@ func _build() -> void:
 	_sliders.clear()
 	_res_buttons.clear()
 
-	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 24)
-	add_child(margin)
-
 	# 間距 8 而不是 14：這一頁有 13 個列，每一格間距都乘以 13。
 	# 第一版用 14 就讓最後那行說明掉到 720 以外（自檢的 `fits` 現在守著）。
-	var col := UiKit.vbox(8)
+	var col := UiKit.screen(self, 8)
 	_col = col
-	margin.add_child(col)
 	col.add_child(UiKit.label("設定", 32, Palette.ORDER_BRIGHT, false))
-	if on_exit.is_valid():
-		var back := Button.new()
-		back.text = "返回"
-		back.pressed.connect(on_exit)
-		var row := UiKit.hbox(0)
-		row.add_child(UiKit.touchable(back))
-		col.add_child(row)
+	var nav := UiKit.back_row("返回", on_exit, 0)
+	if nav != null:
+		col.add_child(nav)
 
 	col.add_child(UiKit.label("音訊", 22, Palette.ORDER_CYAN, false))
 	for v: Array in VOLUMES:

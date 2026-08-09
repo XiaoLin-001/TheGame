@@ -66,7 +66,7 @@ func _click_selftest() -> void:
 	# 第二階（cap2）在第一階還沒買之前必須是鎖著的，而且要說出原因。
 	var tier2_locked: bool = _buttons[1].disabled and _buttons[1].text.contains("導管擴容 I")
 
-	await _click(_buttons[0])
+	await UiKit.click(_buttons[0])
 	var unlocked: Array = tech["unlocked"]
 	var bought: bool = unlocked.has("cap1")
 	var charged: bool = is_equal_approx(float(tech["data"]), 500.0 - float(Tech.cost("cap1")))
@@ -92,7 +92,7 @@ func _click_selftest() -> void:
 	await get_tree().process_frame
 	var lv_open: bool = not _level_buttons[0].disabled
 	var before := _components()
-	await _click(_level_buttons[0])
+	await UiKit.click(_level_buttons[0])
 	var lv_up: bool = Levels.level_of(GameState.data, Levels.TOWER) == 1
 	# **餘額是推導的**（`SaveService.components()`），所以「有沒有真的扣款」
 	# 問的是那一支——不是去看某個欄位有沒有被減。
@@ -116,18 +116,6 @@ func _click_selftest() -> void:
 		get_tree().quit(0 if ok else 1)
 
 
-## 合成一次真的滑鼠點擊（不是直接 emit `pressed`）——要驗的是事件路由得到。
-func _click(b: Button) -> void:
-	var at := b.global_position + b.size * 0.5
-	for pressed: bool in [true, false]:
-		var ev := InputEventMouseButton.new()
-		ev.button_index = MOUSE_BUTTON_LEFT
-		ev.pressed = pressed
-		ev.position = at
-		ev.global_position = at
-		Input.parse_input_event(ev)
-	for _i in 4:
-		await get_tree().process_frame
 
 
 func _data() -> float:
@@ -204,19 +192,7 @@ func _build() -> void:
 	UiKit.clear(self)
 	_buttons.clear()
 
-	# ★ 走容器與錨點，**不寫死像素位置**（P1 手機移植條款）。
-	#   三支路線之中最長的那一支是 5 張卡，加上頁首就已經超過 720——第一版
-	#   把最後一張卡推到畫面外，而 `_draw()` 對此一個字都不會說（RG-47／RG-60
-	#   的同一個教訓）。所以卡片區一律裝在捲動容器裡：**M3 這棵樹要長到 45 個節點**，
-	#   靠「把卡片再壓矮一點」撐是撐不過去的。
-	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 24)
-	add_child(margin)
-
-	var col := UiKit.vbox(10)
-	margin.add_child(col)
+	var col := UiKit.screen(self, 10)
 	# ★ 這個畫面從 B2.7 起裝的是**局外成長的兩軸**（§1 B2）——等級軸沒有自己的
 	#   入口，因為它和科技樹回答的是同一個問題（我的永久強化買到哪裡了）。
 	#   主選單已經九顆鈕塞滿 720px，多一顆的代價是把「離開遊戲」推出畫面。
@@ -239,13 +215,9 @@ func _build() -> void:
 	intro.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col.add_child(intro)
 	col.add_child(_level_row())
-	if on_exit.is_valid():
-		var back := Button.new()
-		back.text = "返回"
-		back.pressed.connect(on_exit)
-		var back_row := UiKit.hbox(0)
-		back_row.add_child(UiKit.touchable(back))
-		col.add_child(back_row)
+	var nav := UiKit.back_row("返回", on_exit, 0)
+	if nav != null:
+		col.add_child(nav)
 
 	_scroll = ScrollContainer.new()
 	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL

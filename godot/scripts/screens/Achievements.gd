@@ -87,14 +87,7 @@ func _build() -> void:
 	UiKit.clear(self)
 	_rows.clear()
 
-	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 24)
-	add_child(margin)
-
-	var col := UiKit.vbox(10)
-	margin.add_child(col)
+	var col := UiKit.screen(self, 10)
 
 	var save: Dictionary = GameState.data
 	var done := Achievements.done(save)
@@ -122,13 +115,9 @@ func _build() -> void:
 		13, Palette.TEXT_SECONDARY, false
 	))
 
-	if on_exit.is_valid():
-		var nav := UiKit.hbox(12)
+	var nav := UiKit.back_row("返回", on_exit)
+	if nav != null:
 		col.add_child(nav)
-		var back := Button.new()
-		back.text = "返回"
-		back.pressed.connect(on_exit)
-		nav.add_child(UiKit.touchable(back))
 
 	_scroll = ScrollContainer.new()
 	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL

@@ -143,6 +143,69 @@ static func esc_reaches(screen: Node) -> bool:
 	return escaped[0]
 
 
+## ★ 自檢：合成一次真的滑鼠點擊（B2.7.2）。
+##
+## 不直接 `emit_signal("pressed")`：要驗的是**事件路由得到**，
+## 而那正是 B0.7.2 静靜壞了五個批次的地方（`Callable.bind()` 綁錯位置
+## 就是一顆按了沒反應的鈕，而 `_draw()` 一個字都不會說）。
+##
+## 這六行曾經在 `Main` / `Campaign` / `Roster` / `Tech` / `TycoonOrders`
+## 各寫過一份，而且掛在三個不同的名字下（`_press` / `_click` / 直接內嵌）。
+## ★ `Battle` 那份**不走這裡**：它要 `button_mask` 與滑鼠移動事件（拖曳），
+##   是真的不一樣的東西——同 `esc_returns()` 不收局內畫面的同一條理由。
+static func click(button: Button) -> void:
+	# ★ **先把 tree 拿起來再送事件。** 這顆鈕很可能就是重建畫面的那一顆
+	#   （`_unlock()` / `_assign()` / `_enter()` 都會 `_build()`），而重建會把它釋放
+	#   ——事後再 `button.get_tree()` 就是「已釋放的實例」。舊的五份各自寫在畫面
+	#   裡，`get_tree()` 問的是畫面（活著），所以搬進 `UiKit` 才暴露這一點。
+	var tree := button.get_tree()
+	var at := button.global_position + button.size * 0.5
+	for pressed: bool in [true, false]:
+		var ev := InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_LEFT
+		ev.pressed = pressed
+		ev.position = at
+		ev.global_position = at
+		Input.parse_input_event(ev)
+	for _i in 4:
+		await tree.process_frame
+
+
+## ★ 一個全螢幕畫面的外框，回傳內容要放進去的那一欄（B2.7.2）。
+##
+## 六個畫面各寫過一份逐字相同的 margin 區塊。行數不是重點，
+## 重點是 **24 是 `20_ART_DIRECTION.md` §1.3 的間距階**——六份各自寫死的話，
+## 日後要改間距階就要改六個地方，而漏掉的那一個看起來完全正常。
+static func screen(root: Control, separation: int = 12, pad: int = 24) -> VBoxContainer:
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side: String in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, pad)
+	root.add_child(margin)
+	var col := vbox(separation)
+	margin.add_child(col)
+	return col
+
+
+## ★ 一列導覽鈕（返回…），B2.7.2。**一定包一層 `HBox`。**
+##
+## 直接丟進 `VBox` 的鈕會被拉成整個畫面寬。這不是假設性的：
+## B2.5 的 `TycoonLines` 踩過一次（截圖抳到），而 B2.7.2 的 `/codebase-design`
+## 審視又在 `DailyScreen` 找到一個**當時還活著的**（「返回標題」735px 寬）。
+## 八顆鈕裡七顆包了、一顆沒包——**要記得的規矩會被忘記**，所以做成一支函式。
+##
+## 回傳那一列（呼叫端可以再往裡面加第二顆鈕）。`on_exit` 無效時回傳 `null`。
+static func back_row(text: String, on_exit: Callable, separation: int = 12) -> HBoxContainer:
+	if not on_exit.is_valid():
+		return null
+	var row := hbox(separation)
+	var back := Button.new()
+	back.text = text
+	back.pressed.connect(on_exit)
+	row.add_child(touchable(back))
+	return row
+
+
 ## 千分位。資源數字到處都要用，統一在這裡免得各處各寫一份。
 static func commas(n: int) -> String:
 	var s := str(absi(n))
