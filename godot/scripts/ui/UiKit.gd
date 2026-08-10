@@ -31,7 +31,60 @@ static func theme() -> Theme:
 	_theme = Theme.new()
 	_theme.default_font = f
 	_theme.default_font_size = 16
+	_style_buttons(_theme)
 	return _theme
+
+
+## ★ 按鈕的樣式（B2.9）。**全遊戲 41 顆鈕在這之前一顆都沒有套過美術 token**
+## ——它們全是 Godot 的預設灰色方塊，而 `20_ART_DIRECTION.md` §1.1 的
+## `bg.raised #162c3d` 那一列寫的就是「浮起元件（**按鈕**、卡片）」，
+## §1.4 的 `radius.ui = 2` 寫的是「UI 面板與**按鈕**（僅此一種）」。
+## 兩條 token 訂了三個月，沒有一顆鈕讀過它們。
+##
+## **設在主題上而不是逐顆設**：主題在每個畫面的根 Control 設一次、子節點自動繼承
+## （`theme()` 的原註），所以這一支是唯一一個蓋得完 41 顆的地方——逐顆套的那條路，
+## 漏掉的那幾顆會安靜地留著預設灰（`touchable()` 接點擊音的同一條理由）。
+##
+## 五態各有自己的樣子，因為**它們各自回答一個不同的問題**：
+##   normal／hover ＝「這是可以按的」、pressed ＝「我按到了」、
+##   disabled ＝「這顆現在不能按」（而它下面那行字會說為什麼）、
+##   focus ＝ 鍵盤走到哪了（P3「操作不得只靠 hover」的另一半）。
+static func _style_buttons(theme: Theme) -> void:
+	for entry: Array in [
+		# [態, 底色, 邊框色, 邊框寬]
+		["normal", Palette.BG_RAISED, Palette.BORDER_SUBTLE, 1],
+		["hover", Palette.BG_RAISED.lerp(Palette.ORDER_DIM, 0.35), Palette.BORDER_STRONG, 1],
+		["pressed", Palette.BG_PANEL, Palette.ORDER_CYAN, 1],
+		# 停用不是「暗一點的可按鈕」：**底色退回面板色、邊框近乎消失**，
+		# 讓它在一排鈕裡看起來是凹下去的，而不是一顆比較暗的凸起。
+		["disabled", Palette.alpha(Palette.BG_PANEL, 0.6), Palette.BORDER_SUBTLE, 1],
+		# 聚焦框用 `stroke.emphasis`（§1.4 的 3）——它要在 hover 之上還看得出來。
+		["focus", Palette.BG_RAISED.lerp(Palette.ORDER_DIM, 0.35), Palette.ORDER_BRIGHT, 3],
+	]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = entry[1]
+		sb.border_color = entry[2]
+		sb.set_border_width_all(int(entry[3]))
+		sb.set_corner_radius_all(2)      # radius.ui（§1.4「僅此一種」）
+		# 間距階（§1.3）：**橫直都是 8**。
+		#
+		# ★ 第一版給了橫向 12，於是局內底欄那七顆鈕加起來寬了 56px，
+		#   把提示文字整段推出視窗右緣（`Battle._place_hint()` 的 `hint_inside`
+		#   當場變紅）。**按鈕的內距是一個全域尺寸**——在最擠的那個版面上才看得出
+		#   它的代價，而最擠的那個版面是局內。
+		sb.content_margin_left = 8.0
+		sb.content_margin_right = 8.0
+		sb.content_margin_top = 8.0
+		sb.content_margin_bottom = 8.0
+		theme.set_stylebox(String(entry[0]), "Button", sb)
+	for entry: Array in [
+		["font_color", Palette.TEXT_PRIMARY],
+		["font_hover_color", Palette.ORDER_BRIGHT],
+		["font_pressed_color", Palette.ORDER_BRIGHT],
+		["font_focus_color", Palette.TEXT_PRIMARY],
+		["font_disabled_color", Palette.TEXT_DISABLED],
+	]:
+		theme.set_color(String(entry[0]), "Button", entry[1])
 
 
 static func label(text: String, size: int, color: Color, centered: bool = true) -> Label:

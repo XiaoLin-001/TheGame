@@ -1013,15 +1013,37 @@ func _click_selftest() -> void:
 		menu_open and menu_blocks and settings_open and settings_back and menu_closed
 		and buildable_after and menu_by_button and menu_fits
 	)
+
+	# ★ **底欄與提示文字的矩形不得相交**（B2.9）。
+	#
+	#   §7.2 A-1 的結論一字未改地適用在這裡：「驗收條件要改成『鈕的矩形與底欄
+	#   矩形不相交』，不是『按得到』」——被壓在字底下的鈕**照樣按得到**，
+	#   所以既有的每一條斷言都是綠的，而畫面上「說明」那顆鈕和提示文字疊在一起。
+	#
+	#   這一格是 B2.9 給按鈕套美術 token 時當場撞到的：每顆鈕寬了 8px，
+	#   七顆就把底欄推過那個寫死的 520。**寫死的座標記的是當時那七顆鈕有多寬。**
+	var bar_rect := Rect2(Vector2.ZERO, Vector2.ZERO)
+	for c: Node in get_children():
+		var box := c as HBoxContainer
+		if box != null and is_equal_approx(box.position.y, BAR_Y):
+			bar_rect = Rect2(box.global_position, box.size)
+	# ⚠ **要用提示文字真正的高度**。第一版寫成 1px 高，於是它的矩形（y 666–667）
+	#   和底欄（y 668 起）永遠不相交——**斷言在它該紅的情境下是綠的**，
+	#   而我是把提示推到底欄正中間去測它才發現。RG-158 的同一課：先確認尺會動。
+	var hint_rect := Rect2(_hint.global_position, _hint.size)
+	var bar_hint_clear: bool = bar_rect.size.x > 0.0 and not bar_rect.intersects(hint_rect)
+	# 而且提示文字自己要留在視窗內（推到右邊之後才有可能掉出去）。
+	var hint_inside: bool = _hint.global_position.x + _hint.size.x <= float(size.x) + 0.5
 	var ok: bool = (
 		placed and rejected and diag_placed and wired and upgraded and dragged and panned
 		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
-		and view_ok and menu_ok and audio_ok and over_ok
+		and view_ok and menu_ok and audio_ok and over_ok and bar_hint_clear and hint_inside
 		and bp_saved and bp_has_nodes and bp_expanded and bp_short and bp_fits
 	)
-	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s → %s" % [
+	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s bar_hint=%s(底欄右緣 %.0f／提示 x %.0f) hint_in=%s → %s" % [
 		placed, rejected, diag_placed, wired, upgraded, dragged, panned, reachable, alloy_gated,
 		energy_ok, codex_ok, prio_ok, view_ok, menu_ok, audio_ok, over_ok,
+		bar_hint_clear, bar_rect.end.x, _hint.global_position.x, hint_inside,
 		"PASS" if ok else "FAIL"
 	])
 	print("[TL_CLICKTEST/audio] prep_music=%s wave_hush=%s wave_sting=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s knell_field=%s" % [
@@ -2132,15 +2154,51 @@ func _cell_quad(c: Vector2i) -> PackedVector2Array:
 ##
 ## **抖動掛在格點上**：相鄰兩格共用的角落算出同一個偏移，所以帶子不會裂開。
 ## 內部格點（四周四格都在 `solid` 裡）不偏移，否則帶子中間會出現縫。
+##
+## ★ **外凸的轉角磨掉尖角**（B2.9，§7.2 A-2 沒做完的那一半）。
+##   §1.6 的原文是「抖動 ＋ **轉角改圓弧或磨掉尖角**」，而 B2.4.3 只做了抖動：
+##   帶子的邊緣不再筆直，但**每一個轉彎仍然是硬 90°**，而轉角正是「這是機器畫的」
+##   最強的訊號——直邊可以說成是水流的方向，直角不行。
+##
+##   做法是**倒角**：一個只有這一格碰得到的格點（四周只有自己是路）是外凸角，
+##   在那裡吐兩個點而不是一個，沿兩條邊各退 `BAND_CHAMFER`。
+##   凹角（四周三格是路）不動——凹角是兩條帶子交會的內側，磨它只會開一個洞。
+## 倒角吃掉一格的多少（比例，不是像素）。**比例才會隨縮放一起長**——
+## 寫死 7px 的第一版在 fit 倍率下只改了 30 個像素，在 300% 下更是看不見，
+## 而「看不見的東西等於沒做」是 §7.3 C-2 自己的判準。
+const BAND_CHAMFER := 0.3
+
 func _band_quad(c: Vector2i, solid: Dictionary) -> PackedVector2Array:
 	var quad := PackedVector2Array()
-	for corner: Vector2i in CORNERS:
+	for i in CORNERS.size():
+		var corner: Vector2i = CORNERS[i]
 		var g := c + corner
 		var w := _world(g)
 		if not _interior_vertex(g, solid):
 			w += Shapes.band_jitter(g.x, g.y)
-		quad.append(w)
+		if _outer_corner(g, solid):
+			# 沿「上一個角 → 這個角」與「這個角 → 下一個角」兩條邊各退一段。
+			var prev: Vector2i = CORNERS[(i + CORNERS.size() - 1) % CORNERS.size()]
+			var next: Vector2i = CORNERS[(i + 1) % CORNERS.size()]
+			var to_prev := (_world(c + prev) - _world(c + corner)).normalized()
+			var to_next := (_world(c + next) - _world(c + corner)).normalized()
+			# 不得吃掉超過半格，否則 32px 的格子上會變成八角形而不是磨過的直角。
+			var k := float(Shapes.GRID) * _zoom * BAND_CHAMFER
+			quad.append(w + to_prev * k)
+			quad.append(w + to_next * k)
+		else:
+			quad.append(w)
 	return quad
+
+
+## 這個格點是不是**外凸角**（四周四格裡只有一格是路）。
+## 凹角（三格是路）回 false——那是兩段帶子交會的內側，磨它會開一個洞。
+func _outer_corner(g: Vector2i, solid: Dictionary) -> bool:
+	var n := 0
+	for d: Vector2i in AROUND:
+		if solid.has(g + d):
+			n += 1
+	return n == 1
 
 
 ## 這個格點是不是內部格點（四周四格都在 `solid` 裡）。
@@ -2807,12 +2865,18 @@ func _draw_bursts() -> void:
 
 		# ── 3–5 個幾何碎片 ────────────────────────────────────────────
 		# 數量也由 id 決定（3/4/5 輪替），免得每一次爆炸的顆數都一樣。
+		# ★ **數量不動**（§2 反模式清單擋著「200 顆粒子」），動的是**單片的尺寸、
+		#   初速與明度**——§7.3 C-2：「3–5 個看不見的碎片等於沒做」。
+		#   fit 倍率下一格只有 32px，原本 4–5px 的碎片是三個像素的事。
 		var count := 3 + (absi(seed_id) % 3)
 		for i in count:
 			var dir := Motion.fragment_dir(seed_id, i, count)
-			var p := at + dir * (10.0 + 22.0 * e)
-			var r := (5.0 if chaos else 4.0) * (1.0 - 0.6 * t)
-			var c := Palette.alpha(col, 1.0 - t)
+			var p := at + dir * (10.0 + 34.0 * e)
+			var r := (8.0 if chaos else 6.5) * (1.0 - 0.6 * t)
+			# 生命前 30% 用亮階起亮再落回本色。**明度差在小尺寸下活得下來**——
+			# 這正是 `tide.bright` 當初被建立的理由（§1.7），同一條經驗直接套用。
+			var bright: Color = Palette.TIDE_BRIGHT if chaos else Palette.ORDER_BRIGHT
+			var c := Palette.alpha(bright.lerp(col, minf(1.0, t / 0.3)), 1.0 - t)
 			if chaos:
 				# 不規則三角＋自轉：混沌連碎片都不對齊。
 				var spin := float(seed_id) * 0.7 + t * 3.0
@@ -3191,12 +3255,29 @@ func _build_ui() -> void:
 	_build_codex_panel()
 	_build_help_panel()
 
-	# 兩行：上行「下一步」、下行當下動作的細節。x 從 350 起，避開底欄那三個鈕。
+	# 兩行：上行「下一步」、下行當下動作的細節。
+	#
+	# ★ x **跟著底欄實際的右緣走**，不是一個寫死的 520（B2.9）。原本是寫死的，
+	#   而 B2.9 給按鈕套上美術 token（`content_margin` 12/8）之後每一顆鈕都變寬了
+	#   ——七顆鈕加起來超過 520，提示文字當場被壓在「說明」那顆鈕上面。
+	#   寫死的座標就是這樣壞的：它記的是**當時**那七顆鈕有多寬。
+	#   （這也是手機預留條款 P1「不硬編碼像素位置」在這一行的兌現。）
 	_hint = UiKit.label("", 13, Palette.TEXT_SECONDARY, false)
 	_hint.position = Vector2(520, 666)
 	_hint.size = Vector2(755, 50)
 	add_child(_hint)
+	bar.resized.connect(_place_hint.bind(bar))
+	_place_hint.call_deferred(bar)
 	_refresh_hint()
+
+
+## 提示文字擺在底欄右邊 24px（§1.3 間距階的群間距，同底欄自己的三群）。
+## 底欄是容器，它的寬度要到版面跑完才知道——所以走 `resized` 而不是算一次。
+func _place_hint(bar: Control) -> void:
+	if _hint == null or not is_instance_valid(bar):
+		return
+	_hint.position.x = bar.position.x + bar.size.x + 24.0
+	_hint.size.x = maxf(120.0, float(size.x) - _hint.position.x - 8.0)
 
 
 ## ★ 依**節點類型**的優先權面板（`10_GDD.md` §3.1）。
