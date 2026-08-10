@@ -114,6 +114,11 @@ func _click_selftest() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	var count: bool = _menu_buttons.size() == 9
+	# ★★ 鐵律 1（`30_TECH_DESIGN.md` §4.1）：**有測試鉤子時絕不寫真存檔。**
+	#   B2.8 的 G2 勾稽發現這條全案最重要的安全規則**一條斷言都沒有**——
+	#   它一直只是一行 `print`。而這支自檢每一次都跑在鉤子底下，
+	#   所以它是這條規則唯一天生就在對的地方（`50_QA_PLAN.md` §2）。
+	var persist_off: bool = not SaveService.persist
 	# ★ **這一欄的每一個子節點都要整個在畫面內**（RG-139：按得到不等於看得到）。
 	#
 	#   B2.5 加這條檢查時只走 `_menu_buttons`，於是 B2.7 多一行字把版本號推出
@@ -180,12 +185,12 @@ func _click_selftest() -> void:
 	var to_endless: bool = to_tiers and seeded != 0 and generated
 
 	var ok: bool = (
-		count and on_screen and to_campaign and back_home and to_tech and to_ach and to_daily
-		and to_roster and to_tycoon and to_endless
+		count and persist_off and on_screen and to_campaign and back_home and to_tech and to_ach
+		and to_daily and to_roster and to_tycoon and to_endless
 	)
-	print("[TL_CLICKTEST/title] buttons=%s on_screen=%s(切到 %s) campaign=%s esc_home=%s tech=%s ach=%s daily=%s roster=%s tycoon=%s tiers=%s endless=%s(seed=%d gen=%s) → %s" % [
-		count, on_screen, clipped, to_campaign, back_home, to_tech, to_ach, to_daily, to_roster,
-		to_tycoon, to_tiers, to_endless, seeded, generated, "PASS" if ok else "FAIL"
+	print("[TL_CLICKTEST/title] buttons=%s persist_off=%s on_screen=%s(切到 %s) campaign=%s esc_home=%s tech=%s ach=%s daily=%s roster=%s tycoon=%s tiers=%s endless=%s(seed=%d gen=%s) → %s" % [
+		count, persist_off, on_screen, clipped, to_campaign, back_home, to_tech, to_ach, to_daily,
+		to_roster, to_tycoon, to_tiers, to_endless, seeded, generated, "PASS" if ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)

@@ -8,6 +8,7 @@ extends SceneTree
 
 const T := preload("res://tests/_assert.gd")
 const Save := preload("res://scripts/core/SaveService.gd")
+const Difficulty := preload("res://data/Difficulty.gd")
 
 
 func _initialize() -> void:
@@ -58,6 +59,7 @@ func _initialize() -> void:
 	_disk_round_trip(t)
 
 	_migration_sv1_to_sv2(t)
+	_hostile_saves(t)
 
 	quit(t.report())
 
@@ -107,25 +109,24 @@ func _migration_sv1_to_sv2(t: RefCounted) -> void:
 
 ## 實際寫檔／讀檔。這段是「只增不破」承諾與原子寫入唯一的自動化覆蓋。
 ##
-## 安全規則：**存檔已存在就整段跳過**——測試絕不碰使用者的真實進度。
-## 這與鐵律 1（有鉤子時 persist=false）互補：鐵律擋的是有鉤子的情況，
-## 這條擋的是「沒有鉤子、直接跑測試」的情況。
+## ★ B2.8 起**一定會跑**（RG-160）。原本的規則是「偵測到既有存檔就整段跳過，
+## 免得碰壞使用者的進度」——立意是對的，結果是這條路徑**在任何玩過遊戲的機器上
+## 都沒有被執行過**，也就是我的機器與使用者的機器。它從 B0.1 起一直印著「待補」，
+## 而一條永遠待補的測試與沒有這條測試沒有差別。
+##
+## 現在改成寫**測試自己的檔名**（`SaveService.path` 是實例欄位，預設仍是玩家那一個）：
+## 真實存檔一個位元組都不會被碰到，而原子寫入、改名、讀回三段真的跑得到。
 func _disk_round_trip(t: RefCounted) -> void:
 	var svc: Node = Save.new()
-
-	if FileAccess.file_exists(Save.PATH):
-		t.pending("磁碟往返（偵測到既有存檔，為保護使用者進度而跳過）", "—")
-		svc.free()
-		return
-	if not svc.persist:
-		t.pending("磁碟往返（persist=false，有測試鉤子啟用）", "—")
-		svc.free()
-		return
+	svc.path = "user://save_roundtrip_test.json"
+	svc.tmp_path = "user://save_roundtrip_test.json.tmp"
+	# `persist` 由 Env 判定；這支測試沒有鉤子，但**明寫**比較不會在日後被改壞。
+	svc.persist = true
 
 	var written := {"campaign": {"stars": {"shoal": 3}}, "tech": {"data": 12}}
 	t.ok(svc.save_from(written), "save_from 回報成功")
-	t.ok(FileAccess.file_exists(Save.PATH), "主存檔已建立")
-	t.ok(not FileAccess.file_exists(Save.TMP_PATH), "暫存檔已被改名，未留下殘骸")
+	t.ok(FileAccess.file_exists(svc.path), "主存檔已建立")
+	t.ok(not FileAccess.file_exists(svc.tmp_path), "暫存檔已被改名，未留下殘骸")
 
 	var back := {}
 	svc.load_into(back)
@@ -134,9 +135,59 @@ func _disk_round_trip(t: RefCounted) -> void:
 	t.eq(back["tech"]["unlocked"], [], "寫入時未提供的鍵讀回時已補預設")
 	t.eq(back["sv"], Save.SAVE_VERSION, "讀回的 sv 為當前版本")
 
-	# 清乾淨：測試不留下假存檔，否則使用者首次啟動會拿到 tech.data=12。
+	# ★ 寫進去的真的是 JSON，而且讀得回同一份（不是只有 `load_into` 認得的格式）。
+	var raw := FileAccess.open(svc.path, FileAccess.READ)
+	var parsed: Variant = JSON.parse_string(raw.get_as_text())
+	raw.close()
+	t.ok(parsed is Dictionary, "檔案內容是合法 JSON 物件")
+
+	# ★ 半寫壞的檔：讀不出 JSON 就退回預設值，**不得當掉、也不得沿用上一份**。
+	var broken := FileAccess.open(svc.path, FileAccess.WRITE)
+	broken.store_string('{"campaign": {"stars": {"shoal": 3')
+	broken.close()
+	var salvaged := {}
+	svc.load_into(salvaged)
+	t.eq(salvaged["sv"], Save.SAVE_VERSION, "★ 讀到半寫壞的檔仍然拿得到一份完整的資料")
+	t.eq((salvaged["campaign"] as Dictionary)["stars"], {}, "★ 壞檔退回預設值，不是半份進度")
+
+	# 真實存檔沒被碰到（這條就是上面那段註解的保證）。
+	t.ok(svc.path != Save.PATH, "★ 全程寫的是測試自己的檔名，玩家的存檔沒有被開啟過")
+
 	var dir := DirAccess.open("user://")
 	if dir != null:
-		dir.remove("save.json")
-	t.ok(not FileAccess.file_exists(Save.PATH), "測試結束後未留下存檔")
+		dir.remove(svc.path.get_file())
+		dir.remove(svc.tmp_path.get_file())
+	t.ok(not FileAccess.file_exists(svc.path), "測試結束後未留下檔案")
 	svc.free()
+
+
+## ★ 惡意／壞掉的存檔（B2.8 L5 找碴、RG-159）。
+##
+## 這一段找到的是一個真的缺陷：`_fill_defaults()` 只補**缺的鍵**，不修**型別錯的鍵**，
+## 於是一個 `"campaign": 5` 的檔會讓整個局外層噴 14 條型別錯誤（成就、名冊、
+## 材料餘額、難度層解鎖全部中招）。修法是在遷移之前多一步 `_repair_containers()`。
+func _hostile_saves(t: RefCounted) -> void:
+	var cases := {
+		"型別全錯": {"sv": 2, "campaign": 5, "tech": "hello", "endless": [1, 2], "levels": 7},
+		"陣列當字典": {"sv": 2, "campaign": {"stars": [1, 2, 3]}},
+		"字典當純量": {"sv": 2, "settings": {"master": {"a": 1}}},
+		"sv 是字串": {"sv": "abc", "tech": {"data": 5}},
+	}
+	for name: String in cases:
+		var d: Dictionary = Save.normalize(cases[name] as Dictionary)
+		t.ok(d["campaign"] is Dictionary, "%s：campaign 修回字典" % name)
+		t.ok((d["campaign"] as Dictionary)["stars"] is Dictionary, "%s：stars 修回字典" % name)
+		t.ok(d["endless"] is Dictionary, "%s：endless 修回字典" % name)
+		t.ok(d["levels"] is Dictionary, "%s：levels 修回字典" % name)
+		t.ok(d["tech"] is Dictionary, "%s：tech 修回字典" % name)
+		t.ok(d["blueprints"] is Array, "%s：blueprints 修回陣列" % name)
+		t.eq(d["sv"], Save.SAVE_VERSION, "%s：仍然跑得完遷移鏈" % name)
+		# 局外層的每一支查詢都問得出一個數字（這才是「不會炸」的可觀察形式）。
+		t.ok(Save.components(d) >= 0, "%s：材料餘額算得出來" % name)
+		t.ok(Difficulty.unlocked(d) >= 0, "%s：難度層解鎖算得出來" % name)
+
+	# ★ 反向對照：**純量之間的型別差異不得被當成壞資料清掉**。
+	#   JSON 沒有整數——`"data": 12` 讀回來是 12.0，嚴格比對型別會把它歸零。
+	var jsonish := Save.normalize({"sv": 3, "tech": {"data": 12.0, "unlocked": ["cap1"]}})
+	t.eq(int((jsonish["tech"] as Dictionary)["data"]), 12, "★ 反向對照：float 的研究數據沒有被清掉")
+	t.eq((jsonish["tech"] as Dictionary)["unlocked"], ["cap1"], "★ 反向對照：既有陣列原樣保留")

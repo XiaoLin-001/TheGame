@@ -46,9 +46,6 @@ const DEFAULTS := {
 	# 而同一個事實存兩份遲早會漂移——漂掉的那一天，玩家會看到「這一關通關了
 	# 但下一關還鎖著」，而兩個欄位各自都「對」。
 	"campaign": {"stars": {}},
-	# ★ B2.1a 落地的鍵。**沒有 bump `SAVE_VERSION`**——上面那段註解說的就是
-	# 這個情況：`_fill_defaults()` 在讀檔時補缺鍵，所以舊存檔讀進來自動長出
-	# 這一格 0/0。遷移分支是給「結構改動」用的，加一個新鍵不是結構改動。
 	# ★ B2.1a 落地、B2.6 改結構（sv3）。`best` 的鍵是**難度層的字串**（"0".."3"），
 	# 值是 `{wave, output}`。改結構而不是在旁邊加一格「高難度的紀錄」：
 	# 同一個「12 波」在標準層與深潮層不是同一件事，共用一格會讓其中一個
@@ -104,6 +101,14 @@ const DEFAULTS := {
 ## 有任何 TL_* 鉤子時為 false。直接由 Env 靜態判定，不依賴其他 autoload 的 _ready 順序。
 var persist: bool = not Env.any_hook()
 
+## ★ 這個實例讀寫哪一個檔（B2.8）。預設就是上面那兩個常數，**玩家的路徑一個字都沒變**。
+##
+## 為什麼要能換：磁碟往返（原子寫入 → 讀回 → 改名）是「只增不破」唯一的自動化覆蓋，
+## 而它原本**在任何已經有存檔的機器上整段跳過**——也就是我的機器與使用者的機器。
+## 那條測試從 B0.1 起就一直印著「待補」，等於這條路徑從來沒有被真的跑過（RG-160）。
+var path: String = PATH
+var tmp_path: String = TMP_PATH
+
 
 # ─────────────────────────────────────────────────────────────
 # 純邏輯（static；測試直接呼叫，不需要 autoload）
@@ -115,11 +120,45 @@ static func defaults() -> Dictionary:
 
 ## 把任意（可能殘缺、可能舊版）的資料整理成當前 schema 的完整資料。
 ## 順序很重要：先遷移舊結構，再補預設值——反過來會讓遷移看到假的預設欄位。
+##
+## ★ B2.8 在**遷移之前**多一步 `_repair_containers()`（RG-159）。順序仍然是
+## 「修型別 → 遷移 → 補預設」：`_fill_defaults()` 只補**缺的鍵**，它不會修一個
+## 型別錯掉的鍵，而遷移分支與所有讀取端都假設 `campaign` 是字典、`endless` 是字典。
+## 一個 `"campaign": 5` 的檔於是會在整個局外層噴一整串型別錯誤（實測 14 條）。
 static func normalize(raw: Dictionary) -> Dictionary:
-	var d := migrate(raw.duplicate(true))
+	var d := raw.duplicate(true)
+	_repair_containers(d, DEFAULTS)
+	d = migrate(d)
 	_fill_defaults(d, DEFAULTS)
 	d["sv"] = SAVE_VERSION
 	return d
+
+
+## ★ 型別修復（B2.8、RG-159）。**只修容器與非容器不合的那些鍵，不補任何缺鍵。**
+##
+## 為什麼只看「是不是容器」而不是嚴格比對型別：**JSON 沒有整數**。
+## `"data": 12` 存進去讀出來是 `12.0`，嚴格比對會把玩家的研究數據當成壞資料清掉。
+## 純量之間的差異由讀取端既有的 `int()`／`float()` 轉換吸收，那條路本來就通；
+## 真正會炸的是「該是字典的地方放著一個數字」——那種值沒有任何轉換救得回來。
+##
+## 補缺鍵留給 `_fill_defaults()`（它在遷移之後跑）：在這裡補的話，遷移分支會看到
+## 一堆它那個版本還不存在的欄位，那正是 `normalize()` 的順序註解在講的事。
+static func _repair_containers(target: Dictionary, defs: Dictionary) -> void:
+	for k: String in defs.keys():
+		if not target.has(k):
+			continue
+		var dv: Variant = defs[k]
+		var tv: Variant = target[k]
+		if dv is Dictionary:
+			if tv is Dictionary:
+				_repair_containers(tv, dv)
+			else:
+				target[k] = (dv as Dictionary).duplicate(true)
+		elif dv is Array:
+			if not (tv is Array):
+				target[k] = (dv as Array).duplicate(true)
+		elif tv is Dictionary or tv is Array:
+			target[k] = dv
 
 
 ## ★ 鏈式套用版本遷移（B1.4 起真的有分支了）。
@@ -397,9 +436,9 @@ func save_from(source: Dictionary) -> bool:
 
 
 func _read_raw() -> Dictionary:
-	if not FileAccess.file_exists(PATH):
+	if not FileAccess.file_exists(path):
 		return {}
-	var f := FileAccess.open(PATH, FileAccess.READ)
+	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
 		push_warning("存檔開啟失敗 err=%d，改用預設值" % FileAccess.get_open_error())
 		return {}
@@ -414,7 +453,7 @@ func _read_raw() -> Dictionary:
 
 ## 寫 .tmp → 讀回驗證 → 換掉主檔。中途失敗時主檔完好如初。
 func _write_atomic(d: Dictionary) -> bool:
-	var f := FileAccess.open(TMP_PATH, FileAccess.WRITE)
+	var f := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if f == null:
 		push_error("暫存檔寫入失敗 err=%d" % FileAccess.get_open_error())
 		return false
@@ -422,7 +461,7 @@ func _write_atomic(d: Dictionary) -> bool:
 	f.close()
 
 	# 驗證：讀不回來就不要動主檔。
-	var check := FileAccess.open(TMP_PATH, FileAccess.READ)
+	var check := FileAccess.open(tmp_path, FileAccess.READ)
 	if check == null or not (JSON.parse_string(check.get_as_text()) is Dictionary):
 		if check != null:
 			check.close()
@@ -434,9 +473,9 @@ func _write_atomic(d: Dictionary) -> bool:
 	if dir == null:
 		push_error("user:// 開啟失敗")
 		return false
-	if dir.file_exists("save.json"):
-		dir.remove("save.json")
-	var err := dir.rename("save.json.tmp", "save.json")
+	if dir.file_exists(path.get_file()):
+		dir.remove(path.get_file())
+	var err := dir.rename(tmp_path.get_file(), path.get_file())
 	if err != OK:
 		push_error("存檔改名失敗 err=%d" % err)
 		return false
