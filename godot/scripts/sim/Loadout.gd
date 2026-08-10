@@ -26,17 +26,22 @@ const Levels := preload("res://data/Levels.gd")
 ## ★ 這一份字典有哪些鍵。**測試列舉的就是它**——新增一軸要同時加在這裡，
 ## 而忘記加的下場是它根本進不了局，那是**吵的**（功能沒生效），
 ## 不是安靜的（洩進統一榜）。兩種漏法之中，這一種是安全的那一種。
-const KEYS: Array[String] = ["tech", "levels"]
+const KEYS: Array[String] = ["tech", "levels", "difficulty"]
 
 ## 什麼成長都沒有。`SessionState.setup()` 的預設值，也是統一配置榜拿到的東西。
 const NEUTRAL := {}
 
 
 ## 存檔 → 這一局帶進去的局外成長。
-static func of(save: Dictionary) -> Dictionary:
+##
+## ★ `difficulty` 不在存檔裡（B2.6）：它是**這一局的選擇**，由難度層選擇畫面
+## 傳進來。放進 loadout 而不是自成一個參數，是為了讓憲法 B3 那道閘仍然只有一道
+## ——統一配置榜恆為第 0 層，而那是 `Daily.meta_for()` 已經在做的事。
+static func of(save: Dictionary, difficulty: int = 0) -> Dictionary:
 	return {
 		"tech": (save.get("tech", {}) as Dictionary).get("unlocked", []),
 		"levels": save.get("levels", {}),
+		"difficulty": difficulty,
 	}
 
 
@@ -48,6 +53,11 @@ static func tech_of(meta: Dictionary) -> Array:
 ## 等級軸那一格（`Levels.apply()` 吃的那個字典）。
 static func levels_of(meta: Dictionary) -> Dictionary:
 	return meta.get("levels", {})
+
+
+## 難度層那一格（`Difficulty.apply()` 吃的那個數）。**沒有就是第 0 層。**
+static func difficulty_of(meta: Dictionary) -> int:
+	return int(meta.get("difficulty", 0))
 
 
 ## 這一份 loadout 是不是完全中性（沒有任何局外成長）。
@@ -62,5 +72,11 @@ static func is_neutral(meta: Dictionary) -> bool:
 		if v is Array and not (v as Array).is_empty():
 			return false
 		if v is Dictionary and not (v as Dictionary).is_empty():
+			return false
+		# ★ 純量軸（難度層，B2.6）。少了這一條，`{"difficulty": 3}` 會被判成中性
+		#   ——而這支函式唯一的工作就是回答「統一配置榜上這份 loadout 乾淨嗎」。
+		if typeof(v) == TYPE_INT and int(v) != 0:
+			return false
+		if typeof(v) == TYPE_FLOAT and not is_zero_approx(float(v)):
 			return false
 	return true

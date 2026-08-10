@@ -91,7 +91,7 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（17 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress）
+# 自動化測試（18 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress / difficulty）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -146,7 +146,13 @@ TL_CLICKTEST=1 TL_SHOT="C:/tmp/growth.png" TL_MUTE=1 TL_PANEL=tech <godot> --pat
 # 但看不出東西），所以配 TL_CLICKTEST——它會塞一顆星進去讓第一條亮起來再拍。
 TL_CLICKTEST=1 TL_SHOT="C:/tmp/ach.png" TL_MUTE=1 TL_PANEL=achievements <godot> --path godot --rendering-driver opengl3
 
-# ★ 無盡（B2.1a）：TL_PANEL=endless 直接進一局程序生成圖。
+# ★ 難度層（B2.6）：TL_PANEL=tiers 是無盡的入口（四張規則卡）。零進度時只有第 0 層
+# 是開的，其餘三張寫著解鎖條件——那是誠實的，但看不到解鎖之後的樣子，
+# 要看就配 TL_CLICKTEST（它會先把戰役塞成滿星、再塞一筆第 1 層的紀錄）。
+TL_SHOT="C:/tmp/tiers.png" TL_PANEL=tiers <godot> --path godot --rendering-driver opengl3
+
+# ★ 無盡（B2.1a）：TL_PANEL=endless 直接進一局程序生成圖（**第 0 層**，B2.6 之後仍不變
+#   ——那些斷言驗的是局內的東西，不該因為前面多一個選擇畫面就要多按一顆鈕）。
 # 種子走 Rng.next_seed()，所以**同一個 TL_SEED 開出的永遠是同一張圖**。
 # ⚠ 生成器的幾何用截圖判不出來（說明浮層要放下第一個節點才收、格子只有 32px）。
 #   要看路徑／橋／礦點的擺法，寫一支 --script 把 Maps.path_of() 印成 ASCII——
@@ -170,6 +176,9 @@ TL_CLICKTEST=1 TL_PANEL=campaign TL_MUTE=1 <godot> --path godot --rendering-driv
 TL_CLICKTEST=1 TL_PANEL=tech TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 成就（20 列全部建得出來、零進度時一條都沒有、達成的當下獎勵就在餘額裡、捲到底看得到最後一列）
 TL_CLICKTEST=1 TL_PANEL=achievements TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
+# 難度層（四張卡、零進度只開第 0 層、鎖著時說得出條件、解鎖階梯跳不過去、
+# 出擊真的帶著那一層的倍率進局——不是只有「畫面開起來了」）
+TL_CLICKTEST=1 TL_PANEL=tiers TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 每日挑戰（兩顆鈕點得到、種子是今天那一個、離線註記真的在畫面上）
 TL_CLICKTEST=1 TL_PANEL=daily TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 名冊（招募鈕真的扣券、連抽三次不重複、畢業後再按也不扣、抽到的進得了建造欄）
@@ -242,8 +251,8 @@ TheGame/
     ├── scripts/render/        Palette / Shapes / Motion（美術 token 實作）
     ├── scripts/ui/            UiKit
     ├── scripts/meta/          TycoonSim（純函式的**狀態機**）
-    ├── data/                  節點、角色、敵人、地圖、戰役、**科技**資料表
-    ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless
+    ├── data/                  節點、角色、敵人、地圖、戰役、科技、等級軸、成就、**難度層**資料表
+    ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / difficulty …
     └── assets/audio/          bgm/ 3 首、sfx/ 14 支（`assetgen/gen_audio.py` 生成）
 ```
 

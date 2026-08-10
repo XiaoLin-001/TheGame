@@ -76,7 +76,9 @@ func _migration_sv1_to_sv2(t: RefCounted) -> void:
 	}
 	var up: Dictionary = Save.normalize(old)
 	var stars: Dictionary = (up["campaign"] as Dictionary)["stars"]
-	t.eq(up["sv"], 2, "遷移後 sv 是 2")
+	# ★ 對的是 `SAVE_VERSION` 不是寫死的 2（B2.6 加 sv3 時這兩條紅了）：
+	#   這兩條要問的是「遷移鏈跑得完」，而不是「最新版恰好是第 2 版」。
+	t.eq(up["sv"], Save.SAVE_VERSION, "遷移後 sv 是最新版")
 	t.ok(not (up["campaign"] as Dictionary).has("cleared"), "cleared 已移除")
 	t.eq(int(stars["tidemouth"]), 3, "既有星數不被遷移壓低")
 	t.eq(int(stars["twinbay"]), 2, "既有星數原樣保留")
@@ -86,7 +88,7 @@ func _migration_sv1_to_sv2(t: RefCounted) -> void:
 
 	# ② 沒有 `sv` 的檔＝首版出貨的形狀，不是壞檔。
 	var no_sv: Dictionary = Save.normalize({"campaign": {"cleared": ["tidemouth"]}})
-	t.eq(no_sv["sv"], 2, "沒有 sv 的舊檔一樣跑得完遷移鏈")
+	t.eq(no_sv["sv"], Save.SAVE_VERSION, "沒有 sv 的舊檔一樣跑得完遷移鏈")
 	t.eq(
 		int(((no_sv["campaign"] as Dictionary)["stars"] as Dictionary)["tidemouth"]), 1,
 		"沒有 sv 的舊檔也補得到星數"

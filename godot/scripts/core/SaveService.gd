@@ -17,7 +17,8 @@ const Levels := preload("res://data/Levels.gd")
 const Achievements := preload("res://data/Achievements.gd")
 
 ## sv2（B1.4）：`campaign.cleared` 移除，改由 `campaign.stars` 推導。
-const SAVE_VERSION := 2
+## sv3（B2.6）：`endless.best_wave`／`best_output` 收進 `endless.best`（逐難度層一筆）。
+const SAVE_VERSION := 3
 
 const PATH := "user://save.json"
 const TMP_PATH := "user://save.json.tmp"
@@ -48,7 +49,14 @@ const DEFAULTS := {
 	# ★ B2.1a 落地的鍵。**沒有 bump `SAVE_VERSION`**——上面那段註解說的就是
 	# 這個情況：`_fill_defaults()` 在讀檔時補缺鍵，所以舊存檔讀進來自動長出
 	# 這一格 0/0。遷移分支是給「結構改動」用的，加一個新鍵不是結構改動。
-	"endless": {"best_wave": 0, "best_output": 0.0},
+	# ★ B2.1a 落地、B2.6 改結構（sv3）。`best` 的鍵是**難度層的字串**（"0".."3"），
+	# 值是 `{wave, output}`。改結構而不是在旁邊加一格「高難度的紀錄」：
+	# 同一個「12 波」在標準層與深潮層不是同一件事，共用一格會讓其中一個
+	# 永遠洗不掉另一個（而玩家兩邊都覺得自己那筆才對）。
+	#
+	# 鍵是字串不是整數：這一格要進 JSON，而 JSON 的物件鍵本來就只有字串
+	# ——存成整數的話，寫進去是 3、讀回來是 "3"，查表當場落空。
+	"endless": {"best": {}},
 	# ★ B2.2 落地的鍵。同樣**沒有 bump `SAVE_VERSION`**（理由同上：加鍵不是結構改動）。
 	# `date` ＝ `today` 那兩榜屬於哪一天；跨日時 `apply_daily()` 會把它推進 `history`。
 	"daily": {
@@ -125,6 +133,7 @@ static func migrate(d: Dictionary) -> Dictionary:
 	while sv < SAVE_VERSION:
 		match sv:
 			1: _migrate_sv1_to_sv2(d)
+			2: _migrate_sv2_to_sv3(d)
 		sv += 1
 	d["sv"] = SAVE_VERSION
 	return d
@@ -144,6 +153,28 @@ static func _migrate_sv1_to_sv2(d: Dictionary) -> void:
 		stars[String(id)] = maxi(1, int(stars.get(String(id), 0)))
 	campaign["stars"] = stars
 	campaign.erase("cleared")
+
+
+## sv2 → sv3：無盡的個人最佳收進 `endless.best`，鍵是難度層（B2.6、§7.16）。
+##
+## 舊檔的那一筆**一律記在第 0 層**——它是在還沒有難度層的世界裡打出來的，
+## 而第 0 層就是那個世界的規則。丟掉它會讓玩家開遊戲第一件事是看到紀錄歸零。
+##
+## 兩欄都是 0 就不建那一格：一個 `{"0": {"wave": 0, "output": 0.0}}` 會讓
+## 「從沒玩過無盡」看起來像「打過但 0 波」。
+static func _migrate_sv2_to_sv3(d: Dictionary) -> void:
+	var e: Dictionary = d.get("endless", {})
+	if not e.has("best_wave") and not e.has("best_output"):
+		return
+	var wave := int(e.get("best_wave", 0))
+	var output := float(e.get("best_output", 0.0))
+	e.erase("best_wave")
+	e.erase("best_output")
+	if wave > 0 or output > 0.0:
+		var best: Dictionary = e.get("best", {})
+		best["0"] = {"wave": wave, "output": output}
+		e["best"] = best
+	d["endless"] = e
 
 
 ## ★ 把一局戰役的結果寫進存檔（B1.2、`10_GDD.md` §7.9）。**只增不減**：
@@ -169,14 +200,24 @@ static func apply_result(d: Dictionary, level_id: String, stars: int, reward: in
 ## 刻意不是「波次高的那一局整組蓋過去」：波次與產能積分量的是兩件事
 ## （撐得久 vs 產線好），把它們綁成一組會讓一局「波次 +1、積分砍半」
 ## 洗掉玩家真正的最佳產線紀錄。回傳哪幾欄破了紀錄，讓局末面板講得出來。
-static func apply_endless(d: Dictionary, wave: int, output: float) -> Dictionary:
+##
+## ★ sv3 起**逐難度層各一筆**（B2.6）：`tier` 決定寫進哪一格。
+## 難度層是規則差異不是分數係數——把高層的成績乘一個倍率丟進同一張榜，
+## 等於宣告「第 3 層的 8 波比第 0 層的 20 波好」，而那是一個沒有人能驗證的匯率。
+static func apply_endless(d: Dictionary, wave: int, output: float, tier: int = 0) -> Dictionary:
 	var e: Dictionary = d.get("endless", {})
-	var new_wave := wave > int(e.get("best_wave", 0))
-	var new_output := output > float(e.get("best_output", 0.0))
+	var all: Dictionary = e.get("best", {})
+	var key := str(maxi(0, tier))
+	var row: Dictionary = all.get(key, {})
+	var new_wave := wave > int(row.get("wave", 0))
+	var new_output := output > float(row.get("output", 0.0))
 	if new_wave:
-		e["best_wave"] = wave
+		row["wave"] = wave
 	if new_output:
-		e["best_output"] = output
+		row["output"] = output
+	if not row.is_empty():
+		all[key] = row
+		e["best"] = all
 	d["endless"] = e
 	return {"wave": new_wave, "output": new_output}
 

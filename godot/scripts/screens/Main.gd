@@ -12,6 +12,8 @@ const DailyScreen := preload("res://scripts/screens/DailyScreen.gd")
 const RosterScreen := preload("res://scripts/screens/Roster.gd")
 const TycoonScreen := preload("res://scripts/screens/TycoonOrders.gd")
 const AchievementsScreen := preload("res://scripts/screens/Achievements.gd")
+const TiersScreen := preload("res://scripts/screens/Tiers.gd")
+const Difficulty := preload("res://data/Difficulty.gd")
 const TycoonSim := preload("res://scripts/meta/TycoonSim.gd")
 const AchievementsData := preload("res://data/Achievements.gd")
 const CampaignData := preload("res://data/Campaign.gd")
@@ -33,7 +35,11 @@ const PANEL_SCREENS := {
 	"battle": BattleScreen,
 	"sandbox": BattleScreen,
 	"campaign": CampaignScreen,
+	# ★ `endless` 仍然直達局內畫面（第 0 層），**不改**：B2.1a 起的截圖與
+	#   大圖導引自檢全走它，而那些驗的是局內的東西，不該因為前面多一個選擇畫面
+	#   就要多按一顆鈕。難度層選擇畫面自己是 `tiers`（B2.6）。
 	"endless": BattleScreen,
+	"tiers": TiersScreen,
 	"daily": DailyScreen,
 	"roster": RosterScreen,
 	# ★ `tycoon` 指的是**訂單板**（第一個畫面）。產線編輯不在這張表上——
@@ -152,24 +158,34 @@ func _click_selftest() -> void:
 
 	await _escape()
 	await UiKit.click(_menu_button("無盡"))
+	# ★ B2.6 起「無盡」先開難度層選擇（`screens/Tiers.gd`），不是直接開局。
+	#   這裡按到底：選擇畫面 → 第 0 層出擊 → 局內。
+	#
 	# ★ **不是看 `endless_seed` 有沒有值**——那個欄位在畫面已經用錯地圖之後
 	#   才被設上一樣是 true（B2.1a 第一版斷言就是這樣綠的，截圖才抓到打開的
 	#   是淺灘）。要問的是「這一局真的用了生成圖嗎」，所以看局面裡的地圖。
+	var to_tiers: bool = _child_script() == TiersScreen
 	var seeded := 0
 	var generated := false
-	for c: Node in get_children():
-		if c.get_script() == BattleScreen:
-			seeded = int(c.endless_seed)
-			generated = bool((c.s.map as Dictionary).get("endless", false))
-	var to_endless: bool = seeded != 0 and generated
+	if to_tiers:
+		var tiers: Node = null
+		for c: Node in get_children():
+			if c.get_script() == TiersScreen:
+				tiers = c
+		await UiKit.click(tiers._enter_buttons[0])
+		for c: Node in tiers.get_children():
+			if c.get_script() == BattleScreen:
+				seeded = int(c.endless_seed)
+				generated = bool((c.s.map as Dictionary).get("endless", false))
+	var to_endless: bool = to_tiers and seeded != 0 and generated
 
 	var ok: bool = (
 		count and on_screen and to_campaign and back_home and to_tech and to_ach and to_daily
 		and to_roster and to_tycoon and to_endless
 	)
-	print("[TL_CLICKTEST/title] buttons=%s on_screen=%s(切到 %s) campaign=%s esc_home=%s tech=%s ach=%s daily=%s roster=%s tycoon=%s endless=%s(seed=%d gen=%s) → %s" % [
+	print("[TL_CLICKTEST/title] buttons=%s on_screen=%s(切到 %s) campaign=%s esc_home=%s tech=%s ach=%s daily=%s roster=%s tycoon=%s tiers=%s endless=%s(seed=%d gen=%s) → %s" % [
 		count, on_screen, clipped, to_campaign, back_home, to_tech, to_ach, to_daily, to_roster,
-		to_tycoon, to_endless, seeded, generated, "PASS" if ok else "FAIL"
+		to_tycoon, to_tiers, to_endless, seeded, generated, "PASS" if ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)
@@ -285,7 +301,7 @@ func _build() -> void:
 	_menu_buttons.clear()
 	for entry: Array in [
 		["戰役　%s" % _campaign_progress(), _enter.bind(CampaignScreen, _campaign_level)],
-		["無盡　%s" % _endless_best(), _enter.bind(BattleScreen, _endless)],
+		["無盡　%s" % _endless_best(), _enter.bind(TiersScreen)],
 		["每日挑戰", _enter.bind(DailyScreen, _daily)],
 		["名冊　%s" % _roster_progress(), _enter.bind(RosterScreen)],
 		["潮汐公司　%s" % _tycoon_progress(), _enter.bind(TycoonScreen)],
@@ -328,9 +344,18 @@ func _campaign_progress() -> String:
 
 ## 無盡個人最佳。**沒有紀錄時就說沒有**，不顯示「0 波」——
 ## 0 波看起來像一個很爛的成績，而事實是還沒玩過（同 `_campaign_progress` 的精神）。
+##
+## ★ 逐難度層各一筆紀錄（B2.6）。主選單只有一行，所以顯示的是**最高的那一層
+## 打出來的最好成績**——它比「所有層裡波數最大的那一筆」更接近玩家的自我認知
+## （在深潮撐 8 波的人不會覺得自己的紀錄是標準層的 20 波）。
 func _endless_best() -> String:
-	var best := int((GameState.data.get("endless", {}) as Dictionary).get("best_wave", 0))
-	return "尚無紀錄" if best <= 0 else "最高 %d 波" % best
+	var top := Difficulty.unlocked(GameState.data)
+	while top > 0 and int(Difficulty.best(GameState.data, top)["wave"]) <= 0:
+		top -= 1
+	var best := int(Difficulty.best(GameState.data, top)["wave"])
+	if best <= 0:
+		return "尚無紀錄"
+	return "最高 %d 波%s" % [best, "・%s" % Difficulty.of(top)["name"] if top > 0 else ""]
 
 
 ## 名冊進度。**有券的時候就在主選單上說**（同 `_campaign_progress` 的精神：

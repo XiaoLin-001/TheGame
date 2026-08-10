@@ -196,7 +196,9 @@ static func _advance_and_damage(s: RefCounted, aura: Array = []) -> void:
 		var e: Dictionary = s.enemies[i]
 		var def := Enemies.of(String(e["type"]))
 		var cell := Tide.cell_of(s.path, float(e["progress"]))
-		var dmg := float(def.get("dmg", 0.0)) * TICK
+		# 難度層 2+ 讓敵人啃得更快（`data/Difficulty.gd`）。乘在**傷害**上而不是
+		# 半徑或速度上：那兩個會改「誰挨得到打」，而規則卡上寫的是「破壞建築 ×N」。
+		var dmg := float(def.get("dmg", 0.0)) * TICK * float(s.mods["enemy_damage_mult"])
 
 		for off: Vector2i in BLAST_CELLS:
 			var at := cell + off

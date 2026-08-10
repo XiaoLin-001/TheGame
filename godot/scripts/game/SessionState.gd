@@ -14,6 +14,7 @@ const NodeDefs := preload("res://data/NodeDefs.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const Tech := preload("res://data/Tech.gd")
 const Levels := preload("res://data/Levels.gd")
+const Difficulty := preload("res://data/Difficulty.gd")
 const Loadout := preload("res://scripts/sim/Loadout.gd")
 
 ## 地圖原始資料與它的集合形式（查詢用，每局只轉一次）。
@@ -27,6 +28,11 @@ var sets: Dictionary = {}
 ## 預設是 `Tech.NO_MODS`（全 1 / 全 0），所以**任何沒傳 mods 的呼叫端行為完全不變**
 ## ——測試、沙盤、示範佈局都走這條，B1.3 之前的數字因此逐項不動。
 var mods: Dictionary = Tech.NO_MODS.duplicate()
+
+## ★ 這一局的難度層（B2.6、§7.16）。**0 ＝ 標準**，戰役／測試圖／每日恆為 0。
+## 倍率本身已經進了 `mods`；留這個欄位是因為畫面與局末結算要說得出「這是第幾層」
+## ——從 `mods` 反推層數要解三個聯立，而那不是一個畫面該做的事。
+var difficulty: int = 0
 
 ## 帳上礦砂。**只有送達核心的礦砂才進得來**（`10_GDD.md` §7.3）。
 var ore: float = 0.0
@@ -149,7 +155,9 @@ func setup(map_def: Dictionary, unlocked: Array = [], meta: Dictionary = {}) -> 
 	map = map_def
 	sets = Maps.to_sets(map_def)
 	sets["unlocked"] = unlocked
+	difficulty = Loadout.difficulty_of(meta)
 	mods = Levels.apply(Tech.mods(Loadout.tech_of(meta)), Loadout.levels_of(meta))
+	Difficulty.apply(mods, difficulty)
 	path = Maps.path_of(map_def)
 	ore = float(map_def.get("start_ore", 0))
 	priorities = NodeDefs.DEFAULT_PRIORITY.duplicate()
@@ -207,7 +215,8 @@ func add_enemy(type: String) -> int:
 		"id": id,
 		"type": type,
 		"progress": 0.0,
-		"hp": float(Enemies.of(type).get("hp", 1.0)) * hp_mult,
+		# 三個倍率乘在一起：敵人自己的血（§7.5）× 無盡波次曲線 × 難度層。
+		"hp": float(Enemies.of(type).get("hp", 1.0)) * hp_mult * float(mods["enemy_hp_mult"]),
 	})
 	return id
 

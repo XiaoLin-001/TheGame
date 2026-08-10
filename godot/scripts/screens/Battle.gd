@@ -22,6 +22,7 @@ const Blueprint := preload("res://scripts/sim/Blueprint.gd")
 const Tech := preload("res://data/Tech.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 const RosterData := preload("res://data/Roster.gd")
+const Difficulty := preload("res://data/Difficulty.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
 
@@ -133,6 +134,10 @@ var level: Dictionary = {}
 ## 而無盡沒有星等也沒有關卡獎勵——共用會換來一堆 `if level.has(...)`。
 ## 由呼叫端在 `add_child()` 之前指派，同 `level`。
 var endless_seed: int = 0
+## ★ 這一局的難度層（B2.6、§7.16）。**0 ＝ 標準**，只有無盡帶得進來——
+## 戰役是難度階梯（§7.9）、每日兩榜要可比（§3.10），兩者都恆為 0。
+## 由呼叫端在 `add_child()` 之前指派，同 `level`／`endless_seed`。
+var difficulty: int = 0
 ## ★ 每日挑戰打的是哪一張榜（B2.2）。`""` ＝ 不是每日局。
 ## **地圖仍然走 `endless_seed`**——每日挑戰就是無盡跑在一個固定的日種子上
 ## （§3.10「兩榜共用同一套地圖、波次、模擬與計分」），這個欄位只決定兩件事：
@@ -307,7 +312,7 @@ func _setup_session() -> void:
 	# ★ 局外科技（B1.3）。有測試鉤子時 `SaveService.persist=false` → 存檔是預設值
 	#   → `unlocked` 為空 → mods 全中性，所以 `TL_*` 的任何一張截圖與任何一支自檢
 	#   都不會因為這台機器上玩家買了什麼科技而改變（RG-61 的同一條紀律）。
-	var meta := Loadout.of(GameState.data)
+	var meta := Loadout.of(GameState.data, difficulty)
 	if not level.is_empty():
 		s.setup(level["map"], level["unlocked"], meta)
 	elif endless_seed != 0:
@@ -3796,6 +3801,9 @@ func _phase_text() -> String:
 
 
 func _phase_parts() -> Array:
+	# ★ 難度層掛在附屬那一段（B2.6）。**只在第 1 層以上出現**：第 0 層寫「標準」
+	#   等於在每一局的頂欄佔一格去講「沒有任何額外規則」。
+	var tier := "　%s" % Difficulty.of(s.difficulty)["name"] if s.difficulty > 0 else ""
 	match s.phase:
 		"prep":
 			var left: float = maxf(0.0, s.prep_time() - s.phase_time)
@@ -3805,9 +3813,9 @@ func _phase_parts() -> Array:
 			# 駐足在核心的敵人不會隨波次結束而消失（§3.5）。不講的話，
 			# 玩家會看到核心在準備期掉血卻找不到原因。
 			var left_over := "　殘敵 %d" % s.enemies.size() if not s.enemies.is_empty() else ""
-			return ["準備期 %0.1fs" % left, "下一波 %d%s" % [s.wave_index + 1, left_over]]
+			return ["準備期 %0.1fs" % left, "下一波 %d%s%s" % [s.wave_index + 1, left_over, tier]]
 		"wave":
-			return ["第 %d 波" % s.wave_index, "敵人 %d" % s.enemies.size()]
+			return ["第 %d 波" % s.wave_index, "敵人 %d%s" % [s.enemies.size(), tier]]
 		"won":
 			return ["通關", ""]
 		_:
@@ -3880,16 +3888,18 @@ func _refresh_over() -> void:
 		#   來源一樣，但無盡是「隨便一張圖能撐多久」、每日是「今天這張圖」。
 		#   混在一起會讓無盡的紀錄被一張特別好打的日圖洗掉。
 		var daily: bool = daily_board != ""
+		# ★ 無盡的紀錄逐難度層各一筆（sv3、`data/Difficulty.gd`）：拿第 0 層的
+		#   紀錄去比第 3 層的成績，「破紀錄」那三個字就會變成一句謊。
 		var slot: Dictionary = (
 			((GameState.data.get("daily", {}) as Dictionary).get("today", {}) as Dictionary)
 				.get(daily_board, {})
-			if daily else GameState.data.get("endless", {})
+			if daily else Difficulty.best(GameState.data, difficulty)
 		)
-		var prev_wave := int(slot.get("wave" if daily else "best_wave", 0))
-		var prev_output := float(slot.get("output" if daily else "best_output", 0.0))
+		var prev_wave := int(slot.get("wave", 0))
+		var prev_output := float(slot.get("output", 0.0))
 		var fresh := (
 			SaveService.apply_daily(GameState.data, daily_date, daily_board, waves, score)
-			if daily else SaveService.apply_endless(GameState.data, waves, score)
+			if daily else SaveService.apply_endless(GameState.data, waves, score, difficulty)
 		)
 		SaveService.save_from(GameState.data)
 		if daily:
@@ -3897,6 +3907,11 @@ func _refresh_over() -> void:
 				"每日挑戰　%s　%s" % [
 					daily_date, "統一配置" if daily_board == Daily.UNIFORM else "自由配置"
 				], 13, Palette.ORDER_CYAN, false
+			))
+		elif difficulty > 0:
+			# 紀錄記在哪一層要說出來，否則「最高波次 8 波」看起來像退步。
+			col.add_child(UiKit.label(
+				"無盡　%s" % Difficulty.name_of(difficulty), 13, Palette.WARN_ORANGE, false
 			))
 		for line: Array in [
 			["最高波次　%d 波" % waves, bool(fresh["wave"]), "前次 %d 波" % prev_wave],
