@@ -67,6 +67,8 @@ export/
 shots/
 *.log
 *.tmp
+# `qa/copy_extract.py` 的中間產物
+godot/strings.txt
 tmp/
 .scratch/
 

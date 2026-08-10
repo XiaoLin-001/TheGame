@@ -68,13 +68,13 @@ func _build() -> void:
 	# ★ **三種產出各自說清楚它能換什麼**（§3.8：產出全部流向塔防）。
 	#   一個沒有用途說明的數字會讓玩家以為這是一個獨立的分數。
 	col.add_child(UiKit.label(
-		"資金 %s（擴廠）　升級材料 %d（塔的等級・B2.7 開放兌換）　招募券 %d（名冊）" % [
+		"資金 %s（擴廠）　升級材料 %d（局外成長）　招募券 %d（名冊）" % [
 			UiKit.commas(int(s["credits"])), int(s["components"]), int(s["tokens"])
 		], 16, Palette.ENERGY_AMBER, false
 	))
 	if _settled > 0.0:
 		col.add_child(UiKit.label(
-			"你離開了 %s，產線照跑——做完的訂單停在產線位上等你收（這就是倉儲上限）。"
+			"你離開了 %s，產線照跑。做完的訂單停在產線位上等你收。"
 				% _duration(_settled),
 			13, Palette.OK_GREEN, false
 		))

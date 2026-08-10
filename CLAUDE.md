@@ -104,6 +104,10 @@ python assetgen/gen_audio.py && <godot> --headless --path godot --import
 # TL_STRESS 的模擬是**凍結**的——那一份佈局單 tick 要 30 秒，不凍結就量不到渲染。
 TL_STRESS=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 
+# ★ 文案稽核（B2.7.3）。規則在 `20_ART_DIRECTION.md` §3.5：**介面說事實，玩家自己下結論**。
+# 基準：破折號 8 條（全是錯誤訊息的補救步驟）、開發代號 0 條、`**` 0 條。
+cd godot && python ../qa/copy_extract.py && python ../qa/copy_tells.py
+
 # 截圖驗證（自動靜音、約 3 秒後存圖並退出）
 # TL_SHOT 存在時模擬凍結在 TL_DEMO_TICKS 那一格 → 同參數在任何機器上拍出同一張圖
 TL_SHOT="C:/tmp/shot.png" TL_PANEL=battle TL_SEED=42 <godot> --path godot --rendering-driver opengl3
@@ -226,6 +230,7 @@ TheGame/
 │   ├── 40_PRODUCTION_PLAN.md  生產計畫（里程碑、批次、風險、砍案）
 │   ├── 50_QA_PLAN.md          QA（五層梯、bug 登記、回歸清單）
 │   └── agents/                外掛 skill 的設定（見「Agent skills」）
+├── qa/copy_*.py               文案稽核（掃玩家字串 ＋ 比對 §3.5 的四條禁令）
 ├── assetgen/gen_audio.py      音源產生器（純 Python 標準庫；**音源的原始碼**）
 ├── tools/godot/               （gitignore）Godot console exe
 └── godot/

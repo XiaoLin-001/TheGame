@@ -140,7 +140,7 @@ func _build() -> void:
 	for v: Array in VOLUMES:
 		col.add_child(_volume_row(String(v[0]), String(v[1])))
 	col.add_child(UiKit.label(
-		"※ 音樂分兩層：準備期只有底層，開打時打擊層淡入——是同一首曲子，不換曲。",
+		"※ 音樂分兩層：準備期只有底層，開打時打擊層淡入。同一首曲子，不換曲。",
 		13, Palette.TEXT_DISABLED, false
 	))
 

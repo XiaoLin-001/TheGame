@@ -96,12 +96,11 @@ func _build() -> void:
 	col.add_child(UiKit.label(
 		"公司等級 %d" % Achievements.company_level(save), 32, Palette.ORDER_BRIGHT, false
 	))
-	# ★ 公司等級是**推導的彙總，不發獎勵**（§7.15）——所以這裡就要說清楚它是什麼，
-	#   不然玩家會等一個永遠不會來的獎勵。
+	# ★ 一行就好。原本這裡另外寫了「它只是一個彙總、不另外發獎勵」——
+	#   那是在回答一個玩家還沒問的問題，而且讀起來像在替自己的設計辩護。
 	col.add_child(UiKit.label(
-		"塔防與潮汐公司的進度都會推它。離下一級 %d／%d 點——"
-		% [progress[0], progress[1]]
-		+ "它只是一個彙總，不另外發獎勵；獎勵在下面每一條成就上。",
+		"塔防與潮汐公司的進度都會推它。離下一級 %d／%d 點。"
+		% [progress[0], progress[1]],
 		14, Palette.TEXT_SECONDARY, false
 	))
 	col.add_child(UiKit.label(
@@ -111,7 +110,7 @@ func _build() -> void:
 		], 16, Palette.ENERGY_AMBER, false
 	))
 	col.add_child(UiKit.label(
-		"沒有領取鈕：達成的當下獎勵就已經在上面的餘額裡了。",
+		"達成的當下就入帳，沒有領取鈕。",
 		13, Palette.TEXT_SECONDARY, false
 	))
 

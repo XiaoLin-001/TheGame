@@ -31,7 +31,7 @@ const NODES := [
 	{
 		"id": "cap1", "branch": PRODUCTION, "line": "cap", "tier": 1,
 		"name": "導管擴容 I", "effect": "cap_bonus", "value": 2.0,
-		"desc": "所有導管的**基礎**吞吐 +2（10 → 12），與局內加粗疊加。",
+		"desc": "所有導管的「基礎」吞吐 +2（10 → 12），與局內加粗疊加。",
 	},
 	{
 		"id": "cap2", "branch": PRODUCTION, "line": "cap", "tier": 2,
@@ -56,7 +56,7 @@ const NODES := [
 	{
 		"id": "eff1", "branch": DEFENSE, "line": "eff", "tier": 1,
 		"name": "能量效率 I", "effect": "engage_mult", "value": 0.92,
-		"desc": "塔的**交戰**耗能 −8%（待機本來就是 0）。",
+		"desc": "塔的「交戰」耗能 −8%（待機本來就是 0）。",
 	},
 	{
 		"id": "eff2", "branch": DEFENSE, "line": "eff", "tier": 2,
@@ -81,7 +81,7 @@ const NODES := [
 	{
 		"id": "bp1", "branch": LOGISTICS, "line": "bp", "tier": 1,
 		"name": "藍圖槽 I", "effect": "blueprint_slots", "value": 1.0,
-		"desc": "藍圖槽 +1。（藍圖庫本體排 M2，先把槽位存起來。）",
+		"desc": "藍圖槽 +1。局內框選一段產線存成藍圖，下一局一鍵展開。",
 	},
 	{
 		"id": "bp2", "branch": LOGISTICS, "line": "bp", "tier": 2,

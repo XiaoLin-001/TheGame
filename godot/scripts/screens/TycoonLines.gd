@@ -51,9 +51,9 @@ func _build() -> void:
 	#   B0.7.1／B0.7.3／B1.1 各犯過一次，這是第四次（截圖當場抓到）。
 	#   **強調一律用「」。**
 	col.add_child(UiKit.label(
-		"產線位 %d 個・已接 %d 張。一個產線位一次做一張，「做完就停在那裡等你收成」"
+		"產線位 %d 個・已接 %d 張。一個產線位一次做一張，"
 		% [TycoonSim.slots(level), orders.size()]
-		+ "——這就是倉儲上限，離線再久也不會超過它。",
+		+ "做完就停在那裡等你收成，離線再久也不會多做。",
 		13, Palette.TEXT_SECONDARY, false
 	))
 
@@ -76,7 +76,7 @@ func _build() -> void:
 	var idle := _idle_indices()
 	if not idle.is_empty():
 		list.add_child(UiKit.label(
-			"未上線的 %d 張完全不會動——它們不會自己排隊補上。" % idle.size(),
+			"未上線的 %d 張不會動，也不會自己排隊補上。" % idle.size(),
 			13, Palette.WARN_ORANGE, false
 		))
 
@@ -107,7 +107,7 @@ func _line_row(line: int) -> Control:
 		else:
 			tone = Palette.ENERGY_AMBER
 	else:
-		head += "空著——沒有產出"
+		head += "空著，沒有產出"
 		tone = Palette.WARN_ORANGE
 	col.add_child(UiKit.label(head, 16, tone, false))
 
@@ -133,7 +133,7 @@ func _line_row(line: int) -> Control:
 		row.add_child(UiKit.touchable(off))
 	if row.get_child_count() == 0:
 		col.add_child(UiKit.label(
-			"沒有可以換上來的訂單——先到訂單板接一張。", 13, Palette.TEXT_DISABLED, false
+			"沒有可以換上來的訂單。先到訂單板接一張。", 13, Palette.TEXT_DISABLED, false
 		))
 	return box
 
