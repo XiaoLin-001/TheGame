@@ -527,6 +527,16 @@ func _glyph_selftest() -> void:
 			for e: Dictionary in s.enemies:
 				if int(e["id"]) == id:
 					e["progress"] = float(4 + i * 3)
+	# ★ 合照裡順便排出**升級級數的階梯**（B3.5）：第 2/3/4 座各設 1/2/3 級。
+	#   級數標記是節點上緣 5×4 的小方點，在 fit 倍率下只有幾個像素——
+	#   「一級和三級分得出來嗎」只有人眼判得了，而那需要它們排在一起。
+	#   直接設欄位不走 `upgrade_node()`：這是**畫面**的驗收，不是規則的
+	#   （規則由 `combat_test` 的 21 條斷言顧）。
+	if gallery:
+		for k in 3:
+			var idx := k + 1
+			if idx < s.nodes.size():
+				(s.nodes[idx] as Dictionary)["level"] = k + 1
 	# ★ **擺放預覽也留在同一張圖上**（B3.4）。它擺在那一排真節點的正上方，
 	#   所以這張圖同時回答兩件事：預覽畫的是不是那隻角色的形狀、
 	#   以及它和真的蓋出來那一個長不長得一樣。
@@ -672,6 +682,24 @@ func _click_selftest() -> void:
 		await get_tree().process_frame
 	var short_diag: int = s.conduit_near(Vector2(6.5, 12.5))
 	var upgraded: bool = short_diag >= 0 and int((s.conduits[short_diag])["level"]) == 1
+
+	# ★ 局內臨時升級一座**建築**（§4.3、B3.5）。同一顆「升級」鈕，點在節點上。
+	#   走完整輸入路徑，因為這是一個新的點擊語意——舊的行為是「點節點＝報錯」。
+	#   斷言三件事：級數真的加了、礦砂**真的扣了**、而且扣的是那個價
+	#   （只驗級數的話，一個免費升級的實作照樣全綠）。
+	var lvl_cell := Vector2i(6, 12)
+	var ore_before: float = s.ore
+	var price := Build.node_upgrade_cost(NodeDefs.cost("relay"), 0)
+	_click(lvl_cell)
+	for _i in 3:
+		await get_tree().process_frame
+	var node_lvl: bool = int(s.node_at(lvl_cell).get("level", 0)) == 1
+	var node_paid: bool = is_equal_approx(s.ore, ore_before - float(price))
+	# 上限是規則：連點五次也只到 3 級。
+	for _i in 5:
+		_click(lvl_cell)
+		await get_tree().process_frame
+	var node_cap: bool = int(s.node_at(lvl_cell).get("level", 0)) == Build.NODE_MAX_LEVEL
 
 	# ★ 拖曳拉線（B1.6.2）：**全程停在建造模式**。會壞的地方有兩個——按下時
 	#   沒把起點記起來、放開的事件沒被路由到——而兩個都只有真的送出
@@ -1058,12 +1086,14 @@ func _click_selftest() -> void:
 		placed and rejected and diag_placed and wired and upgraded and dragged and panned
 		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
 		and view_ok and menu_ok and audio_ok and over_ok and bar_hint_clear and hint_inside
+		and node_lvl and node_paid and node_cap
 		and bp_saved and bp_has_nodes and bp_expanded and bp_short and bp_fits
 	)
-	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s bar_hint=%s(底欄右緣 %.0f／提示 x %.0f) hint_in=%s → %s" % [
+	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s bar_hint=%s(底欄右緣 %.0f／提示 x %.0f) hint_in=%s node_lv=%s(付款 %s／上限 %s) → %s" % [
 		placed, rejected, diag_placed, wired, upgraded, dragged, panned, reachable, alloy_gated,
 		energy_ok, codex_ok, prio_ok, view_ok, menu_ok, audio_ok, over_ok,
 		bar_hint_clear, bar_rect.end.x, _hint.global_position.x, hint_inside,
+		node_lvl, node_paid, node_cap,
 		"PASS" if ok else "FAIL"
 	])
 	print("[TL_CLICKTEST/audio] prep_music=%s wave_hush=%s wave_sting=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s knell_field=%s" % [
@@ -1618,14 +1648,24 @@ func _act(cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> void:
 				AudioBus.play("build_place")
 			_message = _text_of(code_b)
 		Mode.UPGRADE:
-			var ci: int = s.conduit_near(p)
-			if ci < 0:
-				_message = "加粗模式：請點一段導管（不是節點）"
+			# ★ 同一顆鈕升兩種東西（B3.5）：**點在節點上就升那座建築**（§4.3），
+			#   點在兩節點之間就加粗那條線（§7.2）。
+			#   不另開一個模式：兩件事的玩家意圖是同一個（「這裡要更強」），
+			#   而底欄的模式鈕在 B2.4.2 已經因為十三種節點擠過一次（§7.1 A-1）。
+			if not s.node_at(cell).is_empty():
+				var code_n := BuildController.upgrade_node(s, cell)
+				if code_n == Build.OK:
+					AudioBus.play("build_place")
+				_message = _text_of(code_n)
 			else:
-				var code_u := BuildController.upgrade(s, ci)
-				if code_u == Build.OK:
-					AudioBus.play("build_wire")
-				_message = _text_of(code_u)
+				var ci: int = s.conduit_near(p)
+				if ci < 0:
+					_message = "升級模式：請點一座建築，或點兩個節點之間的導管"
+				else:
+					var code_u := BuildController.upgrade(s, ci)
+					if code_u == Build.OK:
+						AudioBus.play("build_wire")
+					_message = _text_of(code_u)
 		Mode.DEMOLISH:
 			var before_d: int = s.nodes.size()
 			var code_d := BuildController.demolish(s, cell, p)
@@ -2479,6 +2519,16 @@ func _draw_nodes() -> void:
 			draw_rect(Rect2(at, bar), Palette.alpha(Palette.BG_DEEP, 0.8))
 			draw_rect(Rect2(at, Vector2(bar.x * frac, bar.y)), Palette.WARN_ORANGE)
 		_draw_node_body(n, p)
+		# ★ 局內升級的級數（§4.3、B3.5）：**節點上緣的小方點**，一級一顆。
+		#   放在上緣是因為下緣、外圈、中心都被佔走了——血條在下（y+15）、
+		#   交戰環與缺料徽章在外圈與角落。§4.3b：同一個位置上的兩個訊息，
+		#   換顏色不夠，要換位置或形狀。
+		#   用 `alloy.steel` 不是青或琥珀：那兩個各自專屬秩序與能量（§1.1 配色紀律），
+		#   而「這座被我升過」跨越生產側與防線側，不屬於任何一邊。
+		var lv := int(n.get("level", 0))
+		for k in lv:
+			draw_rect(Rect2(p + Vector2(-9.0 + float(k) * 8.0, -19.0), Vector2(5, 4)),
+				Palette.ALLOY_STEEL)
 		_draw_threat(n["cell"], p)
 		_draw_engaged(n, p)
 		_draw_badge(n, p)
@@ -3268,7 +3318,7 @@ func _build_ui() -> void:
 	modes.add_theme_constant_override("h_separation", 2)
 	modes.add_theme_constant_override("v_separation", 2)
 	col.add_child(modes)
-	for pair: Array in [[Mode.UPGRADE, "加粗"], [Mode.DEMOLISH, "拆除"], [Mode.BLUEPRINT, "藍圖"]]:
+	for pair: Array in [[Mode.UPGRADE, "升級"], [Mode.DEMOLISH, "拆除"], [Mode.BLUEPRINT, "藍圖"]]:
 		var b := _tool_button(group, String(pair[1]))
 		b.custom_minimum_size = Vector2(54, 0)   # 兩欄要塞進 112px 的欄寬
 		b.pressed.connect(_on_mode.bind(int(pair[0])))
@@ -3483,7 +3533,8 @@ func _build_help_panel() -> void:
 		"操作　左鍵做事、中鍵移動視野、滾輪縮放、ESC 開選單。沒有右鍵",
 		"　蓋節點：左欄選一種 → 左鍵點地圖上的一格",
 		"　拉導管：從一個節點按住左鍵，拖到另一個節點放開（隨時都能拖，不用切模式）",
-		"　加　粗：「加粗」→ 點導管的中間（不是兩端的節點）",
+		"　升　級：「升級」→ 點一座建築（效果與耗能同時 +25%／級，上限 3 級，隨局結束消失）",
+		"　　　　　或點導管的中間（不是兩端的節點）＝加粗那條線",
 		"　拆　除：「拆除」→ 點節點或導管，返還 75%",
 		"　移　動：按住滑鼠中鍵拖動地圖（放大之後才需要）",
 		"",
@@ -4343,7 +4394,13 @@ func _refresh_hint() -> void:
 		Mode.UPGRADE:
 			# 上限寫成算出來的：科技「導管擴容」會把基礎值推到 16（滿配 34），
 			# 寫死「→28」在買過科技之後就是錯的（B1.3）。
-			parts.append("加粗：左鍵點一段導管的「中間」（不是兩端的節點）。每級 +6 吞吐，上限 3 級（→%d）。1 級 20 礦砂；2 級 40 礦砂＋20 合金；3 級 60 礦砂＋50 合金。" % int(
+			# ★ 兩件事一句話講完（B3.5）：點建築＝升它，點線＝加粗它。
+			#   建築那半要**同時講耗能**——只講「+25% 效果」是漏掉一半的價目表，
+			#   而漏掉的那一半正是玩家會被咬到的那一半（一座 3 級稜鏡吃 35/秒）。
+			parts.append("升級：左鍵點一座建築 → 效果與耗能同時 +%d%%／級，上限 %d 級（價 ＝ 造價的半／全／一倍半），隨局結束消失。" % [
+				int(Build.NODE_STEP * 100.0), Build.NODE_MAX_LEVEL
+			])
+			parts.append("　　　點一段導管的「中間」→ 加粗。每級 +6 吞吐，上限 3 級（→%d）。1 級 20 礦砂；2 級 40 礦砂＋20 合金；3 級 60 礦砂＋50 合金。" % int(
 				Build.conduit_cap(Build.CAP_MAX_LEVEL, float(s.mods["cap_bonus"]))
 			))
 		Mode.DEMOLISH:

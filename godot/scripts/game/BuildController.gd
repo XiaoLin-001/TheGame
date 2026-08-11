@@ -88,6 +88,32 @@ static func upgrade(s: RefCounted, index: int) -> String:
 	return Build.OK
 
 
+## ★ 局內臨時升級一座建築（`10_GDD.md` §4.3、B3.5）。
+##
+## 效果與耗能**同步** ×1.25/級（`Build.node_scale()`），最多 3 級，隨局結束消失。
+## 買到的是集中（更少格子、更少導管），不是效率——理由寫在 `Build.gd` 那一段。
+##
+## **核心升不得**：它沒有產出也沒有耗能，`node_scale()` 對它是空操作，
+## 而一顆「3 級核心」會讓玩家以為血量變多了。擋在這裡而不是靠 UI 不畫那顆鈕
+## ——藍圖展開與重播都繞得過 UI（`Build.can_place()` 的同一條理由）。
+static func upgrade_node(s: RefCounted, cell: Vector2i) -> String:
+	var n: Dictionary = s.node_at(cell)
+	if n.is_empty():
+		return Build.OCCUPIED
+	var type := String(n["type"])
+	if type == "core":
+		return Build.OCCUPIED
+	var level := int(n.get("level", 0))
+	if level >= Build.NODE_MAX_LEVEL:
+		return Build.MAX_LEVEL
+	var cost := Build.node_upgrade_cost(NodeDefs.cost(type), level)
+	if s.ore < float(cost):
+		return Build.NO_ORE
+	s.ore -= float(cost)
+	n["level"] = level + 1
+	return Build.OK
+
+
 ## 拆除：節點或導管都走這裡，返還 75%。
 ## `point`（格為單位的浮點座標）只在「這一格沒有節點」時才用得上——
 ## 它讓拆導管和加粗一樣點得準（B1.2.1）。省略時退回格中心。

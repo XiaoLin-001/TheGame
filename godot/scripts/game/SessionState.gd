@@ -196,6 +196,10 @@ func add_node(type: String, cell: Vector2i) -> int:
 		"charge": 0.0,
 		"cd": 0.0,
 		"buffer": 0.0,
+		# ★ 局內臨時升級的級數（§4.3、B3.5）。**只活在這一局**——
+		#   `SessionState` 本來就不進存檔，所以「隨局結束消失」是免費的，
+		#   不必寫任何清除邏輯。
+		"level": 0,
 	})
 	return id
 
@@ -332,8 +336,11 @@ func state_hash() -> String:
 		parts.append("p:%s=%d" % [type, int(priorities[type])])
 	parts.sort()  # 優先權是 Dictionary，鍵序不保證——排序後才是狀態本身
 	for n: Dictionary in _by_id(nodes):
-		parts.append("n:%d,%s,%s,%s,%s,%s,%s" % [
-			n["id"], n["type"], n["cell"], n["hp"], n["charge"], n["cd"], n["buffer"]
+		# `level` 也要進摘要：它會改產出與耗能，**是狀態不是裝飾**。
+		# 漏掉的話「同種子必得同結果」這條在有人升級過的重播上會靜靜地失守。
+		parts.append("n:%d,%s,%s,%s,%s,%s,%s,%d" % [
+			n["id"], n["type"], n["cell"], n["hp"], n["charge"], n["cd"], n["buffer"],
+			int(n.get("level", 0))
 		])
 	for c: Dictionary in _by_id(conduits):
 		parts.append("c:%d,%s,%s,%d,%s" % [c["id"], c["a"], c["b"], int(c["level"]), c["hp"]])

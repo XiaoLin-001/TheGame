@@ -21,11 +21,12 @@ const Enemies := preload("res://data/Enemies.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
+const Build := preload("res://scripts/sim/Build.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("combat_test", 151)
+	var t := T.new("combat_test", 172)
 	_exchange_rate(t)
 	_armor_and_barrier(t)
 	_rate_of_fire(t)
@@ -36,6 +37,7 @@ func _initialize() -> void:
 	_reclaimer_counts_deaths_not_kills(t)
 	_reclaim_rate_is_capped_by_its_own_conduit(t)
 	_knell_aura(t)
+	_in_battle_node_upgrade(t)
 	_priority_decides_who_starves(t)
 	_breaker_splash(t)
 	_m3_enemy_rules(t)
@@ -462,6 +464,122 @@ func _priority_decides_who_starves(t: T) -> void:
 
 
 # ── 共用 ──────────────────────────────────────────────────────────
+
+## ★ 局內臨時升級（`10_GDD.md` §4.3、B3.5）。
+##
+## 這一段要證明的是**兩件事一起動**：升級抬效果、也抬耗能。
+## 只驗前者的話，一個「傷害 ×1.75 而耗能不變」的實作照樣全綠，
+## 而那正是把核心取捨（同一份能量餵塔還是餵產線）拆掉的那個版本。
+func _in_battle_node_upgrade(t: RefCounted) -> void:
+	# ── 規則本身 ──
+	t.eq(Build.node_scale(0), 1.0, "0 級＝原值")
+	t.eq(Build.node_scale(3), 1.75, "3 級 ＝ ×1.75（每級 +25%）")
+	t.eq(Build.node_scale(9), Build.node_scale(3), "★ 越界夾回上限，不是無限成長")
+	t.eq(Build.node_upgrade_cost(50, 0), 25, "錨（50）升 1 級 ＝ 半價")
+	t.eq(Build.node_upgrade_cost(50, 2), 75, "升 3 級 ＝ 一倍半")
+
+	# ── 產出真的變（採集器：它沒有輸入，量得到乾淨的倍率） ──
+	var s := _session()
+	BuildController.place(s, "extractor", Vector2i(16, 8))
+	# 繞到南邊再進核心：核心 (34,14) 的西邊被下坡列 x=30 擋著，
+	# 而導管過路徑只能走橋——淺灘沒有橋，所以從 y=17 那一排繞過去。
+	for cell: Vector2i in [Vector2i(22, 14), Vector2i(25, 17), Vector2i(34, 17)]:
+		BuildController.place(s, "relay", cell)
+	BuildController.lay_conduit(s, Vector2i(16, 8), Vector2i(22, 14))
+	BuildController.lay_conduit(s, Vector2i(22, 14), Vector2i(25, 17))
+	BuildController.lay_conduit(s, Vector2i(25, 17), Vector2i(34, 17))
+	BuildController.lay_conduit(s, Vector2i(34, 17), Vector2i(34, 14))
+	BattleController.step(s)
+	var base := float(s.rates["ore_in"])
+	t.ok(base > 0.0, "（前提）採集器在送礦")
+	for _i in 3:
+		t.eq(
+			BuildController.upgrade_node(s, Vector2i(16, 8)), Build.OK,
+			"採集器升得了級"
+		)
+	t.eq(
+		BuildController.upgrade_node(s, Vector2i(16, 8)), Build.MAX_LEVEL,
+		"★ 到 3 級就升不上去（上限是規則不是提示）"
+	)
+	BattleController.step(s)
+	# ★★ **升級把瓶頸推回導管上**——這一條就是 `Build.gd` 那段註解的證據。
+	#
+	#    3 級採集器產 10.5/秒，而基礎導管 cap 是 10：**實際只送得到 10**。
+	#    這一條當初是紅的（預期 10.5、實得 10.0），而紅得對——
+	#    我寫斷言時假設了「產得出來就送得到」，那正是這個機制要打掉的假設。
+	t.near(
+		float(s.rates["ore_in"]), 10.0,
+		"★★ 3 級採集器產 10.5，而 cap 10 的線只送得到 10（升級把瓶頸推給導管）", 0.01
+	)
+	# 加粗**整條**線之後，那 0.5 才真的到得了帳上。
+	# （只加粗第一段是不夠的——瓶頸是那一串裡最窄的任何一段，
+	#   而它們四段當初都是 cap 10。這也是紅過一次才寫對的。）
+	for ci in s.conduits.size():
+		BuildController.upgrade(s, ci)
+	BattleController.step(s)
+	t.near(
+		float(s.rates["ore_in"]), base * 1.75,
+		"★ 加粗之後才拿得到完整的 ×1.75", 0.01
+	)
+
+	# ── ★ **消費者的胃口也一起長**。發電機升級之後每秒吃 4 → 7 礦砂，
+	#      所以它的供電**不會**乾淨地 ×1.75——會被自己的礦砂滿足率拉回來。
+	#      這一條當初是紅的（預期 35、實得 30），而**紅得對**：
+	#      我以為升級只加產出，實際上它同時把那台機器的胃口撐大了。
+	var g := _session()
+	_power_plant(g)
+	BattleController.step(g)
+	var g0 := float(g.rates["power_supply"])
+	for _i in 3:
+		BuildController.upgrade_node(g, Vector2i(16, 11))
+	BattleController.step(g)
+	var g1 := float(g.rates["power_supply"])
+	t.ok(g1 > g0, "3 級發電機供得比較多")
+	t.ok(
+		g1 < g0 * 1.75,
+		"★★ 但**達不到 ×1.75**——它自己的礦砂需求也 ×1.75，而那台採集器沒跟著升"
+	)
+
+	# ── 耗能也真的變（塔）──**這一條是這一段存在的理由** ──
+	var s2 := _session()
+	_power_plant(s2)
+	BuildController.place(s2, "anchor", Vector2i(16, 7))   # 距路徑 (16,4) 3 格 < 射程 4
+	BuildController.lay_conduit(s2, Vector2i(16, 8), Vector2i(16, 7))
+	_spawn_at(s2, "drifter", 16.0)
+	BattleController.step(s2)
+	var d0 := float(s2.rates["power_demand"])
+	t.ok(d0 > 0.0, "（前提）錨在交戰、正在吃電")
+	for _i in 3:
+		BuildController.upgrade_node(s2, Vector2i(16, 7))
+	BattleController.step(s2)
+	t.near(
+		float(s2.rates["power_demand"]), d0 * 1.75,
+		"★★ 3 級塔的**耗能**也 ×1.75——升級買的是集中，不是效率", 0.01
+	)
+
+	# ── 核心升不得 ──
+	t.eq(
+		BuildController.upgrade_node(s, s.core()["cell"]), Build.OCCUPIED,
+		"★ 核心升不得（它沒有產出也沒有耗能，一顆「3 級核心」只會騙人）"
+	)
+	# ── 錢不夠就不給升，而且**不扣款** ──
+	var s3 := _session()
+	BuildController.place(s3, "extractor", Vector2i(16, 8))
+	s3.ore = 1.0
+	t.eq(
+		BuildController.upgrade_node(s3, Vector2i(16, 8)), Build.NO_ORE,
+		"礦砂不夠就升不了"
+	)
+	t.eq(s3.ore, 1.0, "★ 升不成不得扣款")
+	t.eq(int(s3.node_at(Vector2i(16, 8))["level"]), 0, "★ 升不成級數不得變")
+
+	# ── 級數要進狀態摘要（否則重播會在有人升級過的局上靜靜地對不上） ──
+	var a := _session()
+	BuildController.place(a, "extractor", Vector2i(16, 8))
+	var h0: String = a.state_hash()
+	BuildController.upgrade_node(a, Vector2i(16, 8))
+	t.ok(a.state_hash() != h0, "★★ 升級會改變狀態摘要（`level` 是狀態不是裝飾）")
+
 
 func _session() -> RefCounted:
 	var s: RefCounted = SessionState.new()

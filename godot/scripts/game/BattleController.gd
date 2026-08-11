@@ -287,7 +287,10 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 			# 科技「校準」（§7.8）乘在**原始傷害**上，在減傷／破甲之前——
 			# 乘在最後結果上會讓它對高護甲敵人的效益憑空變小，而玩家買的是
 			# 「塔傷害 +6%」，不是「對軟目標 +6%」。
-			var raw := float(def.get("dmg", 0.0)) * float(count) * float(s.mods["damage_mult"])
+			# ★ 局內臨時升級（§4.3）：效果與耗能同步 ×1.25/級。
+			var lvl := Build.node_scale(int(n.get("level", 0)))
+			var raw := (float(def.get("dmg", 0.0)) * float(count)
+				* float(s.mods["damage_mult"]) * lvl)
 			var dealt := Combat.hit_damage(
 				raw, String(def.get("dmg_type", "physical")), edef, aura[i].y
 			)
@@ -429,8 +432,12 @@ static func _solve_ore(s: RefCounted, edges: Array, topo: Dictionary = {}) -> Di
 		var out_bonus := float(s.mods["extractor_ore"]) if n["type"] == "extractor" else 0.0
 		# ★ 等級軸的生產乘數（B2.7）。乘在**科技加成之後**：科技是「這座採集器
 		#   每秒多挖 1」，等級是「我的整條生產線都好 8%」——後者該把前者也含進去。
-		var supply := (float(def.get("ore_out", 0.0)) + out_bonus) * float(s.mods["produce_mult"]) * TICK
-		var demand := float(def.get("ore_in", 0.0)) * TICK
+		# ★ 局內臨時升級（§4.3）乘在**最外層**：它是「這一座建築整體變強」，
+		#   科技與等級軸都該被它含進去。產出與需求同乘——熔爐升級之後吃得也更多。
+		var lvl := Build.node_scale(int(n.get("level", 0)))
+		var supply := ((float(def.get("ore_out", 0.0)) + out_bonus)
+			* float(s.mods["produce_mult"]) * TICK * lvl)
+		var demand := float(def.get("ore_in", 0.0)) * TICK * lvl
 		supply_total += supply
 		demand_total += demand
 		nodes.append(_sim_node(n, supply, demand))
@@ -466,8 +473,9 @@ static func _solve_alloy(
 		#   因為兩樣都缺就降兩次——那會讓 50% 電 ＋ 50% 礦變成 25% 產出，
 		#   比玩家從畫面上讀到的兩條線任何一條都糟，因果就斷了。
 		var k := minf(float(ore_sat.get(n["id"], 1.0)), float(power_sat.get(n["id"], 1.0)))
-		var supply := float(def.get("alloy_out", 0.0)) * float(s.mods["produce_mult"]) * TICK * k
-		var demand := float(def.get("alloy_in", 0.0)) * TICK
+		var lvl := Build.node_scale(int(n.get("level", 0)))
+		var supply := float(def.get("alloy_out", 0.0)) * float(s.mods["produce_mult"]) * TICK * k * lvl
+		var demand := float(def.get("alloy_in", 0.0)) * TICK * lvl
 		supply_total += supply
 		demand_total += demand
 		nodes.append(_sim_node(n, supply, demand))
@@ -493,14 +501,19 @@ static func _solve_power(
 		var type := String(n["type"])
 		var def := NodeDefs.of(type)
 		# 發電機的產出 × 它自己的礦砂滿足率（按比例降速，不停機）。
+		var lvl := Build.node_scale(int(n.get("level", 0)))
 		var supply := (float(def.get("power_out", 0.0)) * float(s.mods["produce_mult"])
-			* TICK * float(sat.get(n["id"], 1.0)))
-		var demand := float(def.get("power_in", 0.0)) * TICK
+			* TICK * float(sat.get(n["id"], 1.0)) * lvl)
+		var demand := float(def.get("power_in", 0.0)) * TICK * lvl
 		# ★ 交戰耗能：**射程內有敵人才扣，待機 0**（§7.4）。全案的心臟就在這一行。
 		if engaged.get(int(n["id"]), false):
 			# 科技「能量效率」（§7.8）。**它作用在交戰耗能上，不是待機耗能**——
 			# 待機早就是 0，乘在那上面是空操作（v0.3 定案第 ⑬ 條）。
-			demand += float(def.get("engage_power", 0.0)) * float(s.mods["engage_mult"]) * TICK
+			# ★ 升級同時抬**耗能**（§4.3）：只抬傷害的話升級是嚴格更好的，
+			#   而那就不是一個決定了。一座 3 級稜鏡要 35 能量/秒，
+			#   一條 cap 10 的線送不進去——集中會把瓶頸推回導管上。
+			demand += (float(def.get("engage_power", 0.0))
+				* float(s.mods["engage_mult"]) * TICK * lvl)
 		var sn := _sim_node(n, supply, demand)
 		if type == "silo":
 			# 儲槽是能量專用緩衝（§7.3）。charge 是**絕對量**，不乘 TICK；
