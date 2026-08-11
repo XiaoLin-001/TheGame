@@ -527,6 +527,16 @@ func _glyph_selftest() -> void:
 			for e: Dictionary in s.enemies:
 				if int(e["id"]) == id:
 					e["progress"] = float(4 + i * 3)
+	# ★ **擺放預覽也留在同一張圖上**（B3.4）。它擺在那一排真節點的正上方，
+	#   所以這張圖同時回答兩件事：預覽畫的是不是那隻角色的形狀、
+	#   以及它和真的蓋出來那一個長不長得一樣。
+	#   預覽只在「選了一種節點 ＋ 滑鼠在圖上」的那一刻存在——那是純互動狀態，
+	#   沒有這個鉤子就拍不到，於是那句「有預覽了」只能用宣稱的。
+	#   選碎浪：四角爆散星是最不像方框的一個，證明力最強。
+	if gallery:
+		_mode = Mode.BUILD
+		_build_type = "breaker"
+		_hover = Vector2i(10, 11)
 	_no_glyph.clear()
 	queue_redraw()
 	for _i in 2:
@@ -2468,127 +2478,147 @@ func _draw_nodes() -> void:
 			var at := p + Vector2(-bar.x * 0.5, 15.0)
 			draw_rect(Rect2(at, bar), Palette.alpha(Palette.BG_DEEP, 0.8))
 			draw_rect(Rect2(at, Vector2(bar.x * frac, bar.y)), Palette.WARN_ORANGE)
-		match String(n["type"]):
-			"core":
-				# ★ **最大的幾何體**，order.bright 描邊（§1.6）。
-				#
-				# B2.4.2（§7.1 A-4）：原本是 30px，和採集器的 22px 圓沒有量級差，
-				# 而**這是全遊戲唯一一個「歸零就結束」的物件**。42px（1.3 格）＋
-				# 3px 描邊（`stroke.emphasis`）讓它在 fit 倍率下就是畫面上最大的一塊。
-				#
-				# 形狀仍是**正方**，和儲槽的同心圓、交戰環、受擊環都分得開
-				# （§4.3b「同一個位置上的兩個訊息，換顏色不夠，要換形狀」）。
-				# 48 ＝ **1.5 格**（§7.1 A-4 自己訂的數字；第一版寫 42 ＝ 1.3 格，
-				# code review 抓到它低於自己的規格）。
-				var half := Vector2(24, 24)
-				# ★ §1.6 還有一句「**受擊時整體閃 `warn.orange`**」——B2.4.2 之前
-				#   核心只有那條和所有節點共用的 24×3 血條，而**核心掉血是這一局
-				#   唯一不可逆的事**，它不該和一個中繼被啃長得一樣。
-				#   受傷時整顆換成橙色並脈動（`dur.base` ＝ 比心跳急一個量級）。
-				var hurt: bool = float(n["hp"]) < full
-				var body: Color = Palette.WARN_ORANGE if hurt else Palette.ORDER_BRIGHT
-				var alarm := Motion.pulse01(s.tick_count, Motion.BASE * 4.0, 0.5) if hurt else 1.0
-				draw_rect(Rect2(p - half, half * 2.0), Palette.BG_RAISED)
-				draw_rect(Rect2(p - half, half * 2.0), Palette.alpha(body, alarm), false, 3.0)
-				# 極慢的呼吸＝這張圖的心跳。**不是警示**（警示是橙色、而且更急），
-				# 所以週期取 `dur.ambient` 的兩倍、振幅只在透明度上。
-				var beat := Motion.pulse01(s.tick_count, Motion.AMBIENT * 2.0, 0.55)
-				draw_rect(
-					Rect2(p - Vector2(8, 8), Vector2(16, 16)),
-					Palette.alpha(body, beat if not hurt else alarm)
-				)
-			"extractor":
-				draw_circle(p, 11.0, Palette.ORDER_CYAN)
-				draw_arc(p, 11.0, 0.0, TAU, 24, Palette.ORDER_BRIGHT, 1.5)
-			"generator":
-				# 琥珀專屬於能量（§1.1 配色紀律 2）。
-				draw_rect(Rect2(p - Vector2(11, 11), Vector2(22, 22)), Palette.ENERGY_AMBER)
-			"smelter":
-				# 六邊形＝加工。合金銀是它的產物色，內圈琥珀講「它一直在吃電」
-				# ——熔爐是全圖唯一待機也耗能的建築，那件事要看得出來。
-				var hex := PackedVector2Array()
-				for k in 6:
-					hex.append(p + Vector2(12, 0).rotated(TAU * float(k) / 6.0))
-				draw_colored_polygon(hex, Palette.ALLOY_STEEL)
-				draw_circle(p, 5.0, Palette.ENERGY_AMBER)
-			"relay":
-				var d := PackedVector2Array([
-					p + Vector2(0, -8), p + Vector2(8, 0), p + Vector2(0, 8), p + Vector2(-8, 0)
-				])
-				draw_colored_polygon(d, Palette.ORDER_DIM)
-			"silo":
-				var frac := float(n["charge"]) / maxf(1.0, float(NodeDefs.of("silo")["capacity"]))
-				draw_arc(p, 12.0, 0.0, TAU, 32, Palette.ORDER_DIM, 2.0)
-				if frac > 0.0:
-					draw_arc(p, 12.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 32, Palette.ENERGY_AMBER, 4.0)
-				# 四隻塔各給一個一眼可辨的幾何體（`20_ART_DIRECTION.md` §1.6）。
-				# 全部嚴格對齊格中心——與敵潮的不規則凸包形成對比，那個對比就是主題。
-			"anchor":
-				# ★ **上寬下窄的梯形＝打進地裡的樁**（B2.4.8，遊玩測試 P3-1）。
-				#   舊版是 16px 的青色實心方，而發電機是 22px 的琥珀實心方——
-				#   **同一個形狀，只差 6px 與顏色**，違反 §1.6「不靠顏色分辨」。
-				#   而這兩個分屬生產側與防線側，正是「這 40 礦砂餵產線還是餵防線」
-				#   那個核心決定的兩端，也是最不該混淆的一對。
-				#   改錨不改發電機：琥珀實心方和「能量」的關係更強，波及也更大。
-				draw_colored_polygon(PackedVector2Array([
-					p + Vector2(-11, -9), p + Vector2(11, -9),
-					p + Vector2(6, 10), p + Vector2(-6, 10),
-				]), Palette.ORDER_CYAN)
-			"prism":
-				# 三角形＝稜鏡。合金銀把「它是最貴的那一座」講出來。
-				draw_colored_polygon(PackedVector2Array([
-					p + Vector2(0, -12), p + Vector2(11, 7), p + Vector2(-11, 7)
-				]), Palette.ALLOY_STEEL)
-			"knell":
-				# 同心圓＝場。它不開火，畫成「發散」比畫成砲塔誠實。
-				draw_arc(p, 11.0, 0.0, TAU, 28, Palette.ORDER_CYAN, 2.0)
-				draw_arc(p, 5.0, 0.0, TAU, 20, Palette.ORDER_CYAN, 2.0)
-			"reclaimer":
-				draw_rect(Rect2(p - Vector2(10, 10), Vector2(20, 20)), Palette.ORDER_CYAN, false, 2.0)
-				draw_circle(p, 6.0, Palette.ORDER_BRIGHT)
-			"breaker":
-				# ★ **四角爆散星＝濺射**（B2.4.8，遊玩測試 P3-2）。舊版是「實心方
-				#   ＋外框」，和回收者的「空心方＋內圓」在 fit 倍率下都讀成
-				#   「方框裡包了東西」，內部差異要盯著看。
-				#   換成向外炸開的形狀之後，它同時**把自己的機制講出來**——
-				#   碎浪是全遊戲唯一一隻範圍傷害的塔（§1.6：形狀要說得出角色是什麼）。
-				var burst := PackedVector2Array()
-				for k in 8:
-					var rad: float = 13.0 if k % 2 == 0 else 5.0
-					burst.append(p + Vector2(rad, 0).rotated(TAU * float(k) / 8.0))
-				draw_colored_polygon(burst, Palette.ALLOY_STEEL)
-				# ── 招募專屬的三隻（B2.4.6）───────────────────────────────
-				# 形狀規則同上：**不靠顏色分辨**（§1.6）。方（錨／碎浪）、圓（採集器
-				# ／潮鳴）、三角（稜鏡）、菱（中繼）、六邊（熔爐）都已經被佔走了，
-				# 所以這三隻各取一個沒人用過的輪廓。
-			"longcall":
-				# 細長的桅杆，橫桿在**頂端**＝一座瞭望塔。射程 12 是它唯一的賣點，
-				# 而「又高又細」是最短的講法。不用合金 → 秩序青。
-				# ★ 第一版橫桿在中間，截圖上讀起來是一個**十字**不是一座塔
-				#   （分辨得出來，但講錯了話）。移到頂端才成立。
-				draw_rect(Rect2(p - Vector2(3, 13), Vector2(6, 26)), Palette.ORDER_CYAN)
-				draw_rect(Rect2(p - Vector2(8, 13), Vector2(16, 4)), Palette.ORDER_CYAN)
-			"frostreef":
-				# 六芒星（三條穿心線）＝發散，和潮鳴的同心圓同一族但認得出是兩隻。
-				# 要 40 合金 → 合金銀（與稜鏡／碎浪同一條規則）。
-				for k in 3:
-					var spoke := Vector2(12, 0).rotated(PI * float(k) / 3.0)
-					draw_line(p - spoke, p + spoke, Palette.ALLOY_STEEL, 2.5)
-			"ballast":
-				# 倒三角 ＋ 頂桿＝一塊吊著的配重。與稜鏡的正三角互為鏡像，
-				# 在同一張圖上一眼分得開。要 100 合金 → 合金銀。
-				draw_rect(Rect2(p - Vector2(13, 12), Vector2(26, 4)), Palette.ALLOY_STEEL)
-				draw_colored_polygon(PackedVector2Array([
-					p + Vector2(-11, -5), p + Vector2(11, -5), p + Vector2(0, 12)
-				]), Palette.ALLOY_STEEL)
-			_:
-				# ★ **沒有這條 default 的時候，漏掉一種的症狀是「隱形」而不是「報錯」**
-				#   ——GDScript 的 `match` 沒對到就靜靜地什麼都不做。B2.4 加三隻招募塔
-				#   時三隻全中，而使用者是**用眼睛**發現的（「長哨沒有模型顯示」）。
-				_no_glyph[String(n["type"])] = true
+		_draw_node_body(n, p)
 		_draw_threat(n["cell"], p)
 		_draw_engaged(n, p)
 		_draw_badge(n, p)
+
+
+## ★ 一座節點**畫成什麼樣子**——只看型別，不看它蓋起來沒有（B3.4）。
+##
+## 抽出來的理由是**擺放預覽要畫同一個東西**。原本預覽只有一個綠框，
+## 而使用者的話是「預覽這個角色的模型，而不是純粹是正方形」——
+## §1.6 花了整節在講「形狀要說得出這隻角色是什麼」，而玩家做擺位決定的
+## 那一刻**看不到那個形狀**，等於那一整節的工作在最需要它的時候缺席。
+##
+## 抽成函式而不是在預覽那邊再畫一次：十四種節點各有自己的幾何，
+## 抄一份的下場是日後加第十五種時只有一邊記得加——而漏掉的那一邊
+## **症狀是隱形而不是報錯**（`match` 沒對到就靜靜地什麼都不做，B2.4 中過三次）。
+##
+## `n` 只需要 `type`；`hp`／`charge` 缺了就當作滿血、空槽（預覽正是這個狀態）。
+func _draw_node_body(n: Dictionary, p: Vector2) -> void:
+	var full := NodeDefs.hp(String(n["type"]))
+	match String(n["type"]):
+		"core":
+			# ★ **最大的幾何體**，order.bright 描邊（§1.6）。
+			#
+			# B2.4.2（§7.1 A-4）：原本是 30px，和採集器的 22px 圓沒有量級差，
+			# 而**這是全遊戲唯一一個「歸零就結束」的物件**。42px（1.3 格）＋
+			# 3px 描邊（`stroke.emphasis`）讓它在 fit 倍率下就是畫面上最大的一塊。
+			#
+			# 形狀仍是**正方**，和儲槽的同心圓、交戰環、受擊環都分得開
+			# （§4.3b「同一個位置上的兩個訊息，換顏色不夠，要換形狀」）。
+			# 48 ＝ **1.5 格**（§7.1 A-4 自己訂的數字；第一版寫 42 ＝ 1.3 格，
+			# code review 抓到它低於自己的規格）。
+			var half := Vector2(24, 24)
+			# ★ §1.6 還有一句「**受擊時整體閃 `warn.orange`**」——B2.4.2 之前
+			#   核心只有那條和所有節點共用的 24×3 血條，而**核心掉血是這一局
+			#   唯一不可逆的事**，它不該和一個中繼被啃長得一樣。
+			#   受傷時整顆換成橙色並脈動（`dur.base` ＝ 比心跳急一個量級）。
+			# `.get()` 而不是 `n["hp"]`：預覽傳進來的是一個只有 `type` 的字典。
+			# 直接索引缺鍵會丟執行期錯誤，而 GDScript 的執行期錯誤**中止這一支函式**
+			# ——預覽會變成「什麼都沒畫」，而不是「報錯」（RG-164 的同一個形狀）。
+			var hurt: bool = float(n.get("hp", full)) < full
+			var body: Color = Palette.WARN_ORANGE if hurt else Palette.ORDER_BRIGHT
+			var alarm := Motion.pulse01(s.tick_count, Motion.BASE * 4.0, 0.5) if hurt else 1.0
+			draw_rect(Rect2(p - half, half * 2.0), Palette.BG_RAISED)
+			draw_rect(Rect2(p - half, half * 2.0), Palette.alpha(body, alarm), false, 3.0)
+			# 極慢的呼吸＝這張圖的心跳。**不是警示**（警示是橙色、而且更急），
+			# 所以週期取 `dur.ambient` 的兩倍、振幅只在透明度上。
+			var beat := Motion.pulse01(s.tick_count, Motion.AMBIENT * 2.0, 0.55)
+			draw_rect(
+				Rect2(p - Vector2(8, 8), Vector2(16, 16)),
+				Palette.alpha(body, beat if not hurt else alarm)
+			)
+		"extractor":
+			draw_circle(p, 11.0, Palette.ORDER_CYAN)
+			draw_arc(p, 11.0, 0.0, TAU, 24, Palette.ORDER_BRIGHT, 1.5)
+		"generator":
+			# 琥珀專屬於能量（§1.1 配色紀律 2）。
+			draw_rect(Rect2(p - Vector2(11, 11), Vector2(22, 22)), Palette.ENERGY_AMBER)
+		"smelter":
+			# 六邊形＝加工。合金銀是它的產物色，內圈琥珀講「它一直在吃電」
+			# ——熔爐是全圖唯一待機也耗能的建築，那件事要看得出來。
+			var hex := PackedVector2Array()
+			for k in 6:
+				hex.append(p + Vector2(12, 0).rotated(TAU * float(k) / 6.0))
+			draw_colored_polygon(hex, Palette.ALLOY_STEEL)
+			draw_circle(p, 5.0, Palette.ENERGY_AMBER)
+		"relay":
+			var d := PackedVector2Array([
+				p + Vector2(0, -8), p + Vector2(8, 0), p + Vector2(0, 8), p + Vector2(-8, 0)
+			])
+			draw_colored_polygon(d, Palette.ORDER_DIM)
+		"silo":
+			var frac := float(n.get("charge", 0.0)) / maxf(1.0, float(NodeDefs.of("silo")["capacity"]))
+			draw_arc(p, 12.0, 0.0, TAU, 32, Palette.ORDER_DIM, 2.0)
+			if frac > 0.0:
+				draw_arc(p, 12.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 32, Palette.ENERGY_AMBER, 4.0)
+			# 四隻塔各給一個一眼可辨的幾何體（`20_ART_DIRECTION.md` §1.6）。
+			# 全部嚴格對齊格中心——與敵潮的不規則凸包形成對比，那個對比就是主題。
+		"anchor":
+			# ★ **上寬下窄的梯形＝打進地裡的樁**（B2.4.8，遊玩測試 P3-1）。
+			#   舊版是 16px 的青色實心方，而發電機是 22px 的琥珀實心方——
+			#   **同一個形狀，只差 6px 與顏色**，違反 §1.6「不靠顏色分辨」。
+			#   而這兩個分屬生產側與防線側，正是「這 40 礦砂餵產線還是餵防線」
+			#   那個核心決定的兩端，也是最不該混淆的一對。
+			#   改錨不改發電機：琥珀實心方和「能量」的關係更強，波及也更大。
+			draw_colored_polygon(PackedVector2Array([
+				p + Vector2(-11, -9), p + Vector2(11, -9),
+				p + Vector2(6, 10), p + Vector2(-6, 10),
+			]), Palette.ORDER_CYAN)
+		"prism":
+			# 三角形＝稜鏡。合金銀把「它是最貴的那一座」講出來。
+			draw_colored_polygon(PackedVector2Array([
+				p + Vector2(0, -12), p + Vector2(11, 7), p + Vector2(-11, 7)
+			]), Palette.ALLOY_STEEL)
+		"knell":
+			# 同心圓＝場。它不開火，畫成「發散」比畫成砲塔誠實。
+			draw_arc(p, 11.0, 0.0, TAU, 28, Palette.ORDER_CYAN, 2.0)
+			draw_arc(p, 5.0, 0.0, TAU, 20, Palette.ORDER_CYAN, 2.0)
+		"reclaimer":
+			draw_rect(Rect2(p - Vector2(10, 10), Vector2(20, 20)), Palette.ORDER_CYAN, false, 2.0)
+			draw_circle(p, 6.0, Palette.ORDER_BRIGHT)
+		"breaker":
+			# ★ **四角爆散星＝濺射**（B2.4.8，遊玩測試 P3-2）。舊版是「實心方
+			#   ＋外框」，和回收者的「空心方＋內圓」在 fit 倍率下都讀成
+			#   「方框裡包了東西」，內部差異要盯著看。
+			#   換成向外炸開的形狀之後，它同時**把自己的機制講出來**——
+			#   碎浪是全遊戲唯一一隻範圍傷害的塔（§1.6：形狀要說得出角色是什麼）。
+			var burst := PackedVector2Array()
+			for k in 8:
+				var rad: float = 13.0 if k % 2 == 0 else 5.0
+				burst.append(p + Vector2(rad, 0).rotated(TAU * float(k) / 8.0))
+			draw_colored_polygon(burst, Palette.ALLOY_STEEL)
+			# ── 招募專屬的三隻（B2.4.6）───────────────────────────────
+			# 形狀規則同上：**不靠顏色分辨**（§1.6）。方（錨／碎浪）、圓（採集器
+			# ／潮鳴）、三角（稜鏡）、菱（中繼）、六邊（熔爐）都已經被佔走了，
+			# 所以這三隻各取一個沒人用過的輪廓。
+		"longcall":
+			# 細長的桅杆，橫桿在**頂端**＝一座瞭望塔。射程 12 是它唯一的賣點，
+			# 而「又高又細」是最短的講法。不用合金 → 秩序青。
+			# ★ 第一版橫桿在中間，截圖上讀起來是一個**十字**不是一座塔
+			#   （分辨得出來，但講錯了話）。移到頂端才成立。
+			draw_rect(Rect2(p - Vector2(3, 13), Vector2(6, 26)), Palette.ORDER_CYAN)
+			draw_rect(Rect2(p - Vector2(8, 13), Vector2(16, 4)), Palette.ORDER_CYAN)
+		"frostreef":
+			# 六芒星（三條穿心線）＝發散，和潮鳴的同心圓同一族但認得出是兩隻。
+			# 要 40 合金 → 合金銀（與稜鏡／碎浪同一條規則）。
+			for k in 3:
+				var spoke := Vector2(12, 0).rotated(PI * float(k) / 3.0)
+				draw_line(p - spoke, p + spoke, Palette.ALLOY_STEEL, 2.5)
+		"ballast":
+			# 倒三角 ＋ 頂桿＝一塊吊著的配重。與稜鏡的正三角互為鏡像，
+			# 在同一張圖上一眼分得開。要 100 合金 → 合金銀。
+			draw_rect(Rect2(p - Vector2(13, 12), Vector2(26, 4)), Palette.ALLOY_STEEL)
+			draw_colored_polygon(PackedVector2Array([
+				p + Vector2(-11, -5), p + Vector2(11, -5), p + Vector2(0, 12)
+			]), Palette.ALLOY_STEEL)
+		_:
+			# ★ **沒有這條 default 的時候，漏掉一種的症狀是「隱形」而不是「報錯」**
+			#   ——GDScript 的 `match` 沒對到就靜靜地什麼都不做。B2.4 加三隻招募塔
+			#   時三隻全中，而使用者是**用眼睛**發現的（「長哨沒有模型顯示」）。
+			_no_glyph[String(n["type"])] = true
 
 
 ## ★ 交戰指示：**琥珀＝能量**（配色紀律 2）。有環＝這座塔本 tick 正在吃電。
@@ -3008,6 +3038,17 @@ func _draw_hover() -> void:
 		var col: Color = Palette.OK_GREEN if pv["ok"] else Palette.WARN_ORANGE
 		draw_rect(Rect2(p, g), Palette.alpha(col, 0.18))
 		draw_rect(Rect2(p, g), col, false, 2.0)
+		# ★ **手上那一隻長什麼樣子，就畫什麼樣子**（B3.4）。
+		#
+		# 原本這裡只有上面那個框，於是玩家在做全遊戲最主要的那個決定
+		# （這一格擺誰）的當下，看到的是一個和別種節點一模一樣的方框。
+		# §1.6 花了整節在講「形狀要說得出這隻角色是什麼」——梯形是打進地裡的樁、
+		# 三角是稜鏡、四角爆散星是濺射——而那些形狀在**最需要它們的那一刻**缺席。
+		#
+		# 走 `_draw_node_body()`（和真的節點同一支函式），不另外畫一份：
+		# 抄一份的下場是加第十五種節點時只有一邊記得加，而漏掉的那一邊
+		# 症狀是隱形不是報錯（B2.4 中過三次，`_no_glyph` 就是為此而生）。
+		_draw_node_body({"type": _build_type}, _center(_hover))
 		# 塔的射程要**在花錢之前**看得到——擺位是本作的主要決策，
 		# 讓玩家蓋完才發現打不到路徑等於逼他拆（§3.5 塔的擺位）。
 		var r := float(NodeDefs.of(_build_type).get("range", 0.0))
