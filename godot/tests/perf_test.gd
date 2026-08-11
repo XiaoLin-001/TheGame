@@ -46,7 +46,7 @@ const ENDLESS_MAX_MS := 20000.0
 
 
 func _initialize() -> void:
-	var t := T.new("perf_test", 18)
+	var t := T.new("perf_test", 24)
 	_campaign_levels(t)
 	_scaling_canary(t)
 	_endless_scale(t)

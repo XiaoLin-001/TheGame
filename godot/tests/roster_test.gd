@@ -72,16 +72,30 @@ func _owned_is_derived_from_campaign(t: T) -> void:
 
 func _tokens_are_derived(t: T) -> void:
 	t.eq(Roster.tokens(_save_at(0)), 0, "全新存檔零券")
-	# 五關 × 3 星 ＝ 15 顆星 ÷ 5 ＝ 3 券。
-	t.eq(Roster.earned(_save_at(5)), 3, "戰役滿星 ＝ 3 券")
+	# ★ 匯率是推導的（B3.3）：滿星的券數恆等於招募池大小，關卡加到幾關都成立。
+	t.eq(
+		Roster.earned(_save_at(CampaignData.count())), Roster.RECRUIT_POOL.size(),
+		"戰役滿星的券數 ＝ 招募池大小"
+	)
 
-	var d := _save_at(5)
-	(d["endless"] as Dictionary)["best_wave"] = 25
-	t.eq(Roster.earned(d), 5, "★ 無盡 25 波再加 2 券（兩條途徑各算各的）")
+	var d := _save_at(CampaignData.count())
+	# ⚠ **走 `apply_endless()` 而不是自己塞鍵**（B3.3、RG-167）。
+	#   原本這一行是 `d["endless"]["best_wave"] = 25`——那是 sv2 的形狀，
+	#   而 sv3（B2.6）已經把它收進 `endless.best`。於是這條斷言驗的是
+	#   **一個遊戲不再寫、也不再讀的鍵**：它綠了三批，而真實存檔裡
+	#   無盡一張券都沒發過。測試要走玩家走的那條路，不能自己捏形狀。
+	SaveService.apply_endless(d, 25, 0.0, 0)
+	t.eq(
+		Roster.earned(d), Roster.RECRUIT_POOL.size() + 2,
+		"★ 無盡 25 波再加 2 券（兩條途徑各算各的）"
+	)
 
 	# 花掉的要從手上扣。這裡直接塞 `recruited`，驗的是**推導**而不是招募流程。
 	(d["roster"] as Dictionary)["recruited"] = ["longcall", "frostreef"]
-	t.eq(Roster.tokens(d), 3, "★ 手上的券 ＝ 賺到的 5 − 花掉的 2（沒有第三份計數器）")
+	t.eq(
+		Roster.tokens(d), Roster.RECRUIT_POOL.size(),
+		"★ 手上的券 ＝ 賺到的 − 花掉的 2（沒有第三份計數器）"
+	)
 	t.eq(Roster.remaining(d), 1, "還剩 1 隻沒收集")
 
 	# 券不會變負數——里程碑日後若下修，玩家不該看到「−1 張券」。
@@ -98,7 +112,7 @@ func _no_dupes_and_graduation(t: T) -> void:
 	var all_ok := true
 	var all_graduated := true
 	for sd in range(1, SWEEP + 1):
-		var d := _save_at(5)
+		var d := _save_at(CampaignData.count())
 		var rng := Rng.stream(sd)
 		var got: Array[String] = []
 		for _i in Roster.RECRUIT_POOL.size():
@@ -117,7 +131,7 @@ func _no_dupes_and_graduation(t: T) -> void:
 	t.ok(orders.size() > 1, "★ 抽到的順序會變（隨機的是順序）")
 
 	# 畢業之後：再抽不給、也不扣券。
-	var done := _save_at(5)
+	var done := _save_at(CampaignData.count())
 	var rng2 := Rng.stream(7)
 	for _i in Roster.RECRUIT_POOL.size():
 		SaveService.apply_recruit(done, rng2)
@@ -135,7 +149,7 @@ func _no_dupes_and_graduation(t: T) -> void:
 
 	# ★ 稀有角色若日後由**別的途徑**到手（成就／商店，§3.9），
 	#   「還剩幾隻」與抽卡池都要當場少一格——只看 `recruited` 的話兩邊都會錯。
-	var gifted := _save_at(5)
+	var gifted := _save_at(CampaignData.count())
 	(gifted["roster"] as Dictionary)["recruited"] = ["ballast"]
 	t.eq(Roster.remaining(gifted), Roster.RECRUIT_POOL.size() - 1, "已有的不再計入剩餘")
 	for _i in 10:
@@ -176,7 +190,7 @@ func _uniform_board_is_pinned(t: T) -> void:
 			"★★★ 招募專屬的 %s **不在**統一配置榜上（憲法 B3）" % type
 		)
 	# 反過來也要對：確定性的五隻都在，否則統一榜會變成一張殘廢的榜。
-	for type: String in Roster.owned(_save_at(5)):
+	for type: String in Roster.owned(_save_at(CampaignData.count())):
 		t.ok(Daily.UNIFORM_BUILD.has(type), "確定性角色 %s 在統一配置榜上" % type)
 
 	# ★ **加角色不會動到這張榜**：清單是常數，不是從 `BUILDABLE` 算出來的。
@@ -185,7 +199,7 @@ func _uniform_board_is_pinned(t: T) -> void:
 		"★ 統一榜比全表短——它不會因為日後加一隻角色就跟著長"
 	)
 	# 課到頂的存檔（三隻全抽到）進統一榜，拿到的仍然是同一份清單。
-	var maxed := _save_at(5)
+	var maxed := _save_at(CampaignData.count())
 	(maxed["roster"] as Dictionary)["recruited"] = Roster.RECRUIT_POOL.duplicate()
 	t.eq(
 		Daily.UNIFORM_BUILD.size(), 10,
@@ -204,7 +218,7 @@ func _buildable_and_priority_rows(t: T) -> void:
 	t.ok(Roster.buildable(fresh).has("extractor"), "★ 生產節點不受名冊限制（採集器恆在）")
 	t.ok(not Roster.buildable(fresh).has("prism"), "還沒解鎖的稜鏡也不在")
 
-	var full := _save_at(5)
+	var full := _save_at(CampaignData.count())
 	(full["roster"] as Dictionary)["recruited"] = Roster.RECRUIT_POOL.duplicate()
 	t.eq(
 		Roster.buildable(full).size(), NodeDefs.BUILDABLE.size(),
@@ -252,7 +266,7 @@ func _save_round_trip(t: T) -> void:
 
 	# ★ 走一趟真的 JSON：`recruited` 是字串陣列＝JSON 原生型別，
 	#   存進去讀出來要是原樣（藍圖庫那一批的同一條驗收）。
-	var d := _save_at(5)
+	var d := _save_at(CampaignData.count())
 	SaveService.apply_recruit(d, Rng.stream(9))
 	var round_trip: Variant = JSON.parse_string(JSON.stringify(d))
 	t.eq(

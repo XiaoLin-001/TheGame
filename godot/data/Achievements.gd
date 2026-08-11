@@ -16,6 +16,7 @@ extends RefCounted
 const CampaignData := preload("res://data/Campaign.gd")
 const Tech := preload("res://data/Tech.gd")
 const Levels := preload("res://data/Levels.gd")
+const Difficulty := preload("res://data/Difficulty.gd")
 
 ## ★ **券只發給「沒有別的來源在數同一件事」的成就**（B2.7，`roster_test` 抓到）。
 ##
@@ -37,10 +38,12 @@ const Levels := preload("res://data/Levels.gd")
 const LIST := [
 	{"id": "clear1", "name": "初次通關", "metric": "cleared", "need": 1,
 		"desc": "通過任何一關戰役。", "component": 20, "token": 0},
-	{"id": "clear_all", "name": "五關全通", "metric": "cleared", "need": 5,
-		"desc": "戰役五關全部通關。", "component": 60, "token": 0},
-	{"id": "stars_max", "name": "滿星", "metric": "stars", "need": 15,
-		"desc": "戰役 15 顆星全拿。", "component": 100, "token": 0},
+	# ★ B3.3 起這兩條的門檻與文案都由 `Campaign.count()` 推導（見 `DEFS` 下方）。
+	#   寫死 5／15 的那一版在戰役加到八關的當下就變成「全通了但成就沒亮」。
+	{"id": "clear_all", "name": "全關通過", "metric": "cleared", "need": -1,
+		"desc": "", "component": 60, "token": 0},
+	{"id": "stars_max", "name": "滿星", "metric": "stars", "need": -1,
+		"desc": "", "component": 100, "token": 0},
 
 	{"id": "wave10", "name": "無盡十波", "metric": "best_wave", "need": 10,
 		"desc": "無盡撐過 10 波。", "component": 20, "token": 0},
@@ -88,6 +91,37 @@ static func count() -> int:
 	return LIST.size()
 
 
+## ★ 解析過的成就列（B3.3）。**`need` 寫 −1 的那幾條由關卡數推導。**
+##
+## 為什麼要這一層：`clear_all`／`stars_max` 的門檻是「戰役全部通過」與
+## 「戰役滿星」，而那兩個數字**跟著關卡數走**。寫死 5 與 15 的那一版，
+## 在第二幕把戰役加到八關的當下就變成「八關全通了而成就沒亮」——
+## 而且它會安靜地不亮，因為 5 ≤ 8 恆真、15 ≤ 24 恆真的是另一條。
+##
+## 文案一併推導：一條寫著「戰役五關全部通關」的成就在八關的遊戲裡是錯的字。
+## `LIST` 仍然是那張表（加一條成就還是加一列），這裡只補那兩格。
+static func rows() -> Array:
+	var out: Array = []
+	for a: Dictionary in LIST:
+		out.append(resolve(a))
+	return out
+
+
+static func resolve(a: Dictionary) -> Dictionary:
+	if int(a["need"]) >= 0:
+		return a
+	var r := a.duplicate(true)
+	var n := CampaignData.count()
+	match String(a["id"]):
+		"clear_all":
+			r["need"] = n
+			r["desc"] = "戰役 %d 關全部通關。" % n
+		"stars_max":
+			r["need"] = n * 3
+			r["desc"] = "戰役 %d 顆星全拿。" % (n * 3)
+	return r
+
+
 ## ★ 存檔 → 一張「可比大小的量」的表。**全案唯一一個讀存檔算成就的地方。**
 ##
 ## 每一條成就都只是這張表上的一個比較，所以加一條成就＝加一列資料，
@@ -116,8 +150,11 @@ static func metrics(save: Dictionary) -> Dictionary:
 	return {
 		"cleared": cleared,
 		"stars": star_sum,
-		"best_wave": int(endless.get("best_wave", 0)),
-		"best_output": int(floor(float(endless.get("best_output", 0.0)))),
+		# ★ sv3 的形狀（B3.3 修）：`endless.best` 逐難度層一筆，取最好的那一筆。
+		#   B2.6 改結構之後這兩行還在讀 `best_wave`／`best_output`，
+		#   於是 wave10／wave25／wave50／out20／out50 **五條成就永遠達成不了**。
+		"best_wave": int(Difficulty.best_any(save)["wave"]),
+		"best_output": int(floor(float(Difficulty.best_any(save)["output"]))),
 		"tech": int(((save.get("tech", {}) as Dictionary).get("unlocked", []) as Array).size()),
 		"tycoon_level": int(tycoon.get("level", 1)),
 		"tycoon_tokens": int(tycoon.get("tokens", 0)),
@@ -134,7 +171,7 @@ static func metrics(save: Dictionary) -> Dictionary:
 static func done(save: Dictionary) -> Array[String]:
 	var m := metrics(save)
 	var out: Array[String] = []
-	for a: Dictionary in LIST:
+	for a: Dictionary in rows():
 		if int(m.get(String(a["metric"]), 0)) >= int(a["need"]):
 			out.append(String(a["id"]))
 	return out
@@ -153,7 +190,7 @@ static func tokens(save: Dictionary) -> int:
 static func _sum(save: Dictionary, key: String) -> int:
 	var got := done(save)
 	var sum := 0
-	for a: Dictionary in LIST:
+	for a: Dictionary in rows():
 		if got.has(String(a["id"])):
 			sum += int(a[key])
 	return sum

@@ -25,7 +25,7 @@ const THIRTY_DAYS := 30 * 24 * 60 * 60
 
 
 func _initialize() -> void:
-	var t := T.new("tycoon_test", 64)
+	var t := T.new("tycoon_test", 70)
 	_shape_and_curves(t)
 	_accept_assign_collect(t)
 	_offline_is_capped_by_lines(t)

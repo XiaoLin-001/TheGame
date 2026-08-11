@@ -133,10 +133,12 @@ func _build() -> void:
 	cols.add_child(right)
 
 	var metrics := Achievements.metrics(save)
-	for i in Achievements.LIST.size():
-		var row := _row(Achievements.LIST[i] as Dictionary, done, metrics)
+	# `rows()` 而不是 `LIST`：門檻與文案有兩條是由關卡數推導的（B3.3）。
+	var defs := Achievements.rows()
+	for i in defs.size():
+		var row := _row(defs[i] as Dictionary, done, metrics)
 		_rows.append(row)
-		(left if i < (Achievements.LIST.size() + 1) / 2 else right).add_child(row)
+		(left if i < (defs.size() + 1) / 2 else right).add_child(row)
 
 
 func _row(a: Dictionary, done: Array[String], metrics: Dictionary) -> Control:

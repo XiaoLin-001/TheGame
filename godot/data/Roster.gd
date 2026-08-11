@@ -13,6 +13,7 @@ extends RefCounted
 const CampaignData := preload("res://data/Campaign.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const Achievements := preload("res://data/Achievements.gd")
+const Difficulty := preload("res://data/Difficulty.gd")
 
 ## 招募池（§3.9：6 隻稀有角色；M2 的內容矩陣是 3 隻，§5）。
 ##
@@ -22,10 +23,18 @@ const RECRUIT_POOL: Array[String] = ["longcall", "frostreef", "ballast"]
 
 ## 聲望券的兩條遊玩途徑（§7.13）。**沒有第三份計數器**——見 `tokens()`。
 ##
-## 戰役滿星 15 顆 ÷ 5 ＝ 3 券 ＝ 剛好畢業。這個對齊是刻意的：B6 說「6 隻稀有
-## 角色全部都能純靠遊玩取得」，而**純戰役就能畢業**是這句話最短的證明
-## （`roster_test` 直接斷言它）。無盡那條是給不想再刷星的人的第二條路。
-const STAR_PER_TOKEN := 5
+## 「戰役滿星 ＝ 剛好畢業」是刻意的對齊：B6 說「稀有角色全部都能純靠遊玩取得」，
+## 而**純戰役就能畢業**是這句話最短的證明（`roster_test` 直接斷言它）。
+##
+## ★ B3.3 起匯率是**推導的**，不是寫死的 5。
+##   原本 15 顆星 ÷ 5 ＝ 3 券恰好等於招募池大小——而那個等式**只在五關的時候成立**。
+##   第二幕一加到八關，24 顆星就變成 4 券，多出來的那一張永遠用不掉
+##   （池滿了就畢業）。**兩個會各自變動的數字之間寫死一個比例，就是等它們漂開**
+##   ——sv2 砍 `campaign.cleared`、B2.4 不存 `owned` 的同一條紀律。
+##   現在關卡加到幾關、招募池開到幾隻，這個等式都還成立。
+static func star_per_token() -> int:
+	return maxi(1, (CampaignData.count() * 3) / maxi(1, RECRUIT_POOL.size()))
+
 const WAVE_PER_TOKEN := 10
 
 
@@ -110,10 +119,11 @@ static func earned(save: Dictionary) -> int:
 	var total := 0
 	for id: String in CampaignData.ids():
 		total += int(stars.get(id, 0))
-	var best_wave := int((save.get("endless", {}) as Dictionary).get("best_wave", 0))
+	# ★ sv3 的形狀（B3.3 修）。讀舊鍵的那一版自 B2.6 起讓**無盡完全不發券**。
+	var best_wave := int(Difficulty.best_any(save)["wave"])
 	var from_tycoon := int((save.get("tycoon", {}) as Dictionary).get("tokens", 0))
 	return (
-		total / STAR_PER_TOKEN + best_wave / WAVE_PER_TOKEN + from_tycoon
+		total / star_per_token() + best_wave / WAVE_PER_TOKEN + from_tycoon
 		+ Achievements.tokens(save)
 	)
 

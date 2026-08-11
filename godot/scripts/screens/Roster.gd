@@ -13,6 +13,7 @@ extends Control
 ## 「還剩 N 隻」是一個看得到終點的進度條；「稀有度 3%」是一個沒有終點的賭局。
 
 const RosterData := preload("res://data/Roster.gd")
+const Difficulty := preload("res://data/Difficulty.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 
 const CARD := Vector2(230, 168)
@@ -58,7 +59,7 @@ func _build() -> void:
 	#   兩條途徑寫出來，玩家才規劃得了「我再推兩關就能拿到下一隻」。
 	col.add_child(UiKit.label(
 		"聲望券：戰役每 %d 顆星 1 張、無盡每 %d 波 1 張。招募池只有 %d 隻且不重複，"
-		% [RosterData.STAR_PER_TOKEN, RosterData.WAVE_PER_TOKEN, RosterData.RECRUIT_POOL.size()]
+		% [RosterData.star_per_token(), RosterData.WAVE_PER_TOKEN, RosterData.RECRUIT_POOL.size()]
 		+ "收齊就畢業、不再消耗券。",
 		13, Palette.TEXT_SECONDARY, false
 	))
@@ -138,8 +139,11 @@ func _next_token_hint() -> String:
 	var best: Dictionary = (GameState.data.get("campaign", {}) as Dictionary).get("stars", {})
 	for v: Variant in best.values():
 		stars += int(v)
-	var wave := int((GameState.data.get("endless", {}) as Dictionary).get("best_wave", 0))
-	var need_star := RosterData.STAR_PER_TOKEN - stars % RosterData.STAR_PER_TOKEN
+	# ★ sv3 的形狀（B3.3 修）——舊鍵讓這一行從 B2.6 起恆為 0，
+	#   畫面於是永遠寫著「還差 10 波」，不管玩家打到第幾波。
+	var wave := int(Difficulty.best_any(GameState.data)["wave"])
+	var per := RosterData.star_per_token()
+	var need_star := per - stars % per
 	var need_wave := RosterData.WAVE_PER_TOKEN - wave % RosterData.WAVE_PER_TOKEN
 	return "還差 %d 顆星或 %d 波" % [need_star, need_wave]
 
@@ -243,7 +247,8 @@ func _click_selftest() -> void:
 	#   ——灰掉的鈕只說「不行」，湊不出下一步。
 	var broke: bool = _recruit_button.disabled and _recruit_note.text.contains("還差")
 
-	# 塞滿星戰役（15 顆星 ＝ 3 券 ＝ 剛好畢業，§7.13）。
+	# 塞滿星戰役（滿星的券數恆等於招募池大小 ＝ 剛好畢業，§7.13）。
+	# 這一段本來就是逐 `ids()` 塞的，所以戰役加到八關它自己就對了。
 	var stars: Dictionary = (GameState.data["campaign"] as Dictionary)["stars"]
 	for id: String in preload("res://data/Campaign.gd").ids():
 		stars[id] = 3

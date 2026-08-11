@@ -29,13 +29,14 @@ const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("progress_test", 136)
+	var t := T.new("progress_test", 146)
 	_axis_cap(t)
 	_axis_actually_moves_the_sim(t)
 	_components_are_derived(t)
 	_battle_payout_is_monotone(t)
 	_achievements_are_derived(t)
 	_achievement_table_is_consistent(t)
+	_metrics_move_with_real_writes(t)
 	_free_to_play_can_max_levels(t)
 	_uniform_board_ignores_levels(t)
 	_company_level_moves_from_both_layers(t)
@@ -182,7 +183,7 @@ func _achievements_are_derived(t: T) -> void:
 	var stars_only := _fresh()
 	for id: String in CampaignData.ids():
 		((stars_only["campaign"] as Dictionary)["stars"] as Dictionary)[id] = 3
-	var from_stars := 15 / Roster.STAR_PER_TOKEN
+	var from_stars := (CampaignData.count() * 3) / Roster.star_per_token()
 	t.ok(Roster.earned(stars_only) >= from_stars + Achievements.tokens(stars_only),
 		"★ 成就的券是加在既有來源之上，不是取代")
 	t.ok(Roster.graduated(stars_only) or Roster.tokens(stars_only) >= Roster.RECRUIT_POOL.size(),
@@ -193,7 +194,7 @@ func _achievement_table_is_consistent(t: T) -> void:
 	t.eq(Achievements.count(), 20, "M2 的內容矩陣：20 條成就（§5）")
 	var m := Achievements.metrics(_fresh())
 	var ids: Dictionary = {}
-	for a: Dictionary in Achievements.LIST:
+	for a: Dictionary in Achievements.rows():
 		var id := String(a["id"])
 		t.ok(not ids.has(id), "成就 id 不重複：%s" % id)
 		ids[id] = true
@@ -203,12 +204,12 @@ func _achievement_table_is_consistent(t: T) -> void:
 		t.ok(int(a["need"]) > 0, "成就 %s 的門檻 > 0（0 門檻＝白送）" % id)
 	# ⚠ `Achievements` 刻意不 preload `Roster`（會是個環），所以「名冊全滿」的
 	#   門檻是抄過去的一個數字——這一條就是看著它的那雙眼睛。
-	for a: Dictionary in Achievements.LIST:
+	for a: Dictionary in Achievements.rows():
 		if a["id"] == "recruit_all":
 			t.eq(int(a["need"]), Roster.RECRUIT_POOL.size(),
 				"★ 名冊全滿的門檻＝招募池大小（兩邊沒有 preload 相連，只有這條斷言）")
 	# 兩條滿級成就的門檻要跟著 `Levels.MAX_LEVEL` 走，不是寫死 10。
-	for a: Dictionary in Achievements.LIST:
+	for a: Dictionary in Achievements.rows():
 		if a["id"] in ["tower_max", "line_max"]:
 			t.eq(int(a["need"]), Levels.MAX_LEVEL, "滿級成就的門檻＝ MAX_LEVEL")
 
@@ -220,15 +221,57 @@ func _achievement_table_is_consistent(t: T) -> void:
 	#
 	# 寫成**通則**而不是釘住那四個 id：日後加第 21 條成就時，這條會自己攔下來。
 	var already_counted := ["cleared", "stars", "best_wave", "tycoon_tokens", "tycoon_level"]
-	for a: Dictionary in Achievements.LIST:
+	for a: Dictionary in Achievements.rows():
 		if int(a["token"]) > 0:
 			t.ok(not already_counted.has(String(a["metric"])),
 				"★★ 成就 %s 發券，但 `Roster.earned()` 已經在數 %s（同一份進度領兩次）"
 				% [a["id"], a["metric"]])
 	# 「名冊全滿」不發券：招募池已經空了，那是一張用不掉的券。
-	for a: Dictionary in Achievements.LIST:
+	for a: Dictionary in Achievements.rows():
 		if a["id"] == "recruit_all":
 			t.eq(int(a["token"]), 0, "★ 名冊全滿不發券（畢業之後券沒有用途）")
+
+
+
+## ★★ **每一個量都要能被玩家真的走的那條路推動**（B3.3、RG-167）。
+##
+## 上面那條「metric 存在」問的是**鍵在不在**——而 sv3（B2.6）把
+## `endless.best_wave` 收進 `endless.best` 之後，鍵**照樣在**：
+## `metrics()` 讀不到舊鍵，安靜地回 0。於是 wave10／wave25／wave50／
+## out20／out50 五條成就**永遠是 0／N**，而整份測試連續三批全綠。
+##
+## 這一條改問另一個問題：**寫進去之後它會不會動。**
+## 差別在於它走的是 `SaveService.apply_endless()`——玩家打完一局走的那條路
+## ——而不是自己在字典裡塞一個鍵。測試自己捏形狀，就驗不到形狀改了。
+func _metrics_move_with_real_writes(t: T) -> void:
+	var d := _fresh()
+	t.eq(int(Achievements.metrics(d)["best_wave"]), 0, "（對照）沒打過無盡時是 0")
+
+	SaveService.apply_endless(d, 60, 60.0, 0)
+	var after := Achievements.metrics(d)
+	t.ok(int(after["best_wave"]) >= 60, "★★ apply_endless 之後 best_wave 真的動了")
+	t.ok(int(after["best_output"]) >= 60, "★★ apply_endless 之後 best_output 真的動了")
+
+	# 而那五條無盡成就因此真的達成得了。
+	var got := Achievements.done(d)
+	for id: String in ["wave10", "wave25", "wave50", "out20", "out50"]:
+		t.ok(got.has(id), "★★ 無盡成就 %s 達成得了（B2.6 起它們讀著一個死掉的鍵）" % id)
+
+	# 券的那條路同樣要通（`Roster.earned()` 讀的是同一個量）。
+	var tok := _fresh()
+	SaveService.apply_endless(tok, Roster.WAVE_PER_TOKEN * 2, 0.0, 0)
+	t.eq(Roster.earned(tok), 2, "★★ 無盡 %d 波 ＝ 2 券（B2.6 起這條路一張都沒發過）" % (
+		Roster.WAVE_PER_TOKEN * 2
+	))
+
+	# 高難度層的紀錄一樣算數：局外里程碑不該逼玩家回第 0 層再刷一次，
+	# 而第 3 層的 30 波嚴格難於第 0 層的 30 波。
+	var tiered := _fresh()
+	SaveService.apply_endless(tiered, 30, 0.0, 3)
+	t.eq(
+		int(Achievements.metrics(tiered)["best_wave"]), 30,
+		"★ 第 3 層的波數一樣進得了局外里程碑"
+	)
 
 
 # ── ② B6：不碰 tycoon 也能滿級 ───────────────────────────────────────

@@ -103,6 +103,28 @@ static func best(save: Dictionary, tier: int) -> Dictionary:
 	return {"wave": int(row.get("wave", 0)), "output": float(row.get("output", 0.0))}
 
 
+## ★ 這份存檔的無盡個人最佳，**不分難度層取最好的那一筆**（B3.3）。
+##
+## 局外的里程碑（聲望券、成就）問的是「你在無盡撐過幾波」，而那個問題
+## 不該逼玩家回第 0 層再刷一次——第 3 層的 20 波嚴格難於第 0 層的 20 波。
+## 逐層的紀錄留給 `best()`（局末面板要說「這一層的紀錄」）。
+##
+## ⚠ **這支函式是補一個活的缺陷**（B3.3 找到）：sv3 把 `endless.best_wave`
+## 收進 `endless.best` 之後，`Roster.earned()`、`Achievements.progress()` 與
+## 名冊畫面**三處都還在讀那個已經不存在的鍵**——於是無盡自 B2.6 起
+## 一張券都沒發過，而五條無盡成就永遠達成不了。
+## 三處測試全綠，因為**它們自己在存檔裡塞那個舊鍵**（`daily_test`、
+## `roster_test` 都是）：測試化石化在舊形狀上，就不再是測試了。
+static func best_any(save: Dictionary) -> Dictionary:
+	var out := {"wave": 0, "output": 0.0}
+	var all: Dictionary = (save.get("endless", {}) as Dictionary).get("best", {})
+	for row: Variant in all.values():
+		var r: Dictionary = row
+		out["wave"] = maxi(int(out["wave"]), int(r.get("wave", 0)))
+		out["output"] = maxf(float(out["output"]), float(r.get("output", 0.0)))
+	return out
+
+
 ## ★ 解鎖到第幾層。**推導的**（sv2 砍 `campaign.cleared`、B2.4 不存 `owned`、
 ## B2.5 不存產線佔用、B2.7 不存材料餘額的同一條）——存一份「已解鎖到第 N 層」
 ## 就是讓同一個事實有兩個版本，而漂掉的那天玩家看到的是「紀錄在第 2 層、
