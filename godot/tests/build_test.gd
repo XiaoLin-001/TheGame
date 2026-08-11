@@ -17,7 +17,7 @@ const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("build_test")
+	var t := T.new("build_test", 79)
 	_geometry(t)
 	_placement_rules(t)
 	_conduit_rules(t)

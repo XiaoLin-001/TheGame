@@ -517,6 +517,16 @@ func _glyph_selftest() -> void:
 	for i in NodeDefs.BUILDABLE.size():
 		var ty := String(NodeDefs.BUILDABLE[i])
 		s.add_node(ty, Vector2i(4 + i * 2, 14) if gallery else Vector2i(-9, -9))
+	# ★ 敵人也排一列（B3.2）。**六隻在同一張圖上才判得出「一眼分得開嗎」**——
+	#   而 M3 的三隻只在無盡第 9／12／15 波之後才出場，沒有這個鉤子就要打二十分鐘
+	#   才拍得到一張合照。斷言只證明「畫得出東西」，分不分得開仍然是人眼判的。
+	if gallery:
+		var types: Array = Enemies.DEFS.keys()
+		for i in types.size():
+			var id: int = s.add_enemy(String(types[i]))
+			for e: Dictionary in s.enemies:
+				if int(e["id"]) == id:
+					e["progress"] = float(4 + i * 3)
 	_no_glyph.clear()
 	queue_redraw()
 	for _i in 2:
@@ -2169,25 +2179,31 @@ func _cell_quad(c: Vector2i) -> PackedVector2Array:
 const BAND_CHAMFER := 0.3
 
 func _band_quad(c: Vector2i, solid: Dictionary) -> PackedVector2Array:
-	var quad := PackedVector2Array()
-	for i in CORNERS.size():
-		var corner: Vector2i = CORNERS[i]
+	# ① 先把四個（抖動過的）角算出來。
+	var base := PackedVector2Array()
+	for corner: Vector2i in CORNERS:
 		var g := c + corner
 		var w := _world(g)
 		if not _interior_vertex(g, solid):
 			w += Shapes.band_jitter(g.x, g.y)
-		if _outer_corner(g, solid):
-			# 沿「上一個角 → 這個角」與「這個角 → 下一個角」兩條邊各退一段。
-			var prev: Vector2i = CORNERS[(i + CORNERS.size() - 1) % CORNERS.size()]
-			var next: Vector2i = CORNERS[(i + 1) % CORNERS.size()]
-			var to_prev := (_world(c + prev) - _world(c + corner)).normalized()
-			var to_next := (_world(c + next) - _world(c + corner)).normalized()
-			# 不得吃掉超過半格，否則 32px 的格子上會變成八角形而不是磨過的直角。
-			var k := float(Shapes.GRID) * _zoom * BAND_CHAMFER
-			quad.append(w + to_prev * k)
-			quad.append(w + to_next * k)
-		else:
-			quad.append(w)
+		base.append(w)
+	# ② 再倒角。**沿著實際的邊 `lerp`**，不是沿著「名目上的格子方向」推一段固定長度。
+	#
+	#   ⚠ B2.9 的第一版是後者，而那會產生**自我相交的多邊形**：偏移量由
+	#   `GRID × zoom` 算，起點卻是抖動過的角，兩者對不起來時兩個倒角點會交叉，
+	#   Godot 的三角化當場失敗（`Invalid polygon data`）。放大鏡頭時每一幀噴
+	#   一百多條——**而 fit 倍率下一條都不噴，所以 B2.9 的驗收完全沒看到**。
+	#   走 `lerp` 之後兩個點必定落在自己那條邊上，`0.3 + 0.3 < 1` 就結構上不可能相交。
+	var quad := PackedVector2Array()
+	for i in CORNERS.size():
+		var g := c + CORNERS[i]
+		if not _outer_corner(g, solid):
+			quad.append(base[i])
+			continue
+		var prev: Vector2 = base[(i + CORNERS.size() - 1) % CORNERS.size()]
+		var next: Vector2 = base[(i + 1) % CORNERS.size()]
+		quad.append(base[i].lerp(prev, BAND_CHAMFER))
+		quad.append(base[i].lerp(next, BAND_CHAMFER))
 	return quad
 
 
@@ -2748,11 +2764,39 @@ func _draw_enemies() -> void:
 		#   輪廓的壓扁在 fit 倍率幾乎讀不到（實看 A/B 抓到），明度差讀得到。
 		#   畫在**中心**而不是外圈：外圈已經有甲板描邊與血量弧兩個訊息了。
 		elif swift:
-			draw_circle(p, r * pulse * 0.45, Palette.TIDE_BRIGHT)
+			# ★ **免疫減速的那一隻畫菱形，只是跑得快的畫圓**（B3.2）。
+			#   熾泳與潛涌都過得了 `SWIFT_SPEED` 門檻，共用一個亮核心的話，
+			#   一條真的規則（抓不抓得住）在畫面上是看不見的。
+			#   形狀與大小同時不同（§7.5 的半徑 6 vs 8）——RG-145 的同一條。
+			# 下限 1px：`pulse` 在減少動態效果時可能壓到 0，而四個點疊在一起的
+			# 多邊形會讓 Godot 的三角化失敗（實跑當場噴 `Invalid polygon data`）。
+			var core := maxf(1.0, r * pulse * 0.45)
+			if bool(def.get("swift", false)):
+				# ★ 用 `draw_polyline` 不是 `draw_colored_polygon`：後者要三角化，
+				#   而一個被 `pulse` 壓扁到近乎退化的四邊形會讓它噴
+				#   `Invalid polygon data`（合照鉤子當場抓到，一幀好幾條）。
+				#   閉合折線沒有這個問題，而在 16px 上「空心菱形 vs 實心圓」
+				#   的差別比實心與實心大。
+				draw_polyline(PackedVector2Array([
+					p + Vector2(0, -core * 1.3), p + Vector2(core, 0),
+					p + Vector2(0, core * 1.3), p + Vector2(-core, 0),
+					p + Vector2(0, -core * 1.3),
+				]), Palette.TIDE_BRIGHT, 2.0)
+			else:
+				draw_circle(p, core, Palette.TIDE_BRIGHT)
 		# ★ 被潮鳴抓住的敵人：輪廓描一圈 `order.cyan`（B1.8）。
 		#   **標在敵人身上而不是塔上**——減速 −40%／破甲 −25% 作用在它身上，
 		#   標在這裡因果才讀得出來；標在塔上只說得出「它開著」。
 		#   閉合折線，和血量弧（`tide.deep` 圓弧）一個是線一個是弧，分得開（§4.3b）。
+		# ★ 再生（B3.2）：**輪廓內一圈會呼吸的亮線**。§1.7 的規則是「輪廓由既有的
+		#   機制欄位推導」，而再生是這一批唯一沒有現成視覺的規則——迅捷靠速度
+		#   （亮核心）、群體靠半徑（小一號），只有它得自己長一個。
+		#   用 `tide.bright` 不是新顏色（§1.7 的混沌亮階），和青色的減速圈分得開。
+		if float(def.get("regen", 0.0)) > 0.0:
+			var knit := pts.duplicate()
+			knit.append(pts[0])
+			var beat := Motion.pulse(s.tick_count, Motion.AMBIENT, 0.5, float(e["id"]))
+			draw_polyline(knit, Palette.alpha(Palette.TIDE_BRIGHT, 0.25 + 0.45 * beat), 2.0)
 		var slow := 0.0 if i >= _auras.size() else (_auras[i] as Vector2).x
 		if slow > 0.01:
 			var ring := pts.duplicate()

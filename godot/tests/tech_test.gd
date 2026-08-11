@@ -22,7 +22,7 @@ const SaveService := preload("res://scripts/core/SaveService.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("tech_test")
+	var t := T.new("tech_test", 56)
 	_costs_match_gdd(t)
 	_prereq_chain(t)
 	_can_unlock(t)

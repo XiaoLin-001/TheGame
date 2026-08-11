@@ -211,12 +211,16 @@ func add_conduit(a: Vector2i, b: Vector2i) -> int:
 func add_enemy(type: String) -> int:
 	var id := _next_id
 	_next_id += 1
+	var hp := float(Enemies.of(type).get("hp", 1.0)) * hp_mult * float(mods["enemy_hp_mult"])
 	enemies.append({
 		"id": id,
 		"type": type,
 		"progress": 0.0,
 		# 三個倍率乘在一起：敵人自己的血（§7.5）× 無盡波次曲線 × 難度層。
-		"hp": float(Enemies.of(type).get("hp", 1.0)) * hp_mult * float(mods["enemy_hp_mult"]),
+		"hp": hp,
+		# ★ 再生要有一個上限（B3.2）。**出場時算一次就固定**——它是那三個倍率的
+		#   乘積，而倍率在波次中途不變；每 tick 重算等於讓再生跟著別人的規則漂。
+		"max_hp": hp,
 	})
 	return id
 

@@ -35,7 +35,7 @@ const LOOPING := [
 
 
 func _initialize() -> void:
-	var t := T.new("audio_test")
+	var t := T.new("audio_test", 145)
 	_files_exist(t)
 	_format(t)
 	_bgm_layers_align(t)

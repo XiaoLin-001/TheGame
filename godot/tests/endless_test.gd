@@ -12,6 +12,7 @@ const MapGen := preload("res://scripts/sim/MapGen.gd")
 const Maps := preload("res://data/Maps.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
+const Difficulty := preload("res://data/Difficulty.gd")
 
 ## 不變量掃過的種子數。**掃一個種子等於什麼都沒驗**——生成器的缺陷幾乎
 ## 都是「某些種子才踩得到」（`_other_y` 沒得選、核心區太小、跨越點撞入口）。
@@ -44,7 +45,7 @@ const COVER := 7
 
 
 func _initialize() -> void:
-	var t := T.new("endless_test")
+	var t := T.new("endless_test", 70)
 	_determinism(t)
 	_invariants(t)
 	_waves(t)
@@ -366,26 +367,30 @@ func _best(t: T) -> void:
 	# 舊存檔（沒有 endless 鍵）讀進來自動長出 0/0——這是「沒有 bump
 	# SAVE_VERSION」那個決定的實質斷言。
 	var old := SaveService.normalize({"sv": 2, "tech": {"unlocked": [], "data": 5}})
-	t.eq(int((old["endless"] as Dictionary)["best_wave"]), 0, "舊存檔補出 best_wave=0")
+	# ★ B3.2 修：這一段從 B2.6（sv3）起讀的是一個**已經不存在的鍵**
+	#   （`endless.best_wave` → `endless.best["<層>"]`）。九條斷言全部在讀 `null`，
+	#   而 `int(null)` 是 0、`float(null)` 是 0.0——**errored 的運算式會安靜地
+	#   退化成一個剛好對得上的值**，於是整支測試照樣是綠的（RG-164）。
+	t.eq(int(Difficulty.best(old, 0)["wave"]), 0, "舊存檔補出第 0 層 0 波")
 	t.eq(float(old["tech"]["data"]), 5.0, "補鍵不會動到玩家原有的資料")
 
 	var d := SaveService.defaults()
 	var r1 := SaveService.apply_endless(d, 12, 0.8)
 	t.ok(bool(r1["wave"]) and bool(r1["output"]), "第一局兩欄都是新紀錄")
-	t.eq(int(d["endless"]["best_wave"]), 12, "波次寫進去了")
+	t.eq(int(Difficulty.best(d, 0)["wave"]), 12, "波次寫進去了")
 
 	# ★ 兩欄各自取最大值：波次更高但產能更差的一局，**不得**洗掉產能紀錄。
 	var r2 := SaveService.apply_endless(d, 13, 0.3)
 	t.ok(bool(r2["wave"]), "波次破紀錄")
 	t.ok(not bool(r2["output"]), "產能沒破紀錄")
-	t.eq(int(d["endless"]["best_wave"]), 13, "波次更新為 13")
-	t.near(float(d["endless"]["best_output"]), 0.8, "產能紀錄保住 0.8，沒被更差的一局洗掉")
+	t.eq(int(Difficulty.best(d, 0)["wave"]), 13, "波次更新為 13")
+	t.near(float(Difficulty.best(d, 0)["output"]), 0.8, "產能紀錄保住 0.8，沒被更差的一局洗掉")
 
 	var r3 := SaveService.apply_endless(d, 5, 0.2)
 	t.ok(not bool(r3["wave"]) and not bool(r3["output"]), "更差的一局兩欄都不破")
-	t.eq(int(d["endless"]["best_wave"]), 13, "更差的一局不會讓紀錄倒退")
+	t.eq(int(Difficulty.best(d, 0)["wave"]), 13, "更差的一局不會讓紀錄倒退")
 
 	# 存檔往返：normalize 之後數字還在（JSON 會把 int 讀成 float，這裡釘住口徑）。
 	var back := SaveService.normalize(d)
-	t.eq(int(back["endless"]["best_wave"]), 13, "normalize 往返後 best_wave 不變")
-	t.near(float(back["endless"]["best_output"]), 0.8, "normalize 往返後 best_output 不變")
+	t.eq(int(Difficulty.best(back, 0)["wave"]), 13, "normalize 往返後波次不變")
+	t.near(float(Difficulty.best(back, 0)["output"]), 0.8, "normalize 往返後產能不變")

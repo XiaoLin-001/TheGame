@@ -20,7 +20,7 @@ const SWEEP := 14
 
 
 func _initialize() -> void:
-	var t := T.new("daily_test")
+	var t := T.new("daily_test", 42)
 	_seed_is_a_function_of_the_date(t)
 	_uniform_ignores_progress(t)
 	_free_uses_progress(t)

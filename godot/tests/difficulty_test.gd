@@ -35,7 +35,7 @@ const MAX_TICKS := 9000
 
 
 func _initialize() -> void:
-	var t := T.new("difficulty_test")
+	var t := T.new("difficulty_test", 65)
 	_calibrated_to_the_level_axis(t)
 	_one_new_rule_per_tier(t)
 	_mods_actually_carry(t)

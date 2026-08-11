@@ -20,7 +20,7 @@ const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("tide_test")
+	var t := T.new("tide_test", 47)
 	_blast_geometry(t)
 	_bridge_immunity(t)
 	_never_stops(t)

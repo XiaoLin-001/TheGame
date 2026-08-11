@@ -23,7 +23,7 @@ const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("hud_test")
+	var t := T.new("hud_test", 73)
 	_motion_tokens(t)
 	_bursts_are_render_only(t)
 	_every_tower_records_its_shot(t)

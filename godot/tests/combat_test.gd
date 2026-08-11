@@ -16,6 +16,7 @@ extends SceneTree
 const T := preload("res://tests/_assert.gd")
 const Combat := preload("res://scripts/sim/Combat.gd")
 const Maps := preload("res://data/Maps.gd")
+const MapsData := preload("res://data/Maps.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
@@ -24,7 +25,7 @@ const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("combat_test")
+	var t := T.new("combat_test", 151)
 	_exchange_rate(t)
 	_armor_and_barrier(t)
 	_rate_of_fire(t)
@@ -37,6 +38,7 @@ func _initialize() -> void:
 	_knell_aura(t)
 	_priority_decides_who_starves(t)
 	_breaker_splash(t)
+	_m3_enemy_rules(t)
 	quit(t.report())
 
 
@@ -512,3 +514,105 @@ func _spawn_at(s: RefCounted, type: String, progress: float) -> void:
 
 func _sat(s: RefCounted, cell: Vector2i) -> float:
 	return float((s.rates["satisfaction"] as Dictionary).get(s.node_at(cell)["id"], 1.0))
+
+
+# ── M3 第一批敵人的三條新規則（B3.2、§7.5）──────────────────────────
+
+## 三隻各帶一條新規則，而**規則寫在表上 ≠ 規則作用在局面上**（RG-142 的同一課）。
+## 這一段一律問模擬：跑真的 tick，量真的位移與血量。
+func _m3_enemy_rules(t: T) -> void:
+	_swift_ignores_slow(t)
+	_pack_comes_in_runs(t)
+	_regen_needs_a_dps_floor(t)
+
+
+## ★ 迅捷：**光環抓不住它**。§3.5 的屬性表從 M0 就寫著這一條，
+## 而 B3.2 之前沒有任何一隻敵人有它——這條斷言就是那句話第一次有人守。
+func _swift_ignores_slow(t: T) -> void:
+	# 同一張圖、同一座潮鳴、同樣跑 40 tick，只換敵人的種類。
+	# ⚠ 潮鳴**要有電才有光環**（強度按滿足率縮放）。第一版忘了接發電機，
+	#   於是「熾泳沒被拖慢」——量到的是一座沒通電的塔，不是迅捷。
+	var moved := {}
+	for type: String in ["ember", "surge"]:
+		var s := _session()
+		_power_plant(s)
+		BuildController.place(s, "knell", Vector2i(16, 7))
+		BuildController.lay_conduit(s, Vector2i(16, 8), Vector2i(16, 7))
+		_spawn_at(s, type, 16.0)
+		for _i in 10:
+			BattleController.step(s)
+		moved[type] = float((s.enemies[0] as Dictionary)["progress"]) - 16.0
+	# 1 秒（10 tick）。熾泳 1.6 格/秒 被 −40% 拖成 0.96；潛涌 1.9 一格都不掉。
+	t.near(float(moved["surge"]), 1.9, "★★ 迅捷：站在潮鳴的光環裡，位移仍是滿速", 0.02)
+	t.near(float(moved["ember"]), 1.6 * 0.6,
+		"★ 反向對照：同一座潮鳴確實拖得住不迅捷的熾泳", 0.02)
+
+
+## ★ 群體：一次抽中連續佔掉 `pack` 個出場位。
+## **隻數與間隔兩條不變量都不動**（§7.10）——群體改的是同一批出場位裡出現什麼。
+func _pack_comes_in_runs(t: T) -> void:
+	for w in [9, 12, 15, 21, 30]:
+		var sched := Enemies.endless_schedule(4242, w)
+		t.eq(sched.size(), Enemies.endless_count(w), "第 %d 波：隻數仍是公式那一個" % w)
+		for i in range(1, sched.size()):
+			t.near(
+				float(sched[i]["at"]) - float(sched[i - 1]["at"]), Enemies.ENDLESS_GAP,
+				"第 %d 波：間隔仍是固定的 %.1f 秒" % [w, Enemies.ENDLESS_GAP]
+			)
+	# 真的排得出「連續三隻苔群」（不然 `pack` 只是一個沒有人讀的欄位）。
+	var runs := 0
+	for w in range(9, 40):
+		var sched := Enemies.endless_schedule(4242, w)
+		for i in range(2, sched.size()):
+			if (String(sched[i]["type"]) == "bloom" and String(sched[i - 1]["type"]) == "bloom"
+				and String(sched[i - 2]["type"]) == "bloom"):
+				runs += 1
+	t.ok(runs > 0, "★ 苔群真的成串出現（%d 串）" % runs)
+
+
+## ★ 再生：**dps 有一個門檻**。這條規則接的是全案的核心命題（§3.1 峰值電力）——
+## 塔在缺電時射速線性下降，而降到某一點之後 dps 追不上再生，它就永遠不會死。
+func _regen_needs_a_dps_floor(t: T) -> void:
+	var def := Enemies.of("mender")
+	var regen := float(def["regen"])
+	t.ok(regen > 0.0, "癒殼有再生")
+
+	# ① 沒有人打它：血量回得滿，而且**不會超過上限**。
+	var s := SessionState.new()
+	s.setup(MapsData.SHOAL)
+	s.phase = "wave"
+	var id := s.add_enemy("mender")
+	for e: Dictionary in s.enemies:
+		if int(e["id"]) == id:
+			e["hp"] = float(e["max_hp"]) * 0.5
+	for _i in 200:
+		BattleController.step(s)
+	var hp := 0.0
+	for e: Dictionary in s.enemies:
+		if int(e["id"]) == id:
+			hp = float(e["hp"])
+	t.near(hp, float(def["hp"]), "★ 再生回得滿，而且封頂在最大血量（不會愈長愈多）", 0.01)
+
+	# ② 反向對照：**不帶 regen 的敵人一點都不會回血**（不然上面那條可能是別的原因）。
+	var plain := SessionState.new()
+	plain.setup(MapsData.SHOAL)
+	plain.phase = "wave"
+	var pid := plain.add_enemy("drifter")
+	for e: Dictionary in plain.enemies:
+		if int(e["id"]) == pid:
+			e["hp"] = 20.0
+	for _i in 50:
+		BattleController.step(plain)
+	for e: Dictionary in plain.enemies:
+		if int(e["id"]) == pid:
+			t.near(float(e["hp"]), 20.0, "★ 反向對照：沒有 regen 的敵人不會自己長血")
+
+	# ③ 比例不是絕對值：血量倍率翻倍，每秒回復量也跟著翻倍
+	#    （不然第 30 波的它等於沒有這條規則）。
+	var big := SessionState.new()
+	big.setup(MapsData.SHOAL)
+	big.hp_mult = 4.0
+	var bid := big.add_enemy("mender")
+	for e: Dictionary in big.enemies:
+		if int(e["id"]) == bid:
+			t.near(float(e["max_hp"]), float(def["hp"]) * 4.0, "★ 再生的上限跟著血量倍率長")

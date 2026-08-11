@@ -18,6 +18,45 @@ const DEFS := {
 		"name": "熾泳", "hp": 90.0, "speed": 1.6, "armor": 0.0, "barrier": 0.4,
 		"dmg": 10.0, "value": 22, "radius": 8.0,
 	},
+
+	# ── M3 第一批（B3.2）。三隻，**一隻一條新規則**，而且三條都由既有的塔回答 ──
+	#
+	# 這一批不補到 §5 內容矩陣的 12 隻。理由是本案已經記過兩次的同一條
+	# （§5 的 B1.1／B2.4 註）：**一次補齊一堆沒平衡過的內容，會讓後面的校準
+	# 建立在流沙上**。3 → 6 是 M1 那一欄的數字，而每一隻都有現成的剋制手段。
+	#
+	# 三隻**只進無盡與每日的出場池**（`endless_pool()`），戰役五關一格都不動
+	# ——那五關的參考解是 `campaign_test` 431 條斷言的地基。
+	"surge": {
+		# ★ 迅捷：**免疫減速**。§3.5 的屬性表從 M0 就寫著這一條，
+		#   而在 B3.2 之前沒有任何一隻敵人有它——於是潮鳴／霜礁的減速對全場都有效，
+		#   「全押光環」是一個沒有代價的答案。剋制它的是高爆發單體（長哨、定潮）。
+		#   ★ 視覺不必新增：它站在光環裡**沒有那圈青色描邊**，那就是「抓不住它」。
+		"name": "潛涌", "hp": 70.0, "speed": 1.9, "armor": 0.0, "barrier": 0.0,
+		#   ★ 半徑 6（熾泳是 8）：兩隻都超過 `SWIFT_SPEED` 門檻、都會拿到亮核心，
+		#     只靠那一點在 fit 倍率下分不開。小一號 ＋ 菱形核心（`_draw_enemies`）
+		#     才是「形狀與顏色同時不同」（RG-145 的同一條）。
+		"dmg": 9.0, "value": 20, "radius": 6.0, "swift": true,
+	},
+	"bloom": {
+		# ★ 群體：一次抽中就出 `pack` 隻。血薄、傷害低，但**擠成一團**，
+		#   剋制它的是濺射（碎浪）與貫穿（稜鏡）。
+		#   ★ 一次抽中 ≈ 一份壓力：24×3 = 72 血，和漂蟲的 60 同一個量級，
+		#     所以它改的是壓力的**形狀**，不是總量。
+		"name": "苔群", "hp": 24.0, "speed": 1.1, "armor": 0.0, "barrier": 0.0,
+		"dmg": 3.0, "value": 5, "radius": 5.0, "pack": 3,
+	},
+	"mender": {
+		# ★ 再生：每秒回復**最大血量的 4%**。寫成比例不是絕對值，
+		#   所以它跟著無盡的血量曲線與難度層一起長——不然第 30 波的它等於沒有這條規則。
+		#
+		#   ★ 這一條直接接上全案的核心命題（§3.1 峰值電力）：塔在缺電時射速線性下降，
+		#     而下降到某一點之後 **dps 追不上再生，它就永遠不會死**。
+		#     「電力不足」從此不只是慢一點，而是有一個看得見的門檻。
+		#   armor 刻意是 0：一隻敵人一條新規則，甲板描邊留給甲殼。
+		"name": "癒殼", "hp": 150.0, "speed": 0.7, "armor": 0.0, "barrier": 0.0,
+		"dmg": 12.0, "value": 34, "radius": 11.0, "regen": 0.04,
+	},
 }
 
 ## 測試圖「淺灘」的波次表。**手作，不是公式**——戰役關卡的難度只能用玩家看得見的
@@ -178,12 +217,15 @@ static func endless_count(w: int) -> int:
 
 
 ## 第 `w` 波的敵種池。與戰役同一條登場順序（§7.9）：護甲先教、能量抗性後教。
+## ★ B3.2 起一路加到六隻。**一次只多一種，每三波一階**——同一條登場順序的理由：
+## 新規則要有一段只有它自己的時間，玩家才對得起來「這一波難是因為多了什麼」。
+## 戰役五關不受影響（它們走自己的手作波次表，§7.9）。
 static func endless_pool(w: int) -> Array[String]:
-	if w <= 2:
-		return ["drifter"]
-	if w <= 5:
-		return ["drifter", "carapace"]
-	return ["drifter", "carapace", "ember"]
+	var pool: Array[String] = ["drifter"]
+	for gate: Array in [[3, "carapace"], [6, "ember"], [9, "bloom"], [12, "surge"], [15, "mender"]]:
+		if w >= int(gate[0]):
+			pool.append(String(gate[1]))
+	return pool
 
 
 ## 第 `w` 波的完整出場表（`w` 自 1 起）。**同 `(s, w)` 必得同一張表**。
@@ -193,7 +235,19 @@ static func endless_schedule(s: int, w: int) -> Array:
 	var pool := endless_pool(w)
 	var out: Array = []
 	var t := 0.0
-	for i in endless_count(w):
-		out.append({"type": pool[rng.randi_range(0, pool.size() - 1)], "at": t})
-		t += ENDLESS_GAP
+	while out.size() < endless_count(w):
+		var type := pool[rng.randi_range(0, pool.size() - 1)]
+		# ★ 群體（B3.2）：抽中一次就**連續佔掉 `pack` 個出場位**。
+		#
+		#   兩件事刻意不做：不縮短間隔、不追加額外的隻數。§7.10 的兩條
+		#   「隻數 = 4 + floor(w/3)」與「間隔固定 1.0 秒」是**寫死的不變量**
+		#   （後者的理由是「再給間隔一條曲線，玩家就分不出這波難是因為血厚
+		#   還是因為密」）——群體改的是**同一批出場位裡出現什麼**，不是這兩條。
+		#
+		#   而它仍然是一團：三隻速度 1.1、間隔 1 秒 → 路徑上相距 1.1 格，
+		#   三隻落在 2.2 格內，正好進得了碎浪 2.5 格的濺射半徑。
+		var pack := clampi(int(of(type).get("pack", 1)), 1, endless_count(w) - out.size())
+		for k in pack:
+			out.append({"type": type, "at": t})
+			t += ENDLESS_GAP
 	return out

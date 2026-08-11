@@ -29,7 +29,7 @@ const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("progress_test")
+	var t := T.new("progress_test", 136)
 	_axis_cap(t)
 	_axis_actually_moves_the_sim(t)
 	_components_are_derived(t)

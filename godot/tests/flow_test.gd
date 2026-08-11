@@ -17,7 +17,7 @@ const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("flow_test")
+	var t := T.new("flow_test", 50)
 	_single_line_saturation(t)
 	_capacity_split(t)
 	_priority_by_type(t)

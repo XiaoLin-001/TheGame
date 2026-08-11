@@ -21,7 +21,7 @@ const SWEEP := 200
 
 
 func _initialize() -> void:
-	var t := T.new("roster_test")
+	var t := T.new("roster_test", 83)
 	_owned_is_derived_from_campaign(t)
 	_tokens_are_derived(t)
 	_no_dupes_and_graduation(t)

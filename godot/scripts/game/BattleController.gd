@@ -215,6 +215,11 @@ static func _advance_and_damage(s: RefCounted, aura: Array = []) -> void:
 				c["hp"] = float(c["hp"]) - dmg
 
 		var slow := 0.0 if i >= aura.size() else (aura[i] as Vector2).x
+		# ★ 迅捷（B3.2、§3.5 屬性表）：**免疫減速**。這條屬性從 M0 就寫在文件上，
+		#   而在 B3.2 之前沒有任何一隻敵人有它——於是「全押減速光環」是一個
+		#   沒有代價的答案。破甲（`aura[i].y`）不在這裡，迅捷不擋破甲。
+		if bool(def.get("swift", false)):
+			slow = 0.0
 		e["progress"] = Tide.advance(
 			float(e["progress"]), float(def.get("speed", 1.0)) * (1.0 - slow), s.path.size()
 		)
@@ -319,6 +324,15 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 	for i in s.enemies.size():
 		var e: Dictionary = s.enemies[i]
 		e["hp"] = float(e["hp"]) - damage[i]
+		# ★ 再生（B3.2）：每 tick 回復**最大血量的 `regen`**，上限是最大血量。
+		#
+		#   **在扣血之後、結算死亡之前**：致命的一擊仍然致命（回不回得來由 hp 決定），
+		#   而沒被打死的那一隻這一 tick 就開始長回去。
+		#   比例而不是絕對值，所以它跟著無盡曲線與難度層一起長——寫死一個
+		#   「每秒 6 點」在第 30 波等於沒有這條規則。
+		var regen := float(Enemies.of(String(e["type"])).get("regen", 0.0))
+		if regen > 0.0 and float(e["hp"]) > 0.0:
+			e["hp"] = minf(float(e["max_hp"]), float(e["hp"]) + float(e["max_hp"]) * regen * TICK)
 	for i in range(s.enemies.size() - 1, -1, -1):
 		if float((s.enemies[i] as Dictionary)["hp"]) > 0.0:
 			continue

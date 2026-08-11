@@ -42,7 +42,7 @@ const M1_FLOOR := {
 
 
 func _initialize() -> void:
-	var t := T.new("m2_test")
+	var t := T.new("m2_test", 368)
 	_content_matrix(t)
 	_everything_is_reachable(t)
 	_full_playthrough_save_is_clean(t)

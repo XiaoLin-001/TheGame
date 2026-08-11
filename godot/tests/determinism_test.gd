@@ -20,7 +20,7 @@ const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("determinism_test")
+	var t := T.new("determinism_test", 20)
 
 	# ── 有種子的產生器：同種子必同序列 ──
 	var a := _sequence(RngLib.stream(42), 32)

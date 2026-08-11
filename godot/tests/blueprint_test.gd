@@ -18,7 +18,7 @@ const Tech := preload("res://data/Tech.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("blueprint_test")
+	var t := T.new("blueprint_test", 51)
 	_capture_is_relative_and_stable(t)
 	_cost_matches_what_it_actually_charges(t)
 	_expand_round_trips(t)

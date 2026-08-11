@@ -32,7 +32,7 @@ const FRAME := Vector2(1152.0, 604.0)
 
 
 func _initialize() -> void:
-	var t := T.new("campaign_test")
+	var t := T.new("campaign_test", 431)
 	_geometry(t)
 	_frame_fit(t)
 	_tower_geometry(t)
