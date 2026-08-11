@@ -133,7 +133,7 @@ func _card(tier: int) -> Control:
 	# 鎖住的卡整張變暗，但內容仍然讀得到：它是路線圖，先看見後面有什麼
 	# 才知道要往哪走（`screens/Campaign.gd` 的同一條）。
 	if not open:
-		box.modulate = Color(1, 1, 1, 0.5)
+		box.modulate = Palette.MOD_LOCKED
 	var col := UiKit.vbox(6)
 	box.add_child(col)
 

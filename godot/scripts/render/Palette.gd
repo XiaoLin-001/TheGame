@@ -75,3 +75,18 @@ static func conduit(flow: float, cap: float, starving: bool) -> Color:
 ## 依透明度取色。避免各處自己寫 `var c := X; c.a = 0.2`。
 static func alpha(c: Color, a: float) -> Color:
 	return Color(c.r, c.g, c.b, a)
+
+
+# ── `modulate` 用的乘數 ─────────────────────────────────────────────
+# 這兩個不是顏色，是**整塊節點的不透明度乘數**（`CanvasItem.modulate`）。
+# 但 `CLAUDE.md` 的規則沒有例外條款：`Color(...)` 字面量出現在 Palette 以外
+# 一律視為缺陷。搬進來一是讓那條 grep 保持零誤報（有已知誤報的檢查會沒有人跑），
+# 二是「鎖住的東西看起來多暗」本來就該只有一個答案——B2.6 的難度層卡
+# 是照著戰役與名冊抄的 0.5，第四個地方遲早會抄成 0.4。
+const MOD_FULL := Color(1, 1, 1, 1)
+## 鎖住／未達成的卡片（戰役、名冊、難度層）。
+const MOD_LOCKED := Color(1, 1, 1, 0.5)
+
+## 呼吸用的乘數：只有 alpha 在動。
+static func mod_alpha(a: float) -> Color:
+	return Color(1, 1, 1, a)

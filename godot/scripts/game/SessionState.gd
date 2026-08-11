@@ -156,8 +156,12 @@ func setup(map_def: Dictionary, unlocked: Array = [], meta: Dictionary = {}) -> 
 	sets = Maps.to_sets(map_def)
 	sets["unlocked"] = unlocked
 	difficulty = Loadout.difficulty_of(meta)
+	# 三層乘在同一個 `mods` 上，一律「接回傳值」的寫法。
+	# 第一版把 `Difficulty.apply()` 的回傳丟掉（它原地改，所以照樣對）——
+	# 但緊鄰的上一行卻是接回傳值的，同一個慣例在相鄰兩行有兩種寫法，
+	# 讀的人會停下來問「這一行是不是漏了什麼」。
 	mods = Levels.apply(Tech.mods(Loadout.tech_of(meta)), Loadout.levels_of(meta))
-	Difficulty.apply(mods, difficulty)
+	mods = Difficulty.apply(mods, difficulty)
 	path = Maps.path_of(map_def)
 	ore = float(map_def.get("start_ore", 0))
 	priorities = NodeDefs.DEFAULT_PRIORITY.duplicate()

@@ -143,6 +143,9 @@ static func normalize(raw: Dictionary) -> Dictionary:
 ##
 ## 補缺鍵留給 `_fill_defaults()`（它在遷移之後跑）：在這裡補的話，遷移分支會看到
 ## 一堆它那個版本還不存在的欄位，那正是 `normalize()` 的順序註解在講的事。
+##
+## ⚠ **它蓋不到「已經被砍掉的鍵」**——它只走 `DEFAULTS` 的鍵，而遷移分支讀的
+## 恰恰是那些不在 `DEFAULTS` 裡的舊鍵。那條縫由 `_scalar()` 補（見下）。
 static func _repair_containers(target: Dictionary, defs: Dictionary) -> void:
 	for k: String in defs.keys():
 		if not target.has(k):
@@ -159,6 +162,20 @@ static func _repair_containers(target: Dictionary, defs: Dictionary) -> void:
 				target[k] = (dv as Array).duplicate(true)
 		elif tv is Dictionary or tv is Array:
 			target[k] = dv
+
+
+## ★ 讀一個**舊版才有的**數值鍵（B3.2 補；RG-159 沒蓋到的那道縫）。
+##
+## 遷移分支讀的是已經從 `DEFAULTS` 砍掉的鍵，所以 `_repair_containers()`
+## 走不到它們——一個手改成 `"best_wave": {}` 的檔會讓 `int()` 當場丟
+## 「Nonexistent 'int' constructor」。而 GDScript 的執行期錯誤**中止那一支函式**
+## （RG-164 的同一條）：`erase()` 沒跑到、`sv` 卻還是被 `migrate()` 蓋成新版
+## ——存檔於是永久停在「標記成已遷移、實際上沒遷移完」。
+##
+## 只有遷移分支需要它。當期的鍵一律由 `_repair_containers()` 保證型別。
+static func _scalar(v: Variant) -> float:
+	var t := typeof(v)
+	return float(v) if t == TYPE_INT or t == TYPE_FLOAT or t == TYPE_BOOL else 0.0
 
 
 ## ★ 鏈式套用版本遷移（B1.4 起真的有分支了）。
@@ -205,8 +222,8 @@ static func _migrate_sv2_to_sv3(d: Dictionary) -> void:
 	var e: Dictionary = d.get("endless", {})
 	if not e.has("best_wave") and not e.has("best_output"):
 		return
-	var wave := int(e.get("best_wave", 0))
-	var output := float(e.get("best_output", 0.0))
+	var wave := int(_scalar(e.get("best_wave")))
+	var output := _scalar(e.get("best_output"))
 	e.erase("best_wave")
 	e.erase("best_output")
 	if wave > 0 or output > 0.0:

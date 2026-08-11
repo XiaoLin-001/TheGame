@@ -152,7 +152,7 @@ func _card(type: String, owned: bool) -> Control:
 	box.custom_minimum_size = CARD
 	box.mouse_filter = Control.MOUSE_FILTER_PASS
 	if not owned:
-		box.modulate = Color(1, 1, 1, 0.5)
+		box.modulate = Palette.MOD_LOCKED
 	var col := UiKit.vbox(4)
 	box.add_child(col)
 

@@ -2743,13 +2743,16 @@ func _draw_enemies() -> void:
 		# 相位用 id 錯開，一群敵人才不會像節拍器一起脹縮。
 		var pulse := Motion.pulse(s.tick_count, Motion.AMBIENT, 0.12, float(e["id"]))
 		var armored: bool = float(def.get("armor", 0.0)) > 0.0
-		var swift: bool = float(def.get("speed", 1.0)) > SWIFT_SPEED
+		# ⚠ 這個 `fast` 是**看起來快**（速度過門檻），和資料上的 `swift` 旗標
+		#   （免疫減速，B3.2）是兩件事。第一版兩個都叫 swift，於是
+		#   `elif swift:` 裡面又套一個 `def.get("swift")`——讀的人得先猜哪個是哪個。
+		var fast: bool = float(def.get("speed", 1.0)) > SWIFT_SPEED
 		# ★ 這裡曾經有兩個殘影當拖尾（B1.6.3 第一版），**實看 A/B 之後砍掉**：
 		#   第 5 波的間距是 0.6 格，任何畫在身後的東西都會壓到後面那一隻——
 		#   一列 11 隻分得開的敵人變成一條連續的香腸，把「看不出差異」修成了
 		#   「看不出有幾隻」。速度線索因此全部收進**本體輪廓**（流線拉長），
 		#   不佔用敵人之間的空隙。
-		var pts := _enemy_shape(e, p, r, pulse, armored, swift)
+		var pts := _enemy_shape(e, p, r, pulse, armored, fast)
 		draw_colored_polygon(pts, Palette.TIDE_MAGENTA)
 		# ★ 甲板（B1.6.3）：**同形描邊，不是外圈弧**。血量弧已經是 `tide.deep`
 		#   的圓弧、畫在 `r+4`，再加一圈外弧就是同一個位置上的兩個訊息——
@@ -2763,7 +2766,7 @@ func _draw_enemies() -> void:
 		# ★ 亮核心（B1.6.3）：**快**在 16px 上唯一活得下來的線索。
 		#   輪廓的壓扁在 fit 倍率幾乎讀不到（實看 A/B 抓到），明度差讀得到。
 		#   畫在**中心**而不是外圈：外圈已經有甲板描邊與血量弧兩個訊息了。
-		elif swift:
+		elif fast:
 			# ★ **免疫減速的那一隻畫菱形，只是跑得快的畫圓**（B3.2）。
 			#   熾泳與潛涌都過得了 `SWIFT_SPEED` 門檻，共用一個亮核心的話，
 			#   一條真的規則（抓不抓得住）在畫面上是看不見的。
@@ -2947,7 +2950,7 @@ func _draw_bursts() -> void:
 ## 三者仍然全部屬於**混沌**側（§0）：不規則、脈動、不對齊網格。硬稜角指的是
 ## 頂點少、抖動小，不是變成正六邊形——正多邊形是秩序側的語彙。
 func _enemy_shape(
-	e: Dictionary, p: Vector2, r: float, pulse: float, armored: bool, swift: bool
+	e: Dictionary, p: Vector2, r: float, pulse: float, armored: bool, fast: bool
 ) -> PackedVector2Array:
 	var sides := 6 if armored else 9
 	var amp := 0.07 if armored else 0.15
@@ -2960,7 +2963,7 @@ func _enemy_shape(
 		# 值域收在 ±amp：再寬就會有頂點塌進去，變成尖角旗子而不是水滴。
 		var wobble := 1.0 + amp * sin(float(e["id"]) * 3.7 + a * 2.0)
 		var v := Vector2(cos(a), sin(a)) * r * pulse * wobble
-		if swift:
+		if fast:
 			# ★ 流線＝**垂直於行進方向壓扁**，不是沿行進方向拉長（B1.6.3 實看修正）。
 			#
 			#   前兩版都往「拉長」的方向做（先加拖尾、再加長本體），A/B 對照
@@ -3909,10 +3912,10 @@ func _refresh_top() -> void:
 	#   週期用 `dur.slow`：比環境呼吸急、又不到讓人分心的程度。
 	var phase_label := _top_values[3]
 	var urgent: bool = s.phase == "prep" and s.prep_time() - s.phase_time <= 10.0
-	phase_label.modulate = Color(1, 1, 1, 1)
+	phase_label.modulate = Palette.MOD_FULL
 	if urgent:
 		phase_label.add_theme_color_override("font_color", Palette.WARN_ORANGE)
-		phase_label.modulate = Color(1, 1, 1, Motion.pulse01(s.tick_count, Motion.SLOW, 0.45))
+		phase_label.modulate = Palette.mod_alpha(Motion.pulse01(s.tick_count, Motion.SLOW, 0.45))
 
 
 ## 準備期顯示倒數（**計時器就在畫面上**——它是關卡參數不是隱藏係數，§7.7）。

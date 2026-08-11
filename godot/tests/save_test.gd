@@ -12,7 +12,7 @@ const Difficulty := preload("res://data/Difficulty.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("save_test", 83)
+	var t := T.new("save_test", 98)
 
 	# ── 空存檔 → 補完整 schema ──
 	var fresh: Dictionary = Save.normalize({})
@@ -172,6 +172,13 @@ func _hostile_saves(t: RefCounted) -> void:
 		"陣列當字典": {"sv": 2, "campaign": {"stars": [1, 2, 3]}},
 		"字典當純量": {"sv": 2, "settings": {"master": {"a": 1}}},
 		"sv 是字串": {"sv": "abc", "tech": {"data": 5}},
+		# ★ B3.2 補的那一格：**遷移分支讀的舊鍵型別壞掉**。
+		#   `_repair_containers()` 只走 `DEFAULTS` 的鍵，而 `best_wave` 在 sv3
+		#   已經被砍掉——它蓋不到。`int({})` 於是丟「Nonexistent 'int' constructor」，
+		#   而執行期錯誤**中止 `_migrate_sv2_to_sv3()`**（RG-164 的同一條）：
+		#   `erase()` 沒跑到，`migrate()` 卻照樣把 `sv` 蓋成 3
+		#   ——存檔永久停在「標記成已遷移、實際上沒遷移完」，下次開機不會再試。
+		"遷移讀的舊鍵型別壞掉": {"sv": 2, "endless": {"best_wave": {}, "best_output": []}},
 	}
 	for name: String in cases:
 		var d: Dictionary = Save.normalize(cases[name] as Dictionary)
@@ -185,6 +192,21 @@ func _hostile_saves(t: RefCounted) -> void:
 		# 局外層的每一支查詢都問得出一個數字（這才是「不會炸」的可觀察形式）。
 		t.ok(Save.components(d) >= 0, "%s：材料餘額算得出來" % name)
 		t.ok(Difficulty.unlocked(d) >= 0, "%s：難度層解鎖算得出來" % name)
+
+	# ★ 遷移**真的跑完了**，不是「中途炸掉但 sv 被蓋成 3」。
+	#   `sv == 3` 證不了這件事（`migrate()` 在 while 之後無條件蓋 sv），
+	#   要問的是遷移那一步該做的事有沒有留下痕跡——舊鍵有沒有被 `erase()` 掉。
+	var aborted := Save.normalize({"sv": 2, "endless": {"best_wave": {}, "best_output": []}})
+	var e_after: Dictionary = aborted["endless"]
+	t.ok(not e_after.has("best_wave"), "★ 遷移跑完：型別壞掉的 best_wave 仍然被清掉")
+	t.ok(not e_after.has("best_output"), "★ 遷移跑完：型別壞掉的 best_output 仍然被清掉")
+	t.ok(e_after["best"] is Dictionary, "★ 遷移跑完：best 是字典")
+	t.ok((e_after["best"] as Dictionary).is_empty(), "★ 壞資料不編造紀錄（0 波不建那一格）")
+	# 而**正常的 sv2 檔照樣搬得過來**（上面那條不得是「把遷移整段跳過」換來的）。
+	var good := Save.normalize({"sv": 2, "endless": {"best_wave": 7, "best_output": 3.5}})
+	var row: Dictionary = ((good["endless"] as Dictionary)["best"] as Dictionary)["0"]
+	t.eq(int(row["wave"]), 7, "★ 反向對照：正常 sv2 的紀錄搬進第 0 層")
+	t.eq(float(row["output"]), 3.5, "★ 反向對照：產能積分一起搬")
 
 	# ★ 反向對照：**純量之間的型別差異不得被當成壞資料清掉**。
 	#   JSON 沒有整數——`"data": 12` 讀回來是 12.0，嚴格比對型別會把它歸零。
