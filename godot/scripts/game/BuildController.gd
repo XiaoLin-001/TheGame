@@ -234,15 +234,30 @@ static func apply_ops(s: RefCounted, ops: Array) -> Array:
 static func apply_timeline(s: RefCounted, ops: Array, step: Callable) -> Array:
 	var failures: Array = []
 	var batch: Array = []
+	var seg := 1
 	for op: Array in ops:
 		if String(op[0]) != "wait":
 			batch.append(op)
 			continue
-		failures.append_array(apply_ops(s, batch))
+		failures.append_array(_tag(apply_ops(s, batch), seg))
 		batch = []
+		seg += 1
 		for _i in int(op[1]):
 			step.call(s)
-	failures.append_array(apply_ops(s, batch))
+	failures.append_array(_tag(apply_ops(s, batch), seg))
+	return failures
+
+
+## ★ 給每一筆失敗補上段號（B3.3b、RG-168 的第二半）。
+##
+## `apply_ops()` 回的 `index` 是**段內**的序號，而一份腳本有好幾段——
+## 光有 `index` 的話，「第 0 筆 place 失敗」在七段的腳本裡有七個候選，
+## 而讀的人（或工具）只能猜。第一版的試跑台就是這樣把「碎浪煉不出合金」
+## 顯示成「第 1 段的中繼蓋不起來」，害我去查一格根本沒問題的地圖。
+## 段號由這裡發，因為**只有這裡知道現在跑到第幾段**。
+static func _tag(failures: Array, seg: int) -> Array:
+	for f: Variant in failures:
+		(f as Dictionary)["seg"] = seg
 	return failures
 
 

@@ -32,7 +32,7 @@ const FRAME := Vector2(1152.0, 604.0)
 
 
 func _initialize() -> void:
-	var t := T.new("campaign_test", 724)
+	var t := T.new("campaign_test", 934)
 	_geometry(t)
 	_frame_fit(t)
 	_tower_geometry(t)
@@ -48,7 +48,7 @@ func _initialize() -> void:
 # ── 地圖本身 ──────────────────────────────────────────────────────────
 
 func _geometry(t: RefCounted) -> void:
-	t.eq(Campaign.count(), 8, "戰役八關（第一幕 5 ＋ 第二幕 3，`10_GDD.md` §5 內容矩陣）")
+	t.eq(Campaign.count(), 10, "戰役十關（第一幕 5 ＋ 第二幕 5，`10_GDD.md` §5 內容矩陣）")
 	for i in Campaign.count():
 		var lv: Dictionary = Campaign.at(i)
 		var m: Dictionary = lv["map"]

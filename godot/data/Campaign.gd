@@ -769,6 +769,251 @@ const L8_DEMO := [
 ]
 
 
+# ── 第 9 關「亂潮」──────────────────────────────────────────────────
+## 三條規則**同時**來。前三關各教一條，這一關把它們疊在同一波裡。
+##
+## 疊法是**兩兩配對**（`Enemies.L9_WAVES`）：苔群＋潛涌、癒殼＋苔群。
+## 每一對都是一個**分配問題**——同一份電先餵誰，而那正是優先權滑桿存在的理由。
+##
+## ⚠ 參考解**不動滑桿**（腳本只有放置／接線／加粗三種指令），所以它證明的是
+## 「這一關用預設優先權也過得了」。滑桿是玩家的餘裕，不是通關的門票。
+const L9 := {
+	"id": "riptide",
+	"name": "亂潮",
+	"size": Vector2i(36, 18),
+	"core": Vector2i(33, 14),
+	"waypoints": [Vector2i(0, 4), Vector2i(30, 4), Vector2i(30, 14), Vector2i(33, 14)],
+	"start_ore": 1500,
+	"prep_time": 45.0,
+	"crossings": [Vector2i(8, 4), Vector2i(16, 4), Vector2i(24, 4)],
+	"ore": [
+		Vector2i(8, 1), Vector2i(16, 1), Vector2i(24, 1),    # 北岸三顆，三座橋
+		Vector2i(5, 11), Vector2i(12, 12), Vector2i(22, 16),
+	],
+	"waves": Enemies.L9_WAVES,
+}
+
+const L9_DEMO := [
+	# ① 三條過橋線，y=8 併成北岸幹線。
+	["place", "relay", Vector2i(8, 8)],
+	["place", "extractor", Vector2i(8, 1)],
+	["conduit", Vector2i(8, 1), Vector2i(8, 8)],
+	["place", "relay", Vector2i(16, 8)],
+	["place", "extractor", Vector2i(16, 1)],
+	["conduit", Vector2i(16, 1), Vector2i(16, 8)],
+	["place", "relay", Vector2i(24, 8)],
+	["place", "extractor", Vector2i(24, 1)],
+	["conduit", Vector2i(24, 1), Vector2i(24, 8)],
+	["conduit", Vector2i(8, 8), Vector2i(16, 8)],
+	["conduit", Vector2i(16, 8), Vector2i(24, 8)],
+	["place", "extractor", Vector2i(5, 11)],
+	["conduit", Vector2i(5, 11), Vector2i(8, 8)],
+	["place", "extractor", Vector2i(12, 12)],
+	["conduit", Vector2i(12, 12), Vector2i(16, 8)],
+	# ② 幹線斜切到東南角，再垂直落到防線那一列。
+	["place", "relay", Vector2i(26, 10)],
+	["conduit", Vector2i(24, 8), Vector2i(26, 10)],
+	["place", "relay", Vector2i(26, 16)],
+	["conduit", Vector2i(26, 10), Vector2i(26, 16)],
+	["place", "extractor", Vector2i(22, 16)],
+	["conduit", Vector2i(22, 16), Vector2i(26, 16)],
+
+	["wait", 250],
+
+	# ③ 幹線走 y=16，發電機全部掛支線（第 6 關量出來的那一課）。
+	["place", "relay", Vector2i(28, 16)],
+	["conduit", Vector2i(26, 16), Vector2i(28, 16)],
+	["place", "relay", Vector2i(31, 16)],
+	["conduit", Vector2i(28, 16), Vector2i(31, 16)],
+	["place", "relay", Vector2i(33, 16)],
+	["conduit", Vector2i(31, 16), Vector2i(33, 16)],
+	["conduit", Vector2i(33, 16), Vector2i(33, 14)],   # 礦砂進核心
+	["place", "generator", Vector2i(25, 17)],
+	["conduit", Vector2i(25, 17), Vector2i(26, 16)],
+	["place", "generator", Vector2i(27, 17)],
+	["conduit", Vector2i(27, 17), Vector2i(28, 16)],
+	["place", "generator", Vector2i(32, 17)],
+	["conduit", Vector2i(32, 17), Vector2i(31, 16)],
+	["conduit", Vector2i(32, 17), Vector2i(33, 16)],
+
+	["wait", 200],
+
+	# ④ 稜鏡貼在下坡列 x=30 的正下方，兩條進線來自**不同的發電機**
+	#    （西邊那條繞 (29,17)，東邊那條直接從 (31,16) 下來）。
+	["place", "relay", Vector2i(29, 17)],
+	["conduit", Vector2i(28, 16), Vector2i(29, 17)],
+	["place", "prism", Vector2i(30, 17)],
+	["conduit", Vector2i(29, 17), Vector2i(30, 17)],
+	["conduit", Vector2i(31, 16), Vector2i(30, 17)],
+	# ⑤ 兩座錨守核心 ＋ 潮鳴（對苔群與癒殼有效，對潛涌沒效——這一關同時有三種）。
+	["place", "anchor", Vector2i(34, 16)],
+	["conduit", Vector2i(33, 16), Vector2i(34, 16)],
+	["place", "anchor", Vector2i(34, 17)],
+	["conduit", Vector2i(33, 16), Vector2i(34, 17)],
+	["place", "knell", Vector2i(28, 17)],
+	["conduit", Vector2i(28, 16), Vector2i(28, 17)],
+
+	["wait", 250],
+
+	# ⑥ 幹線加粗到 1 級。
+	["upgrade", Vector2i(24, 8), Vector2i(26, 10), 1],
+	["upgrade", Vector2i(26, 10), Vector2i(26, 16), 1],
+	["upgrade", Vector2i(26, 16), Vector2i(28, 16), 1],
+	["upgrade", Vector2i(28, 16), Vector2i(31, 16), 1],
+	["upgrade", Vector2i(31, 16), Vector2i(33, 16), 1],
+	["upgrade", Vector2i(33, 16), Vector2i(33, 14), 1],
+	["upgrade", Vector2i(8, 8), Vector2i(16, 8), 1],
+	["upgrade", Vector2i(16, 8), Vector2i(24, 8), 1],
+]
+
+
+# ── 第 10 關「深喉」──────────────────────────────────────────────────
+## **六種敵人全上**，第二幕的畢業考。六波，最後一波六種同時出場。
+##
+## 這一關的參考解是全案唯一一份同時用上**熔爐 → 合金 → 碎浪**與
+## 稜鏡菱形與潮鳴的佈局：苔群要濺射、甲殼要破甲、癒殼要爆發、潛涌要單體。
+## 一種塔擋不住六條規則，而這正是第一幕十顆按鈕存在的理由。
+const L10 := {
+	"id": "deepthroat",
+	"name": "深喉",
+	"size": Vector2i(38, 19),
+	"core": Vector2i(35, 15),
+	"waypoints": [Vector2i(0, 4), Vector2i(32, 4), Vector2i(32, 15), Vector2i(35, 15)],
+	"start_ore": 1800,
+	"prep_time": 45.0,
+	"crossings": [Vector2i(6, 4), Vector2i(14, 4), Vector2i(22, 4), Vector2i(28, 4)],
+	"ore": [
+		Vector2i(6, 1), Vector2i(14, 1), Vector2i(22, 1), Vector2i(28, 1),   # 北岸四顆，四座橋
+		Vector2i(4, 10), Vector2i(12, 10), Vector2i(25, 13),
+	],
+	"waves": Enemies.L10_WAVES,
+}
+
+const L10_DEMO := [
+	# ① 四座橋，**併成兩條獨立的幹線**（西邊兩座、東邊兩座）。
+	#
+	#    ★ 這是這一關和前面九關最大的結構差異，而它是量出來的：
+	#      全部併成一條的版本產能積分 **0.05**——下游掛著三台發電機（12 礦砂/秒）
+	#      **加一座熔爐（8 礦砂/秒，而且待機也吃 10 能量/秒）**，
+	#      而 1 級的 cap 只有 16。進核心的幾乎是 0。
+	#      加粗到 2 級要合金，而合金正是那座熔爐要煉的東西——**先有雞還是先有蛋**。
+	#      兩條線把頻寬直接翻倍，一塊合金都不用，而地圖本來就給了四座橋。
+	["place", "relay", Vector2i(6, 8)],
+	["place", "extractor", Vector2i(6, 1)],
+	["conduit", Vector2i(6, 1), Vector2i(6, 8)],
+	["place", "relay", Vector2i(14, 8)],
+	["place", "extractor", Vector2i(14, 1)],
+	["conduit", Vector2i(14, 1), Vector2i(14, 8)],
+	["conduit", Vector2i(6, 8), Vector2i(14, 8)],
+	["place", "extractor", Vector2i(4, 10)],
+	["conduit", Vector2i(4, 10), Vector2i(6, 8)],
+	["place", "extractor", Vector2i(12, 10)],
+	["conduit", Vector2i(12, 10), Vector2i(14, 8)],
+	["place", "relay", Vector2i(22, 8)],
+	["place", "extractor", Vector2i(22, 1)],
+	["conduit", Vector2i(22, 1), Vector2i(22, 8)],
+	["place", "relay", Vector2i(28, 8)],
+	["place", "extractor", Vector2i(28, 1)],
+	["conduit", Vector2i(28, 1), Vector2i(28, 8)],
+	["conduit", Vector2i(22, 8), Vector2i(28, 8)],
+	# ② 西線：斜切到 y=16，橫過去接防線的樞紐。
+	["place", "relay", Vector2i(22, 16)],
+	["conduit", Vector2i(14, 8), Vector2i(22, 16)],
+	["place", "extractor", Vector2i(25, 13)],
+	["conduit", Vector2i(25, 13), Vector2i(22, 16)],
+	["place", "relay", Vector2i(29, 16)],
+	["conduit", Vector2i(22, 16), Vector2i(29, 16)],
+	# ③ 東線：斜切下來再垂直落到同一個樞紐。
+	["place", "relay", Vector2i(30, 10)],
+	["conduit", Vector2i(28, 8), Vector2i(30, 10)],
+	["place", "relay", Vector2i(30, 17)],
+	["conduit", Vector2i(30, 10), Vector2i(30, 17)],
+	["conduit", Vector2i(29, 16), Vector2i(30, 17)],
+
+	["wait", 250],
+
+	# ④ 幹線走 y=17，**串過** (31,17)（不從它頭上跨過去，否則和支線疊兩格）。
+	["place", "relay", Vector2i(31, 17)],
+	["conduit", Vector2i(30, 17), Vector2i(31, 17)],
+	["place", "relay", Vector2i(33, 17)],
+	["conduit", Vector2i(31, 17), Vector2i(33, 17)],
+	["place", "relay", Vector2i(35, 17)],
+	["conduit", Vector2i(33, 17), Vector2i(35, 17)],
+	["conduit", Vector2i(35, 17), Vector2i(35, 15)],   # 礦砂進核心
+	# ★ 熔爐**直接掛在樞紐上**，不排在發電機下游。
+	#    節點先吃滿自己才轉發，而它一個人就要 8 礦砂/秒——排在後面的話它煉不出來。
+	["place", "smelter", Vector2i(29, 17)],
+	["conduit", Vector2i(29, 17), Vector2i(30, 17)],
+	# ⑤ 四台發電機，全部掛支線。防線全開要 59 能量/秒
+	#    （稜鏡 20 ＋ 碎浪 12 ＋ 潮鳴 9 ＋ 兩座錨 8 ＋ **熔爐待機 10**），
+	#    三台的 60 是剃刀邊緣——熔爐那 10 點是前九關都沒算過的一筆。
+	#    ⚠ 全部擺在 y=18，**不擺在幹線那一列**：擺在 (32,17) 的第一版，
+	#      它左右兩條支線和幹線 (31,17)→(33,17) 各疊了兩格，當場 `overlaps`。
+	#      幹線那一列是**過道**，不是可以停東西的地方。
+	#    ⚠ 每一台都要**兩條出線**：一台 20 能量/秒塞不進一條 cap 10——
+	#      只接一條的話，帳面上四台 80，實際只送得出 40。
+	["place", "generator", Vector2i(29, 18)],
+	["conduit", Vector2i(29, 18), Vector2i(30, 17)],
+	["conduit", Vector2i(29, 18), Vector2i(29, 17)],
+	["place", "generator", Vector2i(28, 18)],
+	["conduit", Vector2i(28, 18), Vector2i(29, 17)],
+	["place", "generator", Vector2i(34, 18)],
+	["conduit", Vector2i(34, 18), Vector2i(33, 17)],
+	["conduit", Vector2i(34, 18), Vector2i(35, 17)],
+	["place", "generator", Vector2i(33, 18)],
+	["conduit", Vector2i(33, 18), Vector2i(33, 17)],
+
+	["wait", 200],
+
+	# ⑥ 稜鏡貼在下坡列 x=32 的正下方，兩條進線來自不同的發電機。
+	["place", "prism", Vector2i(32, 18)],
+	["conduit", Vector2i(31, 17), Vector2i(32, 18)],
+	["conduit", Vector2i(33, 17), Vector2i(32, 18)],
+	# 第三條進線直接來自旁邊那台發電機：稜鏡吃 20，而前兩條各只給得起 10，
+	# 兩條剛好打平就沒有任何餘裕給滿足率低於 1 的那些 tick。
+	["conduit", Vector2i(33, 18), Vector2i(32, 18)],
+	# ⑦ 兩座錨守核心 ＋ 潮鳴。
+	["place", "anchor", Vector2i(36, 17)],
+	["conduit", Vector2i(35, 17), Vector2i(36, 17)],
+	["place", "anchor", Vector2i(36, 18)],
+	["conduit", Vector2i(35, 17), Vector2i(36, 18)],
+	["place", "knell", Vector2i(31, 18)],
+	["conduit", Vector2i(31, 17), Vector2i(31, 18)],
+
+	["wait", 300],
+
+	# ⑧ 兩條幹線都加粗到 1 級（cap 16，只要礦砂）。
+	["upgrade", Vector2i(28, 8), Vector2i(30, 10), 1],
+	["upgrade", Vector2i(30, 10), Vector2i(30, 17), 1],
+	["upgrade", Vector2i(22, 16), Vector2i(29, 16), 1],
+	["upgrade", Vector2i(29, 16), Vector2i(30, 17), 1],
+	["upgrade", Vector2i(14, 8), Vector2i(22, 16), 1],
+	["upgrade", Vector2i(30, 17), Vector2i(31, 17), 1],
+	["upgrade", Vector2i(31, 17), Vector2i(33, 17), 1],
+	["upgrade", Vector2i(33, 17), Vector2i(35, 17), 1],
+	["upgrade", Vector2i(35, 17), Vector2i(35, 15), 1],
+	["upgrade", Vector2i(6, 8), Vector2i(14, 8), 1],
+	["upgrade", Vector2i(22, 8), Vector2i(28, 8), 1],
+
+	["wait", 500],
+
+	# ⑨ ★ 碎浪（140 礦砂 ＋ 60 合金）。苔群一次七隻，它是這一關唯一的濺射。
+	#    **兩條進線**：12 能量/秒塞不進一條 cap 10（§3.1 的老規矩）。
+	["place", "breaker", Vector2i(28, 17)],
+	["conduit", Vector2i(28, 17), Vector2i(29, 17)],
+	["conduit", Vector2i(28, 17), Vector2i(28, 18)],
+	# ⑩ ★ 剩下的合金花在**幹線**上（2 級，cap 22）。
+	#    第一版把合金全存著——收尾時帳上 1310 塊，而產能積分只有 0.23。
+	#    熔爐吃掉 8 礦砂/秒去煉一堆沒有用途的合金，那不是產線，是倉庫。
+	["upgrade", Vector2i(30, 10), Vector2i(30, 17), 1],
+	["upgrade", Vector2i(29, 16), Vector2i(30, 17), 1],
+	["upgrade", Vector2i(30, 17), Vector2i(31, 17), 1],
+	["upgrade", Vector2i(31, 17), Vector2i(33, 17), 1],
+	["upgrade", Vector2i(33, 17), Vector2i(35, 17), 1],
+	["upgrade", Vector2i(35, 17), Vector2i(35, 15), 1],
+]
+
+
 ## 五關，**依序**。索引即關卡序（第 N 關解鎖第 N+1 關，§7.9）。
 ##
 ## ★ `star_throughput` 是**實測校準**的，不是拍腦袋：B1.2 用 `campaign_test`
@@ -816,6 +1061,16 @@ const LEVELS := [
 		"map": L8, "demo": L8_DEMO, "unlocked": ACT2_BUILD,
 		"star_throughput": 0.60, "reward": 125,
 		"lesson": "癒殼：每秒回最大血 4%，dps 追不上就打不死",
+	},
+	{
+		"map": L9, "demo": L9_DEMO, "unlocked": ACT2_BUILD,
+		"star_throughput": 0.35, "reward": 140,
+		"lesson": "混編：苔群、潛涌、癒殼兩兩同時來，一份電要分給三種答案",
+	},
+	{
+		"map": L10, "demo": L10_DEMO, "unlocked": ACT2_BUILD,
+		"star_throughput": 0.55, "reward": 160,
+		"lesson": "畢業考：六種敵人，最後一波同時出場",
 	},
 ]
 

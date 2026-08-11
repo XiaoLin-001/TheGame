@@ -155,6 +155,77 @@ const L8_WAVES := [
 	]},
 ]
 
+## 第 9 關：三條新規則**同時**來。前三關各教一條，這一關把它們疊在同一波裡。
+##
+## 疊法刻意是**兩兩配對**而不是一次全上：苔群＋潛涌（一團慢的裡面混著快的）、
+## 癒殼＋苔群（打不死的後面跟著一堆軟的）。每一對都是一個**分配問題**
+## ——同一份電先餵誰，而那正是優先權滑桿存在的理由（§3.1）。
+const L9_WAVES := [
+	{"groups": [
+		{"type": "drifter", "count": 8, "gap": 0.9},
+		{"type": "carapace", "count": 3, "gap": 1.8},
+	]},
+	# 一團慢的裡面混著快的：光環抓得住苔群，抓不住潛涌。
+	{"groups": [
+		{"type": "bloom", "count": 8, "gap": 0.8},
+		{"type": "surge", "count": 4, "gap": 1.3},
+	]},
+	# 打不死的後面跟著一堆軟的：電先餵誰？
+	{"groups": [
+		{"type": "mender", "count": 2, "gap": 3.0},
+		{"type": "bloom", "count": 8, "gap": 0.8},
+	]},
+	{"groups": [
+		{"type": "surge", "count": 6, "gap": 1.1},
+		{"type": "mender", "count": 2, "gap": 2.8},
+		{"type": "ember", "count": 4, "gap": 0.9},
+	]},
+	{"groups": [
+		{"type": "bloom", "count": 9, "gap": 0.7},
+		{"type": "surge", "count": 6, "gap": 1.1},
+		{"type": "mender", "count": 3, "gap": 2.4},
+	]},
+]
+
+## 第 10 關：**六種全上**，第二幕的畢業考。
+##
+## 六波而不是五波——它是最後一關，多的那一波是「把前面九關全部用上」的空間。
+## 最後一波六種同時出場：這是全案第一次，也是唯一一次。
+const L10_WAVES := [
+	{"groups": [
+		{"type": "drifter", "count": 10, "gap": 0.8},
+		{"type": "carapace", "count": 3, "gap": 1.8},
+	]},
+	{"groups": [
+		{"type": "bloom", "count": 9, "gap": 0.8},
+		{"type": "ember", "count": 5, "gap": 0.9},
+	]},
+	{"groups": [
+		{"type": "surge", "count": 6, "gap": 1.1},
+		{"type": "carapace", "count": 4, "gap": 1.6},
+	]},
+	{"groups": [
+		{"type": "mender", "count": 3, "gap": 2.6},
+		{"type": "bloom", "count": 9, "gap": 0.7},
+	]},
+	{"groups": [
+		{"type": "ember", "count": 6, "gap": 0.8},
+		{"type": "surge", "count": 6, "gap": 1.1},
+		{"type": "mender", "count": 3, "gap": 2.4},
+	]},
+	# ★ 六種同時。**26 隻**——它是全案最大的一波，而第一版是 34 隻：
+	#   那比第 9 關最重的一波（18 隻）將近兩倍，是階梯上的一個坑而不是一階。
+	#   六種都到齊才是這一波的重點，不是隻數。
+	{"groups": [
+		{"type": "drifter", "count": 6, "gap": 0.7},
+		{"type": "bloom", "count": 7, "gap": 0.7},
+		{"type": "carapace", "count": 3, "gap": 1.5},
+		{"type": "ember", "count": 4, "gap": 0.9},
+		{"type": "surge", "count": 4, "gap": 1.2},
+		{"type": "mender", "count": 2, "gap": 2.4},
+	]},
+]
+
 ## 測試圖「淺灘」的波次表。**手作，不是公式**——戰役關卡的難度只能用玩家看得見的
 ## 關卡參數表達（§7.7），而波次組成正是其中最主要的一個。
 ##

@@ -38,9 +38,9 @@ func _initialize() -> void:
 		var tp := Score.throughput(s.delivered_total, s.tick_count, BattleController.TICK)
 		var maxhp := NodeDefs.hp("core")
 		var mark := "✔" if s.phase == "won" and failures.is_empty() else "✕"
-		print("%s 第 %d 關「%s」 phase=%s tick=%d 核心 %.0f/%.0f 擊殺 %d 產能 %.2f（門檻 %.2f）礦 %.0f" % [
+		print("%s 第 %d 關「%s」 phase=%s tick=%d 核心 %.0f/%.0f 擊殺 %d 產能 %.2f（門檻 %.2f）礦 %.0f 合金 %.0f" % [
 			mark, i + 1, (lv["map"] as Dictionary)["name"], s.phase, s.tick_count,
-			s.core_hp(), maxhp, s.kills, tp, lv["star_throughput"], s.ore,
+			s.core_hp(), maxhp, s.kills, tp, lv["star_throughput"], s.ore, s.alloy,
 		])
 		if not failures.is_empty():
 			print("    建造失敗 %d 筆：" % failures.size())
@@ -51,16 +51,16 @@ func _initialize() -> void:
 	quit(bad)
 
 
-## ★ 失敗索引 → 那一筆真正的指令。
+## ★ 失敗紀錄 → 那一筆真正的指令。
 ##
-## ⚠ `apply_timeline()` 回傳的索引是**該段（兩個 `wait` 之間）之內**的索引，
-## 不是整份腳本的索引——它自己的註解就寫著這件事。第一版直接拿它去索引整份
-## `demo`，於是**第一段以後的每一筆失敗都指到別的指令上**：我照著它給的座標
-## 去查一格明明是空的地圖，查了三輪。
+## `apply_timeline()` 回的 `index` 是**段內**序號，`seg` 是段號（B3.3b 補上）。
+## 兩個都要才定位得到——第一版只有 `index`，於是「第 0 筆」在七段的腳本裡
+## 有七個候選，它挑了第一個，把「碎浪煉不出合金」顯示成「第 1 段的中繼蓋不起來」。
 ## 一個會說謊的診斷比沒有診斷更貴。
 static func _resolve(demo: Array, f: Variant) -> String:
 	var fd: Dictionary = f
 	var want := int(fd.get("index", -1))
+	var want_seg := int(fd.get("seg", 1))
 	var seg := 1
 	var i := 0
 	for op: Array in demo:
@@ -68,7 +68,7 @@ static func _resolve(demo: Array, f: Variant) -> String:
 			seg += 1
 			i = 0
 			continue
-		if i == want and String(op[0]) == String(fd.get("op", "")):
+		if seg == want_seg and i == want:
 			return "第 %d 段第 %d 筆 = %s" % [seg, want, op]
 		i += 1
-	return "（對不上，第 %d 段之內的第 %d 筆）" % [seg, want]
+	return "（對不上：第 %d 段第 %d 筆）" % [want_seg, want]
