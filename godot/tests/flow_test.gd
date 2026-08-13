@@ -157,7 +157,10 @@ func _three_resource_networks(t: T) -> void:
 
 	# ④ 產得出來但送不掉 → `滿溢`，而且帳上一毛都不會多。
 	var orphan := _fed_smelter()
-	BuildController.demolish(orphan, Vector2i(4, 6))  # 出海口 (2,6)→(6,6) 的中段
+	# 剪斷出海口那條線。★ B3.7.1 之前這裡寫的是 `demolish(orphan, Vector2i(4, 6))`
+	# ——(4,6) 是**線的中段而不是節點**，靠的是舊 `demolish()` 用座標猜哪一條線的
+	# 那條後路。拆除模式拿掉之後那條後路也沒了，改成明講：先找線，再拆那一條。
+	BuildController.demolish_conduit(orphan, orphan.conduit_near(Vector2(4, 6)))
 	for _i in 20:
 		BattleController.step(orphan)
 	t.near(float(orphan.alloy), 0.0, "★ 熔爐沒接到核心 → 合金一塊都不入帳")

@@ -147,20 +147,23 @@ static func demolish_conduit(s: RefCounted, index: int) -> String:
 	return Build.OK
 
 
-## 拆除：節點或導管都走這裡，返還 75%。
-## `point`（格為單位的浮點座標）只在「這一格沒有節點」時才用得上——
-## 它讓拆導管和加粗一樣點得準（B1.2.1）。省略時退回格中心。
-static func demolish(s: RefCounted, cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> String:
+## 拆一座建築，返還 75%。導管走 `demolish_conduit()`。
+##
+## ★ B3.7.1 起這裡不再兼管導管。舊簽章有一個 `point`（格為單位的浮點座標），
+## 用來在「這一格沒有節點」時**猜**玩家指的是哪一條線（B1.2.1）——那是拆除模式
+## 唯一的入口形狀。模式拿掉之後，唯一的呼叫端是檢視面板，而**面板已經知道
+## 玩家選的是哪一個東西**，不必再用座標猜一次。
+static func demolish(s: RefCounted, cell: Vector2i) -> String:
 	var n: Dictionary = s.node_at(cell)
-	if not n.is_empty():
-		if n["type"] == "core":
-			return Build.OCCUPIED  # 核心拆不得
-		var refund := node_refund(String(n["type"]))
-		s.ore += float(refund.x)
-		s.alloy += float(refund.y)
-		s.remove_node_at(cell)
-		return Build.OK
-	return demolish_conduit(s, s.conduit_near(Vector2(cell) if point.x < -900.0 else point))
+	if n.is_empty():
+		return Build.OCCUPIED
+	if n["type"] == "core":
+		return Build.OCCUPIED  # 核心拆不得
+	var refund := node_refund(String(n["type"]))
+	s.ore += float(refund.x)
+	s.alloy += float(refund.y)
+	s.remove_node_at(cell)
+	return Build.OK
 
 
 ## ★ 藍圖展開的**事前檢查**（B2.3、`10_GDD.md` §3.7）。

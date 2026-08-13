@@ -39,10 +39,12 @@ const BAR_Y := 668.0
 ## 建造清單捲動區的高度。**清單再長也只會在這個區域裡捲**，模式鈕永遠釘在
 ## 它下面、永遠碰不到底欄。
 ##
-## 100 ＝ 模式鈕那一塊實際佔的高度：`vbox 間隔 2 ＋ 間隔物 4 ＋ 間隔 2 ＋ 兩列 44 ＋ 列間 2`。
-## ⚠ 第一版寫 96，實測差 2px（第二列的底邊落在 670，底欄在 668）——**這種
-## 「差幾個像素」的東西不要用眼睛判**，`TL_CLICKTEST` 的 `pinned_ok` 當場印出來。
-const BUILD_LIST_H := BAR_Y - 56.0 - 100.0
+## 52 ＝ 動作鈕那一塊實際佔的高度：`vbox 間隔 2 ＋ 間隔物 4 ＋ 間隔 2 ＋ 一列 44`。
+## ★ B3.7.1 從 100 降到 52：升級與拆除拿掉之後只剩「藍圖」一顆，**空出來的 48px
+## 直接還給節點清單**（十三種節點，捲得越少越好）。
+## ⚠ 這種「差幾個像素」的東西不要用眼睛判——第一版的 96 實測差 2px（第二列的底邊
+## 落在 670，底欄在 668），`TL_CLICKTEST` 的 `pinned_ok` 當場印出來。
+const BUILD_LIST_H := BAR_Y - 56.0 - 52.0
 
 ## ★ 「點在導管上」的命中半徑，單位是格（B3.7）。
 ##
@@ -134,7 +136,13 @@ const SHORT_ROWS := 3
 ## ★ B1.3.1：`CONNECT` 與 `PAN` 兩個模式已刪。拉線一律是拖曳（B1.6.2 取代了
 ## 「連線」模式），平移是滑鼠中鍵按住拖——**兩件事都不該是模式**：
 ## 模式的代價是「忘記切回來時點地圖沒反應」，而這兩個動作都頻繁到會天天付這個代價。
-enum Mode { BUILD, UPGRADE, DEMOLISH, BLUEPRINT }
+## ★ B3.7.1：**「升級」與「拆除」兩顆模式鈕拿掉**（使用者指定）。
+##
+## B3.7 把兩個動詞搬到檢視面板上（點那個東西 → 鈕就在旁邊），模式鈕變成同一件事
+## 的第二條路——而且是比較慢的那一條（切模式 → 點目標 → 切回建造）。
+## 留著兩條路的代價不只是兩顆鈕：**它們是兩套要各自維護、各自驗的點擊語意**，
+## 而 B1.3.1 拿掉「連線」與「移動」時的理由一字不改地適用。
+enum Mode { BUILD, BLUEPRINT }
 
 var s: RefCounted = null
 
@@ -743,7 +751,8 @@ func _click_selftest() -> void:
 
 	# ★ 使用者回報：「45 度的線似乎沒辦法加粗」（B1.2.1）。一格長的 45°——
 	#   兩個對角相鄰的節點之間——連一個中間格都沒有，舊的格子命中判定必然落空。
-	#   這裡走完整輸入路徑：切「加粗」→ 點兩節點之間那個像素點 → 級數要真的變。
+	#   ★ B3.7.1：升級模式沒有了，這條改走**選取 → 面板加粗**的新路徑。
+	#     驗的仍然是同一件事：**那個像素點命不命中得到這條線**，那才是當年壞掉的地方。
 	_press(_build_buttons["relay"])
 	_click(Vector2i(6, 12))
 	_click(Vector2i(7, 13))
@@ -752,39 +761,50 @@ func _click_selftest() -> void:
 	_drag(Vector2i(6, 12), Vector2i(7, 13))
 	for _i in 3:
 		await get_tree().process_frame
-	_press(_mode_buttons[Mode.UPGRADE])
 	_click_at(_to_screen((_center(Vector2i(6, 12)) + _center(Vector2i(7, 13))) * 0.5))
 	for _i in 3:
 		await get_tree().process_frame
 	var short_diag: int = s.conduit_near(Vector2(6.5, 12.5))
-	var upgraded: bool = short_diag >= 0 and int((s.conduits[short_diag])["level"]) == 1
+	var picked_diag: bool = short_diag >= 0 and _sel_wire == int((s.conduits[short_diag])["id"])
+	if picked_diag:
+		_click_button(_inspect_up)
+		for _i in 3:
+			await get_tree().process_frame
+	short_diag = s.conduit_near(Vector2(6.5, 12.5))
+	var upgraded: bool = (
+		picked_diag and short_diag >= 0 and int((s.conduits[short_diag])["level"]) == 1
+	)
 
-	# ★ 局內臨時升級一座**建築**（§4.3、B3.5）。同一顆「升級」鈕，點在節點上。
-	#   走完整輸入路徑，因為這是一個新的點擊語意——舊的行為是「點節點＝報錯」。
+	# ★ 局內臨時升級一座**建築**（§4.3、B3.5）。★ B3.7.1 改走面板上那顆鈕。
 	#   斷言三件事：級數真的加了、礦砂**真的扣了**、而且扣的是那個價
 	#   （只驗級數的話，一個免費升級的實作照樣全綠）。
 	var lvl_cell := Vector2i(6, 12)
+	_click(lvl_cell)
+	for _i in 3:
+		await get_tree().process_frame
 	var ore_before: float = s.ore
 	var price := Build.node_upgrade_cost(NodeDefs.cost("relay"), 0)
-	_click(lvl_cell)
+	_click_button(_inspect_up)
 	for _i in 3:
 		await get_tree().process_frame
 	var node_lvl: bool = int(s.node_at(lvl_cell).get("level", 0)) == 1
 	var node_paid: bool = is_equal_approx(s.ore, ore_before - float(price))
-	# 上限是規則：連點五次也只到 3 級。
+	# 上限是規則：連按五次也只到 3 級（滿級之後那顆鈕自己會關掉）。
 	for _i in 5:
-		_click(lvl_cell)
+		_click_button(_inspect_up)
 		await get_tree().process_frame
 	var node_cap: bool = int(s.node_at(lvl_cell).get("level", 0)) == Build.NODE_MAX_LEVEL
+	# 收起來，交給下一段從零開始驗「點一下就開」。
+	_click(lvl_cell)
+	for _i in 3:
+		await get_tree().process_frame
 
 	# ★ 點一下建築＝檢視它（§B3.6）。走完整輸入路徑，因為這是一個**新的點擊語意**
 	#   （舊行為是「這一格已經有東西了」）。三條斷言：面板真的開了、
 	#   上面寫的是那一座、再點一次會收起來（選取是**開關**不是單向）。
-	# ⚠ **不要寫 `_mode_buttons[Mode.BUILD]`**——底欄只有升級／拆除／藍圖三顆
-	#   模式鈕，建造沒有自己的鈕（選一種節點就是建造）。索引一個不存在的鍵會丟
-	#   執行期錯誤，而那會**中止整支自檢**：`quit()` 跑不到，視窗就一直開著。
-	#   RG-164 的同一個形狀，這次的症狀是「測試掛住、使用者桌面上多一個視窗」。
-	_press(_build_buttons["relay"])
+	# ⚠ **不要索引一個不存在的模式鈕**——B3.7.1 之後底欄只剩「藍圖」一顆。
+	#   索引不存在的鍵會丟執行期錯誤，而那會**中止整支自檢**：`quit()` 跑不到，
+	#   視窗就一直開著（RG-164 的同一個形狀，B3.6 當場踩過）。
 	_click(lvl_cell)
 	for _i in 3:
 		await get_tree().process_frame
@@ -887,7 +907,7 @@ func _click_selftest() -> void:
 	)
 
 	# ★ 同兩顆鈕的**節點**那一半：選一座建築，升級與拆除都在面板上。
-	#   B3.5 已經驗過「升級模式下點節點」，這裡驗的是**不切模式**的那條路。
+	#   上一段驗的是加粗（導管），這一段是同兩顆鈕的另一半（建築）。
 	var nd_cell := Vector2i(3, 11)
 	_click(nd_cell)
 	for _i in 3:
@@ -998,6 +1018,32 @@ func _click_selftest() -> void:
 		and _build_type == last_type and _message.contains("合金")
 	)
 	print("[TL_CLICKTEST/select] 合金閘找到的空格 %s（要求：空地、蓋得下、格心上沒有導管）" % alloy_cell)
+
+	# ★ B3.7.1：建造鈕是**開關**（使用者指定「按一下選擇，再按一下取消選擇」）。
+	#   `ButtonGroup` 預設不准全部放開，所以這條真正驗的是 `allow_unpress`
+	#   有沒有設、以及 `toggled(false)` 那一支有沒有接。
+	#   ⚠ 光驗 `_build_type == ""` 不夠：**取消之後點空地不該蓋出東西**，
+	#     而那是這件事唯一會咬到玩家的地方。用第一顆鈕（採集器）——最後一顆在
+	#     捲動區底部，合成點擊會打到它上面蓋著的東西。
+	_press(_build_buttons["extractor"])
+	for _i in 3:
+		await get_tree().process_frame
+	var armed: bool = _build_type == "extractor"
+	var nodes_before_idle: int = s.nodes.size()
+	_click_button(_build_buttons["extractor"])
+	for _i in 3:
+		await get_tree().process_frame
+	var disarmed: bool = armed and _build_type == ""
+	_click(alloy_cell)
+	for _i in 3:
+		await get_tree().process_frame
+	# 空手點空地要**安靜地什麼都不做**——不是丟一句 ✕。「我只是想收起面板」
+	# 和「我蓋錯地方了」不是同一件事。
+	var idle_click: bool = disarmed and s.nodes.size() == nodes_before_idle and _message == ""
+	_press(_build_buttons["extractor"])
+	for _i in 3:
+		await get_tree().process_frame
+	var rearmed: bool = _build_type == "extractor"
 
 	# ★ 藍圖庫（B2.3）。走完整條路徑：框選 → 存 → 拿起來 → 放下去。
 	#   **不直接呼叫 `Blueprint.capture()`**——那只驗得到純函式，而這一批
@@ -1316,6 +1362,7 @@ func _click_selftest() -> void:
 		and sel_open and sel_says and sel_inside and sel_toggles and sel_clear
 		and wire_sel and wire_toggle and wire_fits and wire_up and wire_del
 		and node_btn_up and node_btn_del and core_verbs
+		and armed and disarmed and idle_click and rearmed
 		and bp_saved and bp_has_nodes and bp_expanded and bp_short and bp_fits
 	)
 	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s bar_hint=%s(底欄右緣 %.0f／提示 x %.0f) hint_in=%s node_lv=%s(付款 %s／上限 %s) 檢視=%s(說得出是誰 %s／在畫面內 %s／再點收起 %s／不疊能量面板 %s) → %s" % [
@@ -1325,8 +1372,9 @@ func _click_selftest() -> void:
 		node_lvl, node_paid, node_cap, sel_open, sel_says, sel_inside, sel_toggles, sel_clear,
 		"PASS" if ok else "FAIL"
 	])
-	print("[TL_CLICKTEST/select] 導管選取=%s 再點收起=%s 版面=%s 面板加粗=%s(付款一併驗) 面板拆除=%s(退款一併驗) 建築升級鈕=%s 建築拆除鈕=%s 核心兩顆鈕都收起=%s" % [
-		wire_sel, wire_toggle, wire_fits, wire_up, wire_del, node_btn_up, node_btn_del, core_verbs
+	print("[TL_CLICKTEST/select] 導管選取=%s 再點收起=%s 版面=%s 面板加粗=%s(付款一併驗) 面板拆除=%s(退款一併驗) 建築升級鈕=%s 建築拆除鈕=%s 核心兩顆鈕都收起=%s｜建造鈕開關：選=%s 取消=%s 空手點空地無事發生=%s 選回來=%s" % [
+		wire_sel, wire_toggle, wire_fits, wire_up, wire_del, node_btn_up, node_btn_del, core_verbs,
+		armed, disarmed, idle_click, rearmed,
 	])
 	print("[TL_CLICKTEST/audio] prep_music=%s wave_hush=%s wave_sting=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s knell_field=%s" % [
 		music_ok, wave_hush, wave_sting, voice_ok, AudioBus.muted, tower_built, over_cleared,
@@ -1441,6 +1489,10 @@ func _view_selftest() -> bool:
 func _press(b: Button) -> void:
 	b.button_pressed = true
 	b.pressed.emit()
+	# ★ B3.7.1：建造鈕與藍圖鈕改接 `toggled`，而 `button_pressed = true` 在**它本來
+	#   就按著**的時候一個訊號都不送。自檢裡有好幾處是「再確認一次拿的是這個」，
+	#   那些呼叫會安靜地變成空操作。補送一次——處理函式對重複的 true 是冪等的。
+	b.toggled.emit(true)
 
 
 ## ★ 用**合成滑鼠事件**按一顆鈕（B3.7），不是直接 emit。
@@ -1850,7 +1902,7 @@ func _gui_input(event: InputEvent) -> void:
 	#   放在建造模式裡而不是另開一個模式，理由和 B3.6 選節點同一條：玩家的意圖是
 	#   「這條線我要看一下、要動它」，那不該先去底欄按一顆鈕再回來。
 	#
-	#   ⚠ 節點優先——上面那條已經 return 了，和拆除模式同一個順序。
+	#   ⚠ 節點優先——上面那條已經 return 了，和 `demolish()` 的判斷順序一致。
 	#   ⚠ 拿著藍圖時不攔：那時左鍵是「把它放在這裡」，一個明確得多的意圖。
 	#   命中帶刻意窄（`WIRE_PICK`），格的其他地方照舊蓋得下去——理由見那個常數。
 	if _mode == Mode.BUILD and _bp_index < 0:
@@ -1860,7 +1912,7 @@ func _gui_input(event: InputEvent) -> void:
 			_refresh_hint()
 			queue_redraw()
 			return
-	_act(c, p)
+	_act(c)
 	_refresh_hint()
 
 
@@ -1909,14 +1961,15 @@ func _release(pos: Vector2) -> void:
 	queue_redraw()
 
 
-## `point` 是**格為單位的浮點座標**（整數＝格中心）。加粗與拆除要用它才點得準：
-## 好幾條線擠在同一個節點上時，格解析度分不出玩家指的是哪一條（B1.2.1）。
-## 省略時退回格中心，`_click()` 那條合成輸入的路徑走這個預設。
-func _act(cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> void:
-	var p := Vector2(cell) if point.x < -900.0 else point
+## ★ B3.7.1 起這裡只剩建造一種語意。
+##
+## 加粗與拆除本來在這裡各佔一支分支，並且各自需要**格為單位的浮點座標**才點得準
+## （好幾條線擠在同一個節點上時，格解析度分不出玩家指的是哪一條，B1.2.1）。
+## 兩個動詞搬到檢視面板之後，那個參數與它的兩支分支一起消失——**面板已經知道
+## 玩家選的是哪一個東西，不必再用座標猜一次。**
+func _act(cell: Vector2i) -> void:
 	# 音效只在**真的做成了**的時候響（`Build.OK` ＝ 空字串）。失敗有提示列說原因，
 	# 再配一個音只是把「你做錯了」講兩次。
-	# ⚠ `match` 的各分支共享作用域，變數名不能重複（`CLAUDE.md` 嚴格型別地雷）。
 	match _mode:
 		Mode.BUILD:
 			# ★ 拿著藍圖時，左鍵是「把它放在這裡」而不是蓋一個節點（B2.3）。
@@ -1927,37 +1980,16 @@ func _act(cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> void:
 			_selected = Vector2i(-1, -1)
 			_sel_wire = -1
 			_refresh_inspect()
+			# ★ B3.7.1：手上什麼都沒拿（再按一次建造鈕就會這樣）＝點空地什麼都不做。
+			#   不報錯——「我只是想收起面板」和「我蓋錯地方了」不是同一件事，
+			#   對前者丟一句 ✕ 是把一個正常操作講成失敗。
+			if _build_type == "":
+				_message = ""
+				return
 			var code_b := BuildController.place(s, _build_type, cell)
 			if code_b == Build.OK:
 				AudioBus.play("build_place")
 			_message = _text_of(code_b)
-		Mode.UPGRADE:
-			# ★ 同一顆鈕升兩種東西（B3.5）：**點在節點上就升那座建築**（§4.3），
-			#   點在兩節點之間就加粗那條線（§7.2）。
-			#   不另開一個模式：兩件事的玩家意圖是同一個（「這裡要更強」），
-			#   而底欄的模式鈕在 B2.4.2 已經因為十三種節點擠過一次（§7.1 A-1）。
-			if not s.node_at(cell).is_empty():
-				var code_n := BuildController.upgrade_node(s, cell)
-				if code_n == Build.OK:
-					AudioBus.play("build_place")
-				_message = _text_of(code_n)
-			else:
-				var ci: int = s.conduit_near(p)
-				if ci < 0:
-					_message = "升級模式：請點一座建築，或點兩個節點之間的導管"
-				else:
-					var code_u := BuildController.upgrade(s, ci)
-					if code_u == Build.OK:
-						AudioBus.play("build_wire")
-					_message = _text_of(code_u)
-		Mode.DEMOLISH:
-			var before_d: int = s.nodes.size()
-			var code_d := BuildController.demolish(s, cell, p)
-			# 拆**節點**的音由 `_audio_tick()` 的「節點變少」那條負責（敵人啃掉的
-			# 走同一條）。這裡只補拆導管——導管不算在節點數裡，那條看不到。
-			if code_d == Build.OK and s.nodes.size() == before_d:
-				AudioBus.play("build_destroyed", -4.0)
-			_message = _text_of(code_d)
 
 
 func _text_of(code: String) -> String:
@@ -3443,6 +3475,10 @@ func _draw_hover() -> void:
 		var hc: Dictionary = s.conduits[hover_wire]
 		draw_line(_center(hc["a"]), _center(hc["b"]),
 			Palette.alpha(Palette.ORDER_BRIGHT, 0.45), 8.0)
+	elif _mode == Mode.BUILD and _build_type == "" and _bp_index < 0:
+		# ★ B3.7.1：手上什麼都沒拿——**不畫落點預覽**。畫了就是承諾點下去會蓋東西，
+		#   而這一刻不會。淡框仍然畫，游標在哪一格還是要看得見。
+		draw_rect(Rect2(p, g), Palette.BORDER_STRONG, false, 2.0)
 	elif _mode == Mode.BUILD:
 		var pv := BuildController.preview_place(s, _build_type, _hover)
 		var col: Color = Palette.OK_GREEN if pv["ok"] else Palette.WARN_ORANGE
@@ -3622,6 +3658,10 @@ func _build_ui() -> void:
 	#   用 Godot 內建的 toggle 群組，不自己維護一套「哪個被選中」的高亮。
 	#   B0.6 之前完全沒有選中指示——玩家只能從提示列的文字推自己在哪個模式。
 	var group := ButtonGroup.new()
+	# ★ B3.7.1：允許「按一下選、再按一下取消」（使用者指定）。`ButtonGroup` 預設
+	#   永遠有一顆是按下的——那對模式是對的（總得在某個模式裡），對「手上拿著誰」
+	#   不對：玩家常常只是想看一下地圖，而不是隨時都握著一種節點。
+	group.allow_unpress = true
 	# ★ 只列**這一關解鎖的**（`10_GDD.md` §7.9）。第 1 關給四顆鈕不是十顆——
 	#   十顆對一個還不知道「電是流率」的人來說不是自由，是雜訊。
 	#   一局之內這份清單不會變，所以鈕的位置仍然是固定的（R-15 的同一條理由）。
@@ -3658,32 +3698,31 @@ func _build_ui() -> void:
 		# 鈕上**只有名字**（使用者指定，B1.3.1）：價牌在提示列的第一行，
 		# 而滑鼠移到鈕上時圖鑑浮層也會寫一次。同一個數字印三遍只是把鈕撐長。
 		var b := _tool_button(group, NodeDefs.label(type))
-		b.pressed.connect(_on_build_type.bind(type))
+		# ★ B3.7.1：接 `toggled` 不是 `pressed`（使用者指定「再按一下就是取消選擇」）。
+		#   `pressed` 收不到「這一顆剛被放開」——那正是取消選擇要聽的事件。
+		b.toggled.connect(_on_build_type.bind(type))
 		# ★ 角色簡介：滑鼠停在鈕上就浮出來，移開就消失（可用底欄「圖鑑」關掉）。
 		b.mouse_entered.connect(_on_codex_show.bind(type, b))
 		b.mouse_exited.connect(_on_codex_hide)
 		_build_buttons[type] = b
 		list.add_child(UiKit.touchable(b))
-	(_build_buttons[_build_type] as Button).button_pressed = true
+	# ★ B3.7.1：`_build_type` 可以是空字串（手上什麼都沒拿），而空字串沒有對應的鈕。
+	#   索引不到會丟執行期錯誤 → **中止整支 `_build_ui()`**，症狀是「半個畫面沒建出來」
+	#   而不是報錯（RG-164 的形狀）。
+	if _build_buttons.has(_build_type):
+		(_build_buttons[_build_type] as Button).button_pressed = true
 
 	col.add_child(_spacer(4))
-	# ★ 動作鈕只剩兩顆（B1.3.1，使用者指定）：
-	#   **「連線」拿掉**——B1.6.2 的拖曳已經完全取代它，留著一顆進去只能點兩次
-	#   的模式鈕，等於在教一個比較慢的做法。
-	#   **「移動」拿掉**——改成滑鼠中鍵按住拖。平移是一個持續性的動作，
-	#   把它做成模式代表玩家每次看完別的地方都要記得切回來，而忘記切回來的
-	#   代價是「點地圖沒反應」。
-	var modes := GridContainer.new()
-	modes.columns = 2
-	modes.add_theme_constant_override("h_separation", 2)
-	modes.add_theme_constant_override("v_separation", 2)
-	col.add_child(modes)
-	for pair: Array in [[Mode.UPGRADE, "升級"], [Mode.DEMOLISH, "拆除"], [Mode.BLUEPRINT, "藍圖"]]:
-		var b := _tool_button(group, String(pair[1]))
-		b.custom_minimum_size = Vector2(54, 0)   # 兩欄要塞進 112px 的欄寬
-		b.pressed.connect(_on_mode.bind(int(pair[0])))
-		_mode_buttons[int(pair[0])] = b
-		modes.add_child(UiKit.touchable(b))
+	# ★ 動作鈕只剩一顆（B3.7.1，使用者指定）。歷次拿掉的理由是同一條：
+	#   **一個模式鈕如果只是「同一件事的比較慢的做法」，它就該消失。**
+	#   「連線」B1.6.2 被拖曳取代；「移動」B1.3.1 改中鍵拖；
+	#   「升級」「拆除」B3.7 被檢視面板上的鈕取代——切模式 → 點目標 → 切回建造，
+	#   三步裡有兩步不是決定。
+	#   藍圖留著：它不是動詞，是**手上拿著的東西**，沒有別的地方表達得了。
+	var bp_btn_mode := _tool_button(group, "藍圖")
+	bp_btn_mode.toggled.connect(_on_mode.bind(Mode.BLUEPRINT))
+	_mode_buttons[Mode.BLUEPRINT] = bp_btn_mode
+	col.add_child(UiKit.touchable(bp_btn_mode))
 
 	# 建造欄放不下八種節點再加動作鈕（8×44 已經吃掉 380px），
 	# 所以時間流與面板開關搬到地圖下緣那條 56px 的空帶——那裡本來就空著。
@@ -3894,9 +3933,9 @@ func _build_help_panel() -> void:
 		"操作　左鍵做事、中鍵移動視野、滾輪縮放、ESC 開選單。沒有右鍵",
 		"　蓋節點：左欄選一種 → 左鍵點地圖上的一格",
 		"　拉導管：從一個節點按住左鍵，拖到另一個節點放開（隨時都能拖，不用切模式）",
-		"　升　級：「升級」→ 點一座建築（效果與耗能同時 +25%／級，上限 3 級，隨局結束消失）",
-		"　　　　　或點導管的中間（不是兩端的節點）＝加粗那條線",
-		"　拆　除：「拆除」→ 點節點或導管，返還 75%",
+		"　檢　視：左鍵點一座建築或一條導管 → 右邊出現它的數據，升級與拆除也在那個面板上",
+		"　　　　　升級：效果與耗能同時 +25%／級，上限 3 級，隨局結束消失｜拆除返還 75%",
+		"　取　消：再點一次同一個東西＝收起面板；再按一次左欄的節點鈕＝放下手上那一種",
 		"　移　動：按住滑鼠中鍵拖動地圖（放大之後才需要）",
 		"",
 		"規則",
@@ -4476,7 +4515,22 @@ func _section_label(text: String) -> Control:
 	return l
 
 
-func _on_build_type(type: String) -> void:
+## ★ B3.7.1：建造鈕改成**開關**（使用者指定「按一下選擇，再按一下取消選擇」）。
+##
+## 手上什麼都沒拿的時候，左鍵就純粹是檢視——點節點看節點、點導管看導管、
+## 點空地什麼都不做。那也是**在有導管經過的格子上蓋東西**之外，另一個
+## 「我只是想看一下」的正常需求。
+##
+## ⚠ 放開那一支要**確認自己還是當前那一個才清空**。同一個 `ButtonGroup` 換鈕時
+##   會先後送出「舊的 false」與「新的 true」兩個事件，而兩者的順序不是這裡能
+##   假設的——沒有這個守衛，換鈕有一半的機率把剛選好的那一個清掉。
+func _on_build_type(pressed: bool, type: String) -> void:
+	if not pressed:
+		if _build_type == type:
+			_build_type = ""
+			_message = ""
+			_refresh_hint()
+		return
 	_mode = Mode.BUILD
 	_build_type = type
 	_drag_from = Vector2i(-1, -1)
@@ -4596,10 +4650,17 @@ func _on_delete_blueprint(i: int) -> void:
 	_refresh_blueprints()
 
 
-func _on_mode(mode: int) -> void:
+## 藍圖鈕。同建造鈕，`toggled` ＋ 再按一次回到建造（B3.7.1）。
+func _on_mode(pressed: bool, mode: int) -> void:
+	if not pressed:
+		if _mode == mode:
+			_mode = Mode.BUILD
+			_message = ""
+			_refresh_hint()
+		return
 	_mode = mode
-	# 換模式就放下手上的藍圖：拿著它的時候左鍵是「展開」，而玩家切去拆除
-	# 是為了拆東西——留著會讓下一次左鍵做出他沒想要的事。
+	# 換模式就放下手上的藍圖：拿著它的時候左鍵是「展開」，而玩家切走
+	# 是為了做別的事——留著會讓下一次左鍵做出他沒想要的事。
 	if _bp_index >= 0:
 		_bp_index = -1
 		_refresh_blueprints()
@@ -5029,6 +5090,12 @@ func _restart() -> void:
 
 
 func _refresh_hint() -> void:
+	# ⚠ **UI 還沒建完就可能被呼叫**（B3.7.1）：`_build_ui()` 裡設建造鈕的
+	#   `button_pressed = true` 會當場送出 `toggled`，而那時提示列還沒建出來。
+	#   少了這道守衛的症狀不是報錯，是 `_build_ui()` **從那一行起整支中止**
+	#   ——半個畫面沒建出來，而畫面自己不會抱怨（RG-164 的形狀）。
+	if _hint == null:
+		return
 	if Hooks.naked:
 		_hint.visible = false
 		return
@@ -5049,24 +5116,14 @@ func _refresh_hint() -> void:
 			#   順便把逃生門講出來：想在這一格蓋，就避開線，往格子邊緣點。
 			if _bp_index < 0 and s.conduit_near(_hover_p, WIRE_PICK) >= 0:
 				parts.append("這條導管：左鍵點一下就檢視它，面板上可以加粗或拆除。想在這一格蓋東西，避開線往格子邊緣點。")
+			elif _build_type == "" and _bp_index < 0:
+				# ★ B3.7.1：手上什麼都沒拿。**要講得出「現在能做什麼」**，
+				#   不然這個狀態讀起來會像「怎麼點都沒反應」。
+				parts.append("目前沒有拿著任何節點。左鍵點一座建築或一條導管＝檢視它，面板上就能升級、加粗或拆除。要蓋東西就在左欄點一種。")
 			elif _in_map(_hover):
 				parts.append_array(BuildController.preview_place(s, _build_type, _hover)["lines"])
 			else:
 				parts.append("建造 %s：左鍵點一格放下；從既有節點按住拖到另一個節點＝拉導管。" % NodeDefs.label(_build_type))
-		Mode.UPGRADE:
-			# 上限寫成算出來的：科技「導管擴容」會把基礎值推到 16（滿配 34），
-			# 寫死「→28」在買過科技之後就是錯的（B1.3）。
-			# ★ 兩件事一句話講完（B3.5）：點建築＝升它，點線＝加粗它。
-			#   建築那半要**同時講耗能**——只講「+25% 效果」是漏掉一半的價目表，
-			#   而漏掉的那一半正是玩家會被咬到的那一半（一座 3 級稜鏡吃 35/秒）。
-			parts.append("升級：左鍵點一座建築 → 效果與耗能同時 +%d%%／級，上限 %d 級（價 ＝ 造價的半／全／一倍半），隨局結束消失。" % [
-				int(Build.NODE_STEP * 100.0), Build.NODE_MAX_LEVEL
-			])
-			parts.append("　　　點一段導管的「中間」→ 加粗。每級 +6 吞吐，上限 3 級（→%d）。1 級 20 礦砂；2 級 40 礦砂＋20 合金；3 級 60 礦砂＋50 合金。" % int(
-				Build.conduit_cap(Build.CAP_MAX_LEVEL, float(s.mods["cap_bonus"]))
-			))
-		Mode.DEMOLISH:
-			parts.append("拆除：左鍵點節點或導管，返還 75%%。")
 	if _message != "":
 		parts.append(_message)
 	_hint.text = "▶ %s\n%s" % [_next_step(), "　".join(parts)]
