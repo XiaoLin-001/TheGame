@@ -22,11 +22,12 @@ const NodeDefs := preload("res://data/NodeDefs.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
 const Build := preload("res://scripts/sim/Build.gd")
+const FlowNetwork := preload("res://scripts/sim/FlowNetwork.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("combat_test", 172)
+	var t := T.new("combat_test", 177)
 	_exchange_rate(t)
 	_armor_and_barrier(t)
 	_rate_of_fire(t)
@@ -38,6 +39,7 @@ func _initialize() -> void:
 	_reclaim_rate_is_capped_by_its_own_conduit(t)
 	_knell_aura(t)
 	_in_battle_node_upgrade(t)
+	_who_is_feeding_this_tower(t)
 	_priority_decides_who_starves(t)
 	_breaker_splash(t)
 	_m3_enemy_rules(t)
@@ -579,6 +581,66 @@ func _in_battle_node_upgrade(t: RefCounted) -> void:
 	var h0: String = a.state_hash()
 	BuildController.upgrade_node(a, Vector2i(16, 8))
 	t.ok(a.state_hash() != h0, "★★ 升級會改變狀態摘要（`level` 是狀態不是裝飾）")
+
+
+## ★ 「電從哪來」（`FlowNetwork.upstream_power()`、B3.6）。
+##
+## 這一段要證明的是它逆著**實際流向**走，不是「有沒有連著」——
+## 一座塔可能連著好幾條線，而這一刻真正在餵它的只有其中幾條。
+## 只驗「連著的都算上」的話，一個回傳「所有相鄰節點」的實作照樣全綠，
+## 而那對玩家沒有用：他問的是我的電從哪來，不是我接了幾條線。
+func _who_is_feeding_this_tower(t: RefCounted) -> void:
+	var s := _session()
+	_power_plant(s)                                   # 採集器(16,8) → 發電機(16,11)
+	BuildController.place(s, "anchor", Vector2i(16, 7))
+	BuildController.lay_conduit(s, Vector2i(16, 8), Vector2i(16, 7))
+	_spawn_at(s, "drifter", 16.0)
+	BattleController.step(s)
+
+	var net: Dictionary = {}
+	for c: Dictionary in s.conduits:
+		var v: Vector3 = (s.rates["conduit_net"] as Dictionary).get(c["id"], Vector3.ZERO)
+		net[c["id"]] = v.y
+	var sources: Dictionary = {Vector2i(16, 11): true}
+
+	var chain: Dictionary = FlowNetwork.upstream_power(
+		s.conduits, net, Vector2i(16, 7), sources
+	)
+	t.eq(
+		(chain["sources"] as Dictionary).size(), 1,
+		"★ 找得到那一台在餵它的發電機"
+	)
+	t.ok(
+		(chain["sources"] as Dictionary).has(Vector2i(16, 11)),
+		"★ 而且就是 (16,11) 那一台"
+	)
+	t.ok(
+		(chain["conduits"] as Dictionary).size() >= 1,
+		"★ 沿途的導管也標得出來（畫面要把它們亮起來）"
+	)
+
+	# ★★ **反向對照：沒有電流進來的時候，答案要是空的。**
+	#    敵人走光 → 塔不交戰 → 不吃電 → 沒有任何一條線在餵它。
+	#    這一條就是「流向 vs 連著」的分界：拓樸完全沒變，答案要變。
+	s.enemies.clear()
+	BattleController.step(s)
+	var idle_net: Dictionary = {}
+	for c: Dictionary in s.conduits:
+		var v2: Vector3 = (s.rates["conduit_net"] as Dictionary).get(c["id"], Vector3.ZERO)
+		idle_net[c["id"]] = v2.y
+	var idle_chain: Dictionary = FlowNetwork.upstream_power(
+		s.conduits, idle_net, Vector2i(16, 7), sources
+	)
+	t.eq(
+		(idle_chain["sources"] as Dictionary).size(), 0,
+		"★★ 待機時沒有任何來源——線還連著，但這一刻沒有電流進來"
+	)
+
+	# 選錯格（空地）不得炸，回空的。
+	var nowhere: Dictionary = FlowNetwork.upstream_power(
+		s.conduits, net, Vector2i(1, 1), sources
+	)
+	t.eq((nowhere["sources"] as Dictionary).size(), 0, "空地沒有供電來源（也不得炸）")
 
 
 func _session() -> RefCounted:

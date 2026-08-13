@@ -19,6 +19,7 @@ const Score := preload("res://scripts/sim/Score.gd")
 const MapGen := preload("res://scripts/sim/MapGen.gd")
 const Daily := preload("res://scripts/sim/Daily.gd")
 const Blueprint := preload("res://scripts/sim/Blueprint.gd")
+const FlowNetwork := preload("res://scripts/sim/FlowNetwork.gd")
 const Tech := preload("res://data/Tech.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 const RosterData := preload("res://data/Roster.gd")
@@ -185,6 +186,10 @@ var _bp_panel: PanelContainer = null
 ## 中鍵按著沒放（B1.3.1）＝正在平移地圖。
 var _panning: bool = false
 var _hover: Vector2i = Vector2i(-999, -999)
+## ★ 被檢視的那一格（B3.6）。`(-1,-1)` ＝ 沒有選取。
+## **不是模式**——選取是一個狀態，模式是一個動詞，兩者混在一起的話
+## 「選著一座塔的時候還能不能蓋東西」會變成一個要另外回答的問題。
+var _selected: Vector2i = Vector2i(-1, -1)
 var _accum: float = 0.0
 var _message: String = ""
 
@@ -242,6 +247,8 @@ var _energy_button: Button = null
 var _energy_rows: Dictionary = {}
 var _codex_button: Button = null
 var _codex_panel: Control = null
+var _inspect_panel: Control = null
+var _inspect_label: Label = null
 var _codex_label: Label = null
 var _codex_on: bool = true
 var _prio_labels: Dictionary = {}
@@ -547,6 +554,32 @@ func _glyph_selftest() -> void:
 		_mode = Mode.BUILD
 		_build_type = "breaker"
 		_hover = Vector2i(10, 11)
+		# ★ 順便把**檢視**留在畫面上（B3.6）：選一座塔，射程圈、數據面板與
+		#   「誰在餵它電」的高亮都只有在選取狀態下存在，那也是純互動狀態。
+		#   選錨（合照那一排的第 6 個）——它有射程，圈畫得出來。
+		# 挑一座**真的接了線**的塔：合照那一排是憑空長出來的，沒有任何導管，
+		# 而「誰在餵它電」正是要靠導管才答得出來的問題。
+		for n: Dictionary in s.nodes:
+			var ty := String(n["type"])
+			if float(NodeDefs.of(ty).get("range", 0.0)) <= 0.0:
+				continue
+			# 跳過自己會發電的那兩種（回收者／儲槽）：它們的「供電」欄位講的是
+			# 另一件事，而合照要示範的是最常見的情況——一座塔、幾台發電機。
+			if ty in ["reclaimer", "silo"]:
+				continue
+			var wired := false
+			for c: Dictionary in s.conduits:
+				if c["a"] == n["cell"] or c["b"] == n["cell"]:
+					wired = true
+					break
+			if not wired:
+				continue
+			# **優先挑正在交戰的那一座**：不交戰就不吃電，不吃電就沒有電流，
+			# 而「誰在餵它電」正是要有電流才看得到的東西。挑錯的話合照上
+			# 只會有一個射程圈，證明不了這一批真正做的那件事。
+			_selected = n["cell"]
+			if bool(_engaged.get(int(n["id"]), false)):
+				break
 	_no_glyph.clear()
 	queue_redraw()
 	for _i in 2:
@@ -623,6 +656,13 @@ func _topbar_selftest() -> void:
 
 
 func _click_selftest() -> void:
+	# ★★ **看門狗**（B3.6）。自檢裡的任何一個執行期錯誤都會**中止這支函式**，
+	#   於是最後那行 `quit()` 跑不到——視窗就一直開著，而 `CLAUDE.md` 鐵律 3 是
+	#   「絕不在沒有測試鉤子的情況下開遊戲視窗」。有鉤子卻不會關，等於同一件事。
+	#   （B3.6 當場踩到：索引了一個不存在的模式鈕，測試掛住 5 分鐘。）
+	#   `TL_SHOT` 在場時不設——那條路徑本來就是要把畫面留著給截圖。
+	if Hooks.shot_path == "":
+		_watchdog()
 	await get_tree().process_frame
 	await get_tree().process_frame
 	await _glyph_selftest()
@@ -700,6 +740,38 @@ func _click_selftest() -> void:
 		_click(lvl_cell)
 		await get_tree().process_frame
 	var node_cap: bool = int(s.node_at(lvl_cell).get("level", 0)) == Build.NODE_MAX_LEVEL
+
+	# ★ 點一下建築＝檢視它（§B3.6）。走完整輸入路徑，因為這是一個**新的點擊語意**
+	#   （舊行為是「這一格已經有東西了」）。三條斷言：面板真的開了、
+	#   上面寫的是那一座、再點一次會收起來（選取是**開關**不是單向）。
+	# ⚠ **不要寫 `_mode_buttons[Mode.BUILD]`**——底欄只有升級／拆除／藍圖三顆
+	#   模式鈕，建造沒有自己的鈕（選一種節點就是建造）。索引一個不存在的鍵會丟
+	#   執行期錯誤，而那會**中止整支自檢**：`quit()` 跑不到，視窗就一直開著。
+	#   RG-164 的同一個形狀，這次的症狀是「測試掛住、使用者桌面上多一個視窗」。
+	_press(_build_buttons["relay"])
+	_click(lvl_cell)
+	for _i in 3:
+		await get_tree().process_frame
+	var sel_open: bool = _selected == lvl_cell and _inspect_panel != null and _inspect_panel.visible
+	var sel_says: bool = sel_open and _inspect_label.text.contains(NodeDefs.label("relay"))
+	# ★ 面板要**整個在畫面內**（RG-139／RG-149／RG-170 的同一句話第四次）。
+	var sel_inside: bool = sel_open and (
+		_inspect_panel.position.x >= 0.0
+		and _inspect_panel.position.y >= 0.0
+		and _inspect_panel.position.x + _inspect_panel.size.x <= float(size.x) + 0.5
+		and _inspect_panel.position.y + _inspect_panel.size.y <= float(size.y) + 0.5
+	)
+	# ★ 和右上的能量面板**不得相交**（RG-162 那條，套在新的浮層上）。
+	#   兩個都開著才驗得到，所以先確定能量面板是開的。
+	var sel_clear := true
+	if _energy_panel != null and _energy_panel.visible and _inspect_panel.visible:
+		sel_clear = not Rect2(_energy_panel.position, _energy_panel.size).intersects(
+			Rect2(_inspect_panel.position, _inspect_panel.size)
+		)
+	_click(lvl_cell)
+	for _i in 3:
+		await get_tree().process_frame
+	var sel_toggles: bool = _selected.x < 0 and not _inspect_panel.visible
 
 	# ★ 拖曳拉線（B1.6.2）：**全程停在建造模式**。會壞的地方有兩個——按下時
 	#   沒把起點記起來、放開的事件沒被路由到——而兩個都只有真的送出
@@ -1087,13 +1159,14 @@ func _click_selftest() -> void:
 		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
 		and view_ok and menu_ok and audio_ok and over_ok and bar_hint_clear and hint_inside
 		and node_lvl and node_paid and node_cap
+		and sel_open and sel_says and sel_inside and sel_toggles and sel_clear
 		and bp_saved and bp_has_nodes and bp_expanded and bp_short and bp_fits
 	)
-	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s bar_hint=%s(底欄右緣 %.0f／提示 x %.0f) hint_in=%s node_lv=%s(付款 %s／上限 %s) → %s" % [
+	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s bar_hint=%s(底欄右緣 %.0f／提示 x %.0f) hint_in=%s node_lv=%s(付款 %s／上限 %s) 檢視=%s(說得出是誰 %s／在畫面內 %s／再點收起 %s／不疊能量面板 %s) → %s" % [
 		placed, rejected, diag_placed, wired, upgraded, dragged, panned, reachable, alloy_gated,
 		energy_ok, codex_ok, prio_ok, view_ok, menu_ok, audio_ok, over_ok,
 		bar_hint_clear, bar_rect.end.x, _hint.global_position.x, hint_inside,
-		node_lvl, node_paid, node_cap,
+		node_lvl, node_paid, node_cap, sel_open, sel_says, sel_inside, sel_toggles, sel_clear,
 		"PASS" if ok else "FAIL"
 	])
 	print("[TL_CLICKTEST/audio] prep_music=%s wave_hush=%s wave_sting=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s knell_field=%s" % [
@@ -1355,6 +1428,8 @@ func _process(delta: float) -> void:
 	# 轉折要等玩家碰一下滑鼠才會反映——手不動的那幾秒，提示列是在說謊。
 	_refresh_hint()
 	_refresh_energy()
+	# 檢視面板講的是**當下這個 tick** 的耗能與供電來源，所以它也要每幀重算。
+	_refresh_inspect()
 	_refresh_over()
 	# ★ 一個 tick 邊緣偵測，兩個消費者（音訊、死因診斷）。
 	#   兩邊各記一份「上一幀的 tick」的那一天，就會有一邊記錯（B1.5.1 的教訓）。
@@ -1622,9 +1697,23 @@ func _release(pos: Vector2) -> void:
 			AudioBus.play("build_wire")
 		_message = _text_of(code)
 	else:
-		# 在既有節點上點一下就放開。**不要回「這一格已經有東西了」**——
-		# 那句話對玩家沒有下一步；這裡正是教會拖曳這個手勢最好的時機。
-		_message = "從這個節點按住往另一個節點拖，就能拉一條導管。"
+		# ★ **在既有節點上點一下＝檢視它**（B3.6，使用者提出）。
+		#
+		#   這個手勢原本只回一句「從這個節點按住往另一個節點拖」——一句教學，
+		#   而玩家蓋到第三座塔之後就不需要它了，那之後這個手勢什麼都不做。
+		#   換成選取之後，「點一下那座塔」給出射程、數據、當下耗能，
+		#   以及**是誰在餵它電**。拖曳那句話改掛在提示列（`_refresh_hint()`）。
+		#
+		#   ⚠ 這一段**必須放在這裡，不是 `_act()` 的 BUILD 分支**：
+		#   點在既有節點上會先進入「準備拉導管」的按下路徑，放開時走到這裡，
+		#   根本到不了 `_act()`。第一版寫在那邊，於是面板永遠不開而斷言說
+		#   「檢視=false」——輸入路徑的形狀只有真的送事件才看得出來。
+		#
+		#   不另開「檢視模式」：模式鈕在 B2.4.2 已經因為十三種節點擠過一次；
+		#   也不綁右鍵——P3「操作不得只靠 hover／右鍵／鍵盤」。
+		_selected = Vector2i(-1, -1) if _selected == from else from
+		_refresh_inspect()
+		_message = "" if _selected.x >= 0 else "從這個節點按住往另一個節點拖，就能拉一條導管。"
 	_refresh_hint()
 	queue_redraw()
 
@@ -1643,6 +1732,9 @@ func _act(cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> void:
 			if _bp_index >= 0:
 				_expand_blueprint(cell)
 				return
+			# 蓋在空地上就取消選取：選取講的是「這一座」，而畫面已經換人了。
+			_selected = Vector2i(-1, -1)
+			_refresh_inspect()
 			var code_b := BuildController.place(s, _build_type, cell)
 			if code_b == Build.OK:
 				AudioBus.play("build_place")
@@ -1732,6 +1824,7 @@ func _draw() -> void:
 	_draw_shots()
 	_draw_bursts()
 	_draw_shields()
+	_draw_selection()
 	_draw_hover()
 	# 階段色調（`10_GDD.md` §6.2 硬性要求 4）：**不看計時器也知道自己在哪個階段**。
 	# 蓋在最上層而不是墊在底下——墊底的話節點與敵人會把它整片蓋掉。
@@ -3078,6 +3171,49 @@ func _enemy_pos(e: Dictionary) -> Vector2:
 	return _center(s.path[i]).lerp(_center(s.path[j]), prog - float(i))
 
 
+## ★ 被選取那一座：射程圈 ＋ **正在餵它電的那幾台**（B3.6）。
+##
+## 三個記號各答一個問題，而且**形狀各不相同**（§4.3b：同一張圖上的兩個訊息，
+## 換顏色不夠）：
+##   · 選取本身 ＝ 那一格的**方框**（和擺放預覽的框同一個語彙）
+##   · 射程 ＝ 一個**圓弧**
+##   · 供電來源 ＝ 來源那一格的**菱形**，加上沿途導管的高亮
+##
+## 供電鏈逆著本 tick 的**實際流向**走（`FlowNetwork.upstream_power()`），
+## 不是「有沒有連著」——一座塔可能連著五條線而這一刻只有兩條在餵它。
+func _draw_selection() -> void:
+	if _selected.x < 0:
+		return
+	var n: Dictionary = s.node_at(_selected)
+	if n.is_empty():
+		return
+	var c := _center(_selected)
+	var g := Vector2(Shapes.GRID, Shapes.GRID)
+	draw_rect(Rect2(_world(_selected), g), Palette.ORDER_BRIGHT, false, 2.0)
+
+	var rng := float(NodeDefs.of(String(n["type"])).get("range", 0.0))
+	if rng > 0.0:
+		# 半透明填色 ＋ 實線邊：只有邊的話，兩座塔的射程圈交疊時看不出誰罩到哪。
+		draw_circle(c, rng * Shapes.GRID, Palette.alpha(Palette.ORDER_CYAN, 0.07))
+		draw_arc(c, rng * Shapes.GRID, 0.0, TAU, 64, Palette.alpha(Palette.ORDER_BRIGHT, 0.7), 2.0)
+
+	var chain := FlowNetwork.upstream_power(s.conduits, _energy_net(), _selected, _power_sources())
+	var lit: Dictionary = chain["conduits"]
+	for ci in s.conduits.size():
+		var cd: Dictionary = s.conduits[ci]
+		if not lit.has(cd["id"]):
+			continue
+		draw_line(_center(cd["a"]), _center(cd["b"]),
+			Palette.alpha(Palette.ENERGY_AMBER, 0.55), 6.0)
+	# 來源畫琥珀菱形（琥珀專屬能量，§1.1 配色紀律 2）——它答的是「電從哪來」。
+	for cell: Variant in (chain["sources"] as Dictionary):
+		var sc := _center(cell)
+		draw_polyline(PackedVector2Array([
+			sc + Vector2(0, -20), sc + Vector2(20, 0), sc + Vector2(0, 20),
+			sc + Vector2(-20, 0), sc + Vector2(0, -20),
+		]), Palette.ENERGY_AMBER, 2.5)
+
+
 func _draw_hover() -> void:
 	if not _in_map(_hover):
 		return
@@ -3391,6 +3527,7 @@ func _build_ui() -> void:
 	_build_blueprint_panel()
 	_build_energy_panel()
 	_build_codex_panel()
+	_build_inspect_panel()
 	_build_help_panel()
 
 	# 兩行：上行「下一步」、下行當下動作的細節。
@@ -3713,6 +3850,138 @@ func _build_codex_panel() -> void:
 	box.add_child(_codex_label)
 	add_child(box)
 	_codex_panel = box
+
+
+## 自檢逾時就以失敗收場，不要把視窗留在使用者桌面上（見 `_click_selftest()`）。
+## 60 秒遠寬於任何一支自檢的實際長度（最慢的約 3 秒）。
+func _watchdog() -> void:
+	var timer := get_tree().create_timer(60.0)
+	timer.timeout.connect(func() -> void:
+		push_error("[TL_CLICKTEST] 自檢逾時。多半是某一步丟了執行期錯誤而中止")
+		get_tree().quit(1)
+	)
+
+
+func _build_inspect_panel() -> void:
+	# 半透明同角色簡介：它浮在地圖上，而玩家正在看的就是地圖（被選取的那一格
+	# 與供電來源都在底下）。
+	var box := UiKit.panel(0.9)
+	box.visible = false
+	_inspect_label = UiKit.label("", 13, Palette.TEXT_PRIMARY, false)
+	_inspect_label.custom_minimum_size.x = 250.0
+	box.add_child(_inspect_label)
+	add_child(box)
+	_inspect_panel = box
+
+
+## ★ 被選取那一座的**當下數據**（B3.6）。每幀重算——它講的是這個 tick。
+##
+## 三件事，照玩家問的順序：**這是什麼 → 它現在吃多少電 → 電從哪來。**
+## 前兩件是它自己的欄位，第三件要逆著本 tick 的實際流向走（`FlowNetwork.upstream_power()`）。
+func _refresh_inspect() -> void:
+	if _inspect_panel == null:
+		return
+	var n: Dictionary = s.node_at(_selected) if _selected.x >= 0 else {}
+	if n.is_empty() or Hooks.naked:
+		_inspect_panel.visible = false
+		return
+	var type := String(n["type"])
+	var def := NodeDefs.of(type)
+	var lvl := int(n.get("level", 0))
+	var scale := Build.node_scale(lvl)
+	var lines: Array[String] = []
+	lines.append("%s%s" % [NodeDefs.label(type), "　%d 級" % lvl if lvl > 0 else ""])
+	lines.append("生命　%d / %d" % [int(n["hp"]), int(NodeDefs.hp(type))])
+
+	# ── 它自己的數據（升級之後要顯示**升過的值**，不是表上的原值）──
+	var rng := float(def.get("range", 0.0))
+	if rng > 0.0:
+		lines.append("射程　%.0f 格" % rng)
+	if float(def.get("dmg", 0.0)) > 0.0:
+		lines.append("傷害　%.0f × %.1f 發/秒" % [
+			float(def["dmg"]) * scale * float(s.mods["damage_mult"]), float(def.get("rof", 0.0))
+		])
+	if float(def.get("ore_out", 0.0)) > 0.0:
+		lines.append("產出　%.1f 礦砂/秒" % (float(def["ore_out"]) * scale
+			* float(s.mods["produce_mult"])))
+	if float(def.get("power_out", 0.0)) > 0.0:
+		lines.append("發電　%.0f 能量/秒" % (float(def["power_out"]) * scale
+			* float(s.mods["produce_mult"])))
+
+	# ── 耗能：**帳面**與**當下**分開講 ──
+	# 帳面是「它交戰時會吃多少」，當下是「這個 tick 它真的拿到多少」。
+	# 只講一個的話，玩家看不出「它在挨餓」——而那正是他點開這座塔的原因。
+	var engage := float(def.get("engage_power", 0.0)) * scale * float(s.mods["engage_mult"])
+	var idle := float(def.get("power_in", 0.0)) * scale
+	if engage > 0.0 or idle > 0.0:
+		# ⚠ **預設值不能是 1.0**。沒接進電網的節點根本不在解算器的表上，
+		#   `.get(id, 1.0)` 會把「查無此人」讀成「餵得飽飽的」——
+		#   截圖當場抓到面板自相矛盾：上一行寫「餵得 100%」，下一行寫「供電 沒有」。
+		#   用 −1 當哨兵，把「沒在表上」和「在表上而且滿足率是 1」分開。
+		var sat_raw := float((s.rates["satisfaction"] as Dictionary).get(int(n["id"]), -1.0))
+		var wired: bool = sat_raw >= 0.0
+		var sat: float = sat_raw if wired else 0.0
+		# `.get()` 不是 `.has()`：`_engaged` 是 {id: bool}，沒交戰的塔**鍵也在**，
+		# 值才是 false（第 1008 行那條既有斷言用的就是 get）。
+		var busy: bool = engage > 0.0 and bool(_engaged.get(int(n["id"]), false))
+		var draw := (engage if busy else 0.0) + idle
+		if engage > 0.0:
+			lines.append("交戰耗能　%.1f 能量/秒%s" % [engage, "" if busy else "（待機 0）"])
+		if idle > 0.0:
+			lines.append("待機耗能　%.1f 能量/秒" % idle)
+		if not wired:
+			# 和提示列講同一句話——同一件事在兩個地方要有同一個說法。
+			lines.append("此刻　沒接進電網，交戰時一發都打不出來")
+		else:
+			lines.append("此刻　%.1f 能量/秒　餵得 %d%%" % [draw * sat, int(round(sat * 100.0))])
+
+	# ── ★ 電從哪來 ──
+	var sources: Dictionary = _power_sources()
+	var chain := FlowNetwork.upstream_power(s.conduits, _energy_net(), _selected, sources)
+	var feeders: Dictionary = chain["sources"]
+	if engage > 0.0 or idle > 0.0:
+		# ⚠ 「沒有外部來源」和「在挨餓」**不是同一件事**。回收者靠自己的回收緩衝、
+		#   儲槽靠自己的存量，兩者都會出現「一條線都沒有在餵它，而它餵得飽飽的」。
+		#   第一版一律寫「沒有——這一刻沒有任何電流進來」，於是面板上一行寫
+		#   「餵得 100%」、下一行寫「沒有供電」，讀起來像壞掉了（截圖當場看到）。
+		var self_fed: bool = String(n["type"]) in ["reclaimer", "silo"]
+		var supply_text := "%d 座（已在地圖上標出）" % feeders.size()
+		if feeders.is_empty():
+			supply_text = "沒有外部來源，這一刻靠自己的存量" if self_fed 				else "這一刻沒有電流進來"
+		lines.append("供電　%s" % supply_text)
+	_inspect_label.text = "
+".join(lines)
+	_inspect_panel.visible = true
+	# 貼在右下角上方，避開左欄（建造）與上方（頂欄）。
+	# ⚠ **要讓開右上的能量收支面板**。第一版用 −220 收尾，於是兩個浮層
+	#   在 720p 上直接疊在一起（截圖當場看到）——RG-162 的同一句話：
+	#   浮層的座標是算出來的，不是喬出來的，而算式要把鄰居算進去。
+	var below: float = 56.0
+	if _energy_panel != null and _energy_panel.visible:
+		below = _energy_panel.position.y + _energy_panel.size.y + 12.0
+	_inspect_panel.position = Vector2(
+		float(size.x) - _inspect_panel.size.x - 24.0,
+		clampf(below, 56.0, float(size.y) - _inspect_panel.size.y - 70.0)
+	)
+
+
+## 本 tick 每條導管的**能量**淨流（沿 a→b 為正）。
+func _energy_net() -> Dictionary:
+	var out: Dictionary = {}
+	for c: Dictionary in s.conduits:
+		var v: Vector3 = (s.rates["conduit_net"] as Dictionary).get(c["id"], Vector3.ZERO)
+		out[c["id"]] = v.y
+	return out
+
+
+## 會發電的那些格（發電機、放電中的儲槽、回收者的緩衝）。
+func _power_sources() -> Dictionary:
+	var out: Dictionary = {}
+	for n: Dictionary in s.nodes:
+		var d := NodeDefs.of(String(n["type"]))
+		if float(d.get("power_out", 0.0)) > 0.0 or String(n["type"]) in ["silo", "reclaimer"]:
+			out[n["cell"]] = true
+	return out
 
 
 func _on_codex_show(type: String, from: Button) -> void:

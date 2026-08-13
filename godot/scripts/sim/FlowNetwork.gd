@@ -593,3 +593,51 @@ static func _res(
 	if tw >= 0:
 		used += flow[tw]
 	return e_cap[ei] - used
+
+
+## ★ 誰正在供電給這個節點（B3.6）。**純函式，零副作用。**
+##
+## 從 `start` 逆著本 tick 的實際流向往上游走，回傳沿途經過的節點與導管，
+## 以及其中哪幾個是**來源**（`sources` 裡列的那些，通常是發電機與放電中的儲槽）。
+##
+## ── 為什麼是逆著「實際流向」而不是「有沒有連著」 ────────────────────
+## 一座塔可能連著五條線，而本 tick 真正在餵它的只有兩條——剩下三條是
+## 它的**下游**（電從它那一格再推出去給別人）或根本沒有流量。
+## 「連著」回答不了玩家的問題（「我的電從哪來」），而**流向**回答得了。
+## 這也是為什麼要吃 `net`：那是解算器算出來的結果，不是拓樸的猜測。
+##
+## `net` ＝ `{conduit id: float}`，**沿 a→b 為正**（呼叫端從 `conduit_net` 的
+## 能量分量取出來）。`conduits` 只需要 `id`／`a`／`b` 三個欄位。
+##
+## 走訪有 `seen` 擋著，所以有環的圖不會無限繞——電網本來就允許成環（§7.2 菱形）。
+static func upstream_power(
+	conduits: Array, net: Dictionary, start: Vector2i, sources: Dictionary
+) -> Dictionary:
+	var seen: Dictionary = {start: true}
+	var hit_sources: Dictionary = {}
+	var used_conduits: Dictionary = {}
+	var queue: Array[Vector2i] = [start]
+	while not queue.is_empty():
+		var here: Vector2i = queue.pop_front()
+		for c: Dictionary in conduits:
+			var a: Vector2i = c["a"]
+			var b: Vector2i = c["b"]
+			var f := float(net.get(c["id"], 0.0))
+			# 上游 ＝ 電從那一端流「進」這一格。零流量的線不算（它沒有在餵誰）。
+			var from := Vector2i.ZERO
+			if b == here and f > 0.0:
+				from = a
+			elif a == here and f < 0.0:
+				from = b
+			else:
+				continue
+			used_conduits[c["id"]] = true
+			if seen.has(from):
+				continue
+			seen[from] = true
+			if sources.has(from):
+				hit_sources[from] = true
+				# 來源本身不再往上追：它就是答案，而它上游那條線送的是礦砂。
+				continue
+			queue.append(from)
+	return {"nodes": seen, "conduits": used_conduits, "sources": hit_sources}
