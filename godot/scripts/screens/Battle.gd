@@ -797,11 +797,39 @@ func _click_selftest() -> void:
 		await get_tree().process_frame
 	var node_lvl: bool = int(s.node_at(lvl_cell).get("level", 0)) == 1
 	var node_paid: bool = is_equal_approx(s.ore, ore_before - float(price))
+	# ★ **鈕不得在按下之後跑掉**（B3.9.1，使用者回報「點了升級之後，滑鼠會位移到
+	#   一個很奇怪的位置」）。位移的不是游標是面板——見 `_place_inspect` 那段。
+	var btn_at: Vector2 = _inspect_up.global_position
+	var btn_drift := 0.0
 	# 上限是規則：連按八次也只到 5 級（B3.9；滿級之後那顆鈕自己會關掉）。
 	for _i in 8:
 		_click_button(_inspect_up)
 		await get_tree().process_frame
+		btn_drift = maxf(btn_drift, btn_at.distance_to(_inspect_up.global_position))
 	var node_cap: bool = int(s.node_at(lvl_cell).get("level", 0)) == Build.NODE_MAX_LEVEL
+	# ⚠ 上面那一條只量得到「這一輪的字剛好有沒有變長」——**在舊程式碼下它照樣是
+	#   綠的**（中繼那一格升五級，最長的一行沒變）。所以再直接量**規矩本身**：
+	#   同一個選取餵兩份長短差很多的內容進去，x 與**底邊**必須一樣
+	#   （頂邊本來就該隨內容上下長）。
+	_place_inspect(["短"])
+	await get_tree().process_frame
+	var box_short := Rect2(_inspect_panel.position, _inspect_panel.size)
+	var long_lines: Array[String] = []
+	for _i in 12:
+		long_lines.append("這一行刻意寫得很長很長很長很長很長很長很長很長很長很長")
+	_place_inspect(long_lines)
+	await get_tree().process_frame
+	var box_long := Rect2(_inspect_panel.position, _inspect_panel.size)
+	var pos_stable: bool = (
+		absf(box_short.position.x - box_long.position.x) < 0.5
+		and absf(box_short.end.y - box_long.end.y) < 0.5
+	)
+	# ⚠ 量完要**把尺寸也收掉**，不只是內容：面板是直接掛在畫面上的自由 Control，
+	#   而 Godot 只讓這種 Control 長到最小尺寸、**不會自己縮回去**。留著那 12 行
+	#   撐出來的 552px 高度，後面那條中鍵平移就拖不動了（當場紅了一次）。
+	_inspect_panel.size = Vector2.ZERO
+	_refresh_inspect()
+	var btn_still: bool = btn_drift < 0.5 and pos_stable
 	# 收起來，交給下一段從零開始驗「點一下就開」。
 	_click(lvl_cell)
 	for _i in 3:
@@ -1402,7 +1430,7 @@ func _click_selftest() -> void:
 		and sel_open and sel_says and sel_inside and sel_toggles and sel_clear
 		and wire_sel and wire_toggle and wire_fits and wire_up and wire_del
 		and node_btn_up and node_btn_del and core_verbs
-		and armed and disarmed and idle_click and rearmed and step_says
+		and armed and disarmed and idle_click and rearmed and step_says and btn_still
 		and bp_saved and bp_has_nodes and bp_expanded and bp_short and bp_fits
 	)
 	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s bar_hint=%s(底欄右緣 %.0f／提示 x %.0f) hint_in=%s node_lv=%s(付款 %s／上限 %s) 檢視=%s(說得出是誰 %s／在畫面內 %s／再點收起 %s／不疊能量面板 %s) → %s" % [
@@ -1412,9 +1440,9 @@ func _click_selftest() -> void:
 		node_lvl, node_paid, node_cap, sel_open, sel_says, sel_inside, sel_toggles, sel_clear,
 		"PASS" if ok else "FAIL"
 	])
-	print("[TL_CLICKTEST/select] 導管選取=%s 再點收起=%s 版面=%s 面板加粗=%s(付款一併驗) 面板拆除=%s(退款一併驗) 建築升級鈕=%s 建築拆除鈕=%s 核心兩顆鈕都收起=%s｜建造鈕開關：選=%s 取消=%s 空手點空地無事發生=%s 選回來=%s｜升級鈕說得出這一級買什麼=%s" % [
+	print("[TL_CLICKTEST/select] 導管選取=%s 再點收起=%s 版面=%s 面板加粗=%s(付款一併驗) 面板拆除=%s(退款一併驗) 建築升級鈕=%s 建築拆除鈕=%s 核心兩顆鈕都收起=%s｜建造鈕開關：選=%s 取消=%s 空手點空地無事發生=%s 選回來=%s｜升級鈕說得出這一級買什麼=%s｜升級後鈕不位移=%s" % [
 		wire_sel, wire_toggle, wire_fits, wire_up, wire_del, node_btn_up, node_btn_del, core_verbs,
-		armed, disarmed, idle_click, rearmed, step_says,
+		armed, disarmed, idle_click, rearmed, step_says, btn_still,
 	])
 	print("[TL_CLICKTEST/audio] prep_music=%s wave_hush=%s wave_sting=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s knell_field=%s" % [
 		music_ok, wave_hush, wave_sting, voice_ok, AudioBus.muted, tower_built, over_cleared,
@@ -4226,6 +4254,12 @@ func _watchdog() -> void:
 ## ⚠ `UiKit.panel()` 是 `MOUSE_FILTER_IGNORE`（RG-39：浮層是資訊不是障礙物），
 ##   但那只管容器自己——Godot 的命中測試照樣會走進子節點，所以鈕收得到點擊，
 ##   而鈕以外的地方仍然穿透到底下的地圖。
+## 檢視面板的固定寬高（B3.9.1）。**位置只能是離散狀態的函式**——見 `_place_inspect`。
+## `INSPECT_MAX_H` 是它最高的樣子（導管面板量到 342），只拿來判避讓。
+const INSPECT_W := 383.0
+const INSPECT_MAX_H := 360.0
+
+
 func _build_inspect_panel() -> void:
 	# ★ B3.7 起用標準不透明度（0.96），不再是角色簡介那種半透明。
 	# 半透明的理由是「讓玩家看見底下是什麼」，而這個面板底下不是它要講的東西
@@ -4234,10 +4268,18 @@ func _build_inspect_panel() -> void:
 	var box := UiKit.panel()
 	box.visible = false
 	var col := UiKit.vbox(8)
+	# ⚠ **內層容器要一起穿透**。`UiKit.panel()` 自己是 `MOUSE_FILTER_IGNORE`
+	#   （RG-39：浮層是資訊不是障礙物），但 `Container` 預設是 `STOP`——面板底下
+	#   那一塊地圖於是點不到也拖不動。B3.9.1 把面板挪到畫面中段之後這件事才要緊。
+	#   兩顆鈕仍是 `STOP`（它們就是要點的東西）。
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_inspect_label = UiKit.label("", 13, Palette.TEXT_PRIMARY, false)
-	_inspect_label.custom_minimum_size.x = 250.0
+	# ★ 356 ＝ 量到的最長一行。**不開 autowrap**：這些行是設計成單行的，折行會讓
+	#   面板從 258 長到 552，一個蓋住半張地圖的浮層比它要修的位移更糟。
+	_inspect_label.custom_minimum_size.x = 356.0
 	col.add_child(_inspect_label)
 	var row := UiKit.hbox(8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_inspect_up = Button.new()
 	_inspect_up.pressed.connect(_on_inspect_upgrade)
 	_inspect_del = Button.new()
@@ -4478,36 +4520,37 @@ func _place_inspect(lines: Array[String]) -> void:
 	_inspect_label.text = "
 ".join(lines)
 	_inspect_panel.visible = true
-	# 貼在右下角上方，避開左欄（建造）與上方（頂欄）。
-	# ⚠ **要讓開右上的能量收支面板**。第一版用 −220 收尾，於是兩個浮層
-	#   在 720p 上直接疊在一起（截圖當場看到）——RG-162 的同一句話：
-	#   浮層的座標是算出來的，不是喬出來的，而算式要把鄰居算進去。
-	var below: float = 56.0
-	if _energy_panel != null and _energy_panel.visible:
-		below = _energy_panel.position.y + _energy_panel.size.y + 12.0
-	var pos := Vector2(
-		float(size.x) - _inspect_panel.size.x - 24.0,
-		clampf(below, 56.0, float(size.y) - _inspect_panel.size.y - 70.0)
-	)
-	# ⚠ **小地圖也住在這個角落**（右下）。B3.6 只讓開了能量面板，而多了兩顆鈕之後
-	#   面板長高，在無盡的大圖上會壓到小地圖——RG-162 的第三次。
+	# ── ★ 座標只能是**離散狀態**的函式（B3.9.1，使用者回報「點了升級之後，滑鼠會
+	#      位移到一個很奇怪的位置」）───────────────────────────────────────
 	#
-	#   讓位要**往左挪，不能往上擠**：能量面板自己就有 358 高，右緣從 y 96 排到 454，
-	#   小地圖從 525 起——中間只剩 71px，塞不下一個 174px 高的面板。第一版把上限
-	#   夾在小地圖上緣，結果是面板被推回去壓在能量面板身上（量出來 339–513 對
-	#   96–454）——**那只是把一個重疊換成另一個重疊**。
-	# ★ 讓開能量面板也**只能往左挪**（B3.9 補；`版面=false` 在 B3.8 就是紅的）。
-	#   上面那個 `clampf` 的上限是「面板底部不出畫面」，而導管面板有 258 高——
-	#   720p 上算出來的 466 被夾回 392，於是它**被推回去疊在能量面板身上**
-	#   （量到 392–650 對 96–454）。RG-162 的同一句話第四次：夾一個座標不等於
-	#   讓開一個鄰居，鄰居要當成矩形算。
+	#   位移的不是游標，是面板。它的位置本來同時是**內容**的函式：靠右對齊用的是
+	#   實際寬度（字一長就往左滑，量到 277 → 383），避讓鄰居判的是實際高度
+	#   （多一行就從右緣彈到 x=477）。於是升一級＝兩顆鈕跑掉，而停在原地的游標
+	#   落到地圖上，或落到「拆除」上。
+	#
+	#   兩條規矩：
+	#   ① **寬高一律用常數**（`INSPECT_W`／`INSPECT_MAX_H`）算位置與避讓，實際尺寸
+	#      只拿來對齊底邊。位置因此只由「鄰居開著沒」決定——那是玩家自己按的開關，
+	#      不是每 tick 都在變的數字。
+	#   ② **底邊釘住**。兩顆動詞鈕在面板底列，底邊不動＝鈕不動；內容變多時往上長。
+	#      頂邊釘住的話，多一行字就把鈕往下推。
+	var bottom := FRAME.end.y - 12.0
+	var pos := Vector2(float(size.x) - INSPECT_W - 24.0, bottom - _inspect_panel.size.y)
+	var probe := Rect2(Vector2(pos.x, bottom - INSPECT_MAX_H), Vector2(INSPECT_W, INSPECT_MAX_H))
+	# ⚠ **右下角住著三個東西**：能量收支面板（右上）、小地圖（右下）、和它自己。
+	#   讓位一律**往左挪，不能往上擠**：能量面板自己就有 358 高，右緣從 y 96 排到
+	#   454，小地圖從 525 起——中間只剩 71px，塞不下一個 174px 高的面板。
+	#   B3.7 把上限夾在小地圖上緣，結果是面板被推回去壓在能量面板身上
+	#   （量到 392–650 對 96–454）——**那只是把一個重疊換成另一個重疊**
+	#   （`版面=false` 從 B3.8 就紅著）。
 	if _energy_panel != null and _energy_panel.visible:
 		var energy := Rect2(_energy_panel.position, _energy_panel.size)
-		if Rect2(pos, _inspect_panel.size).intersects(energy):
-			pos.x = maxf(FRAME.position.x + 12.0, energy.position.x - _inspect_panel.size.x - 12.0)
+		if probe.intersects(energy):
+			pos.x = maxf(FRAME.position.x + 12.0, energy.position.x - INSPECT_W - 12.0)
+			probe.position.x = pos.x
 	var mini := _minimap_rect()
-	if Rect2(pos, _inspect_panel.size).intersects(mini):
-		pos.x = maxf(FRAME.position.x + 12.0, mini.position.x - _inspect_panel.size.x - 12.0)
+	if probe.intersects(mini):
+		pos.x = maxf(FRAME.position.x + 12.0, mini.position.x - INSPECT_W - 12.0)
 	_inspect_panel.position = pos
 
 
