@@ -559,6 +559,103 @@ func _in_battle_node_upgrade(t: RefCounted) -> void:
 		"★★ 3 級塔的**耗能**也 ×1.75——升級買的是集中，不是效率", 0.01
 	)
 
+	# ── ★★ 使用者實玩回報：「潮鳴跟霜礁升級都沒用」（B3.8）────────────────
+	#
+	#    兩隻的 `dmg` 與 `rof` 都是 0——它們**整個效果**都在 `slow` 與
+	#    `armor_break` 上，而 B3.5 只把級數乘進了 `dmg`／`ore_out`／`power_out`。
+	#    於是升級對它們的唯一作用是**多吃 25% 的電**：嚴格更差的一筆消費。
+	#
+	#    `auras()` 是純函式，所以這裡直接餵它一個節點陣列，不必跑一整局。
+	#    ⚠ 用**兩個級數的同一隻塔**比，不比絕對值——比絕對值的話，日後動一次
+	#      資料表就會變成假紅，而壞掉的是斷言不是功能。
+	for aura_type: String in ["knell", "frostreef"]:
+		var cell := Vector2i(10, 10)
+		var probe: Array = [Vector2i(10, 11)]     # 貼著它，兩種射程都罩得到
+		var lo: Array[Vector2] = Combat.auras(
+			[{"id": 1, "type": aura_type, "cell": cell, "level": 0}], probe, {}
+		)
+		var hi: Array[Vector2] = Combat.auras(
+			[{"id": 1, "type": aura_type, "cell": cell, "level": 3}], probe, {}
+		)
+		var base_def := NodeDefs.of(aura_type)
+		# 減速與破甲**至少有一項要真的變強**（霜礁沒有破甲，只有減速）。
+		t.ok(
+			hi[0].x > lo[0].x or hi[0].y > lo[0].y,
+			"★★ %s 升到 3 級之後光環真的更強（使用者回報「升級都沒用」）"
+			% NodeDefs.label(aura_type)
+		)
+		# 而且**耗能確實有漲**——沒有這一句，一個「效果不變、耗能也不變」的
+		# 實作也能讓上面那條變綠（只要它的 `power` 級數夠多）。
+		t.ok(
+			Build.node_scale(3) > Build.node_scale(0),
+			"（對照）%s 的耗能本來就在漲——所以效果不漲＝嚴格更差" % NodeDefs.label(aura_type)
+		)
+		if float(base_def.get("slow", 0.0)) > 0.0:
+			t.ok(
+				hi[0].x <= Combat.SLOW_MAX + 0.001,
+				"★ 減速夾在上限內——**敵人永不停步**是鎖定設計，1.0 就是釘住"
+			)
+
+	# ── ★ 每一級加的不是同一樣東西（§4.3，B3.8，使用者指定）────────────
+	#
+	#    「應該是要每次升級有不同效果，這樣多元化的效果才會好玩。」
+	#    三級走完是一隻**質變過**的塔，不是同一隻塔的 1.75 倍。
+	t.ok(
+		Build.node_range("anchor", 3) > Build.node_range("anchor", 0),
+		"★★ 升級會加射程（錨的第 3 級）——使用者指出這個機制原本不存在"
+	)
+	t.eq(
+		Build.node_range("anchor", 0), float(NodeDefs.of("anchor")["range"]),
+		"0 級＝表上的原值"
+	)
+	t.ok(
+		Build.rof_scale("anchor", 2) > Build.rof_scale("anchor", 1),
+		"★ 錨的第 2 級加的是射速"
+	)
+	t.eq(
+		Build.rof_scale("anchor", 1), 1.0,
+		"★ 而第 1 級**不**加射速——三級各不相同，不是每級都全加"
+	)
+	t.ok(
+		Build.splash_radius("breaker", 2) > Build.splash_radius("breaker", 0),
+		"★ 碎浪的第 2 級加濺射半徑（它賣的就是這個）"
+	)
+	t.eq(
+		Build.splash_radius("anchor", 3), 0.0,
+		"★ 沒有濺射的塔升到滿級也長不出濺射"
+	)
+	t.ok(
+		Build.node_range("frostreef", 1) > Build.node_range("frostreef", 0),
+		"★ 霜礁的短板是射程 3，所以它第一級就補射程"
+	)
+	# ★ 每一隻塔的三級**必須都寫了**，而且只用得上那四個詞。
+	#   漏寫一隻的症狀是「它安靜地退回三個 power」——那正是 B3.8 要修掉的東西，
+	#   而它不會報錯（`10_GDD.md` §4.3；B2.4 的 `_no_glyph` 是同一個錯法）。
+	var vocab := [Build.STEP_POWER, Build.STEP_RANGE, Build.STEP_ROF, Build.STEP_SPLASH]
+	var no_steps := PackedStringArray()
+	var bad_steps := PackedStringArray()
+	for type: String in NodeDefs.BUILDABLE:
+		var d := NodeDefs.of(type)
+		if not d.get("tower", false):
+			continue
+		var steps: Array = d.get("steps", [])
+		if steps.size() != Build.NODE_MAX_LEVEL:
+			no_steps.append(type)
+			continue
+		for st: Variant in steps:
+			if not vocab.has(String(st)):
+				bad_steps.append("%s:%s" % [type, st])
+	t.eq(
+		String(",".join(no_steps)), "",
+		"★★ 每一隻塔都要寫滿三級的 `steps`（漏寫會安靜地退回三個 power）"
+	)
+	t.eq(String(",".join(bad_steps)), "", "★ `steps` 只能用那四個詞（打錯字＝那一級無效）")
+	# 而生產節點**刻意沒有** `steps`：它們沒有第二個維度，退回三個 power 是對的。
+	t.eq(
+		Build.effect_scale("extractor", 3), Build.node_scale(3),
+		"★ 沒寫 `steps` 的節點＝三個 power ＝ B3.5 的原行為，一個數字都不變"
+	)
+
 	# ── 核心升不得 ──
 	t.eq(
 		BuildController.upgrade_node(s, s.core()["cell"]), Build.OCCUPIED,

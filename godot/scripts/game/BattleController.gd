@@ -250,8 +250,13 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 	damage.fill(0.0)
 
 	for n: Dictionary in s.nodes:
-		var def := NodeDefs.of(String(n["type"]))
-		var rof := float(def.get("rof", 0.0))
+		var type := String(n["type"])
+		var def := NodeDefs.of(type)
+		var lv := int(n.get("level", 0))
+		# ★ B3.8：射速吃 `rof` 那一級（`10_GDD.md` §4.3）。三級各不相同，
+		#   所以每一項各問各的——統一乘一個 `node_scale` 正是 B3.5 的做法，
+		#   而那讓效果全在光環上的潮鳴與霜礁升級完全沒有作用。
+		var rof := float(def.get("rof", 0.0)) * Build.rof_scale(type, lv)
 		if not def.get("tower", false) or rof <= 0.0:
 			continue
 		var busy: bool = engaged.get(int(n["id"]), false)
@@ -263,7 +268,7 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 		if count <= 0:
 			continue
 
-		var r := float(def.get("range", 0.0))
+		var r := Build.node_range(type, lv)
 		var targets: Array[int] = []
 		# 濺射的**圓心**（純渲染）。`-1` ＝ 這一發不濺射。
 		var splash_at := Vector2i(-1, -1)
@@ -276,7 +281,7 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 				#   格**為圓心往外找。不寫新幾何——「這個圓內有誰」就是射程判定本身。
 				# 寫成 if/else 而不是三元式：`[t]` 在三元式裡是 untyped `Array`，
 				# 指派給 `Array[int]` 會在**執行期**丟型別錯誤（塔從此一發不發）。
-				var splash := float(def.get("splash", 0.0))
+				var splash := Build.splash_radius(type, lv)
 				if splash > 0.0:
 					targets = Combat.in_range_indices(cells[t], cells, splash)
 					splash_at = cells[t]
@@ -287,10 +292,9 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 			# 科技「校準」（§7.8）乘在**原始傷害**上，在減傷／破甲之前——
 			# 乘在最後結果上會讓它對高護甲敵人的效益憑空變小，而玩家買的是
 			# 「塔傷害 +6%」，不是「對軟目標 +6%」。
-			# ★ 局內臨時升級（§4.3）：效果與耗能同步 ×1.25/級。
-			var lvl := Build.node_scale(int(n.get("level", 0)))
+			# ★ 局內臨時升級（§4.3）：**耗能一律 ×1.25/級，效果只長被指定的那一項**。
 			var raw := (float(def.get("dmg", 0.0)) * float(count)
-				* float(s.mods["damage_mult"]) * lvl)
+				* float(s.mods["damage_mult"]) * Build.effect_scale(type, lv))
 			var dealt := Combat.hit_damage(
 				raw, String(def.get("dmg_type", "physical")), edef, aura[i].y
 			)
@@ -385,9 +389,14 @@ static func _on_kill(s: RefCounted, value: float, at: Vector2i) -> void:
 		var def := NodeDefs.of(String(n["type"]))
 		if not def.has("reclaim"):
 			continue
-		if not Combat.in_range(n["cell"], at, float(def.get("range", 0.0))):
+		var rtype := String(n["type"])
+		var rlv := int(n.get("level", 0))
+		if not Combat.in_range(n["cell"], at, Build.node_range(rtype, rlv)):
 			continue
-		var gain := Combat.reclaim_power(value, float(def["reclaim"]))
+		# 回收率是回收者的**主效果**，所以它跟著 `power` 那一級長（B3.8）。
+		var gain := Combat.reclaim_power(
+			value, float(def["reclaim"]) * Build.effect_scale(rtype, rlv)
+		)
 		var before := float(n["buffer"])
 		n["buffer"] = minf(before + gain, float(def.get("reclaim_buffer", 0.0)))
 		# 累計只記**真的進得了緩衝**的部分：溢流掉的電從來沒進過電網，
@@ -434,9 +443,12 @@ static func _solve_ore(s: RefCounted, edges: Array, topo: Dictionary = {}) -> Di
 		#   每秒多挖 1」，等級是「我的整條生產線都好 8%」——後者該把前者也含進去。
 		# ★ 局內臨時升級（§4.3）乘在**最外層**：它是「這一座建築整體變強」，
 		#   科技與等級軸都該被它含進去。產出與需求同乘——熔爐升級之後吃得也更多。
+		# ★ B3.8：產出走 `effect_scale`、需求走 `node_scale`。生產節點沒有 `steps`
+		#   → 三級都是 `power` → 兩者恆等，數字和 B3.5 一模一樣。
 		var lvl := Build.node_scale(int(n.get("level", 0)))
+		var eff := Build.effect_scale(String(n["type"]), int(n.get("level", 0)))
 		var supply := ((float(def.get("ore_out", 0.0)) + out_bonus)
-			* float(s.mods["produce_mult"]) * TICK * lvl)
+			* float(s.mods["produce_mult"]) * TICK * eff)
 		var demand := float(def.get("ore_in", 0.0)) * TICK * lvl
 		supply_total += supply
 		demand_total += demand
@@ -474,7 +486,8 @@ static func _solve_alloy(
 		#   比玩家從畫面上讀到的兩條線任何一條都糟，因果就斷了。
 		var k := minf(float(ore_sat.get(n["id"], 1.0)), float(power_sat.get(n["id"], 1.0)))
 		var lvl := Build.node_scale(int(n.get("level", 0)))
-		var supply := float(def.get("alloy_out", 0.0)) * float(s.mods["produce_mult"]) * TICK * k * lvl
+		var eff := Build.effect_scale(String(n["type"]), int(n.get("level", 0)))
+		var supply := float(def.get("alloy_out", 0.0)) * float(s.mods["produce_mult"]) * TICK * k * eff
 		var demand := float(def.get("alloy_in", 0.0)) * TICK * lvl
 		supply_total += supply
 		demand_total += demand
@@ -502,8 +515,9 @@ static func _solve_power(
 		var def := NodeDefs.of(type)
 		# 發電機的產出 × 它自己的礦砂滿足率（按比例降速，不停機）。
 		var lvl := Build.node_scale(int(n.get("level", 0)))
+		var eff := Build.effect_scale(type, int(n.get("level", 0)))
 		var supply := (float(def.get("power_out", 0.0)) * float(s.mods["produce_mult"])
-			* TICK * float(sat.get(n["id"], 1.0)) * lvl)
+			* TICK * float(sat.get(n["id"], 1.0)) * eff)
 		var demand := float(def.get("power_in", 0.0)) * TICK * lvl
 		# ★ 交戰耗能：**射程內有敵人才扣，待機 0**（§7.4）。全案的心臟就在這一行。
 		if engaged.get(int(n["id"]), false):

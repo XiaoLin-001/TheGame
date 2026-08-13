@@ -948,6 +948,38 @@ func _click_selftest() -> void:
 	for _i in 3:
 		await get_tree().process_frame
 
+	# ★ B3.8：**升級鈕要說出這一級買到的是什麼**（使用者：「每次升級有不同效果」）。
+	#   規則本身由 `combat_test` 的階梯斷言顧；這裡驗的是**它有沒有走到鈕上**。
+	#   用錨——它的三級是 出力 → 射速 → 射程，所以連按兩次鈕上的字必須換過。
+	#   一個把鈕文字寫死成「升級」的實作在別處全綠，只有這一條抓得到。
+	var step_cell := Vector2i(9, 9)
+	for r2 in 10:
+		var cand2 := Vector2i(9 + r2, 9)
+		if _in_map(cand2) and String(
+			BuildController.preview_place(s, "anchor", cand2)["reason"]
+		) == Build.OK:
+			step_cell = cand2
+			break
+	_press(_build_buttons["anchor"])
+	s.ore += 500.0
+	_click(step_cell)
+	for _i in 3:
+		await get_tree().process_frame
+	_click(step_cell)          # 蓋完再點一下＝選取它
+	for _i in 3:
+		await get_tree().process_frame
+	var step_lv0: String = _inspect_up.text
+	_click_button(_inspect_up)
+	for _i in 3:
+		await get_tree().process_frame
+	var step_lv1: String = _inspect_up.text
+	var step_says: bool = (
+		not s.node_at(step_cell).is_empty()
+		and step_lv0.contains(_step_text(Build.STEP_POWER))
+		and step_lv1.contains(_step_text(Build.STEP_ROF))
+		and step_lv0 != step_lv1
+	)
+
 	# ★ 中鍵平移（B1.3.1）：「移動」模式鈕拿掉之後，**這是唯一的平移路徑**。
 	#   先放大（fit 倍率下平移恆被夾成 0，量不到東西）。
 	_on_zoom(ZOOM_STEP * ZOOM_STEP)
@@ -1362,7 +1394,7 @@ func _click_selftest() -> void:
 		and sel_open and sel_says and sel_inside and sel_toggles and sel_clear
 		and wire_sel and wire_toggle and wire_fits and wire_up and wire_del
 		and node_btn_up and node_btn_del and core_verbs
-		and armed and disarmed and idle_click and rearmed
+		and armed and disarmed and idle_click and rearmed and step_says
 		and bp_saved and bp_has_nodes and bp_expanded and bp_short and bp_fits
 	)
 	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s bar_hint=%s(底欄右緣 %.0f／提示 x %.0f) hint_in=%s node_lv=%s(付款 %s／上限 %s) 檢視=%s(說得出是誰 %s／在畫面內 %s／再點收起 %s／不疊能量面板 %s) → %s" % [
@@ -1372,9 +1404,9 @@ func _click_selftest() -> void:
 		node_lvl, node_paid, node_cap, sel_open, sel_says, sel_inside, sel_toggles, sel_clear,
 		"PASS" if ok else "FAIL"
 	])
-	print("[TL_CLICKTEST/select] 導管選取=%s 再點收起=%s 版面=%s 面板加粗=%s(付款一併驗) 面板拆除=%s(退款一併驗) 建築升級鈕=%s 建築拆除鈕=%s 核心兩顆鈕都收起=%s｜建造鈕開關：選=%s 取消=%s 空手點空地無事發生=%s 選回來=%s" % [
+	print("[TL_CLICKTEST/select] 導管選取=%s 再點收起=%s 版面=%s 面板加粗=%s(付款一併驗) 面板拆除=%s(退款一併驗) 建築升級鈕=%s 建築拆除鈕=%s 核心兩顆鈕都收起=%s｜建造鈕開關：選=%s 取消=%s 空手點空地無事發生=%s 選回來=%s｜升級鈕說得出這一級買什麼=%s" % [
 		wire_sel, wire_toggle, wire_fits, wire_up, wire_del, node_btn_up, node_btn_del, core_verbs,
-		armed, disarmed, idle_click, rearmed,
+		armed, disarmed, idle_click, rearmed, step_says,
 	])
 	print("[TL_CLICKTEST/audio] prep_music=%s wave_hush=%s wave_sting=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s knell_field=%s" % [
 		music_ok, wave_hush, wave_sting, voice_ok, AudioBus.muted, tower_built, over_cleared,
@@ -3437,7 +3469,9 @@ func _draw_selection() -> void:
 	var g := Vector2(Shapes.GRID, Shapes.GRID)
 	draw_rect(Rect2(_world(_selected), g), Palette.ORDER_BRIGHT, false, 2.0)
 
-	var rng := float(NodeDefs.of(String(n["type"])).get("range", 0.0))
+	# ★ B3.8：圈要畫**升過的射程**。讀表上的原值會讓玩家看到一個和實際打得到
+	#   的範圍不一樣的圈——而擺位正是他用這個圈在做的決定。
+	var rng := Build.node_range(String(n["type"]), int(n.get("level", 0)))
 	if rng > 0.0:
 		# 半透明填色 ＋ 實線邊：只有邊的話，兩座塔的射程圈交疊時看不出誰罩到哪。
 		draw_circle(c, rng * Shapes.GRID, Palette.alpha(Palette.ORDER_CYAN, 0.07))
@@ -4248,18 +4282,36 @@ func _refresh_inspect() -> void:
 	lines.append("生命　%d / %d" % [int(n["hp"]), int(NodeDefs.hp(type))])
 
 	# ── 它自己的數據（升級之後要顯示**升過的值**，不是表上的原值）──
-	var rng := float(def.get("range", 0.0))
+	# ★ B3.8：升的是哪一項各問各的（`10_GDD.md` §4.3）。這裡**不能用 `scale`**
+	#   ——那是耗能倍率；一座第 2 級加射速的錨，傷害還停在 1 級的值。
+	var eff := Build.effect_scale(type, lvl)
+	var rng := Build.node_range(type, lvl)
 	if rng > 0.0:
 		lines.append("射程　%.0f 格" % rng)
 	if float(def.get("dmg", 0.0)) > 0.0:
 		lines.append("傷害　%.0f × %.1f 發/秒" % [
-			float(def["dmg"]) * scale * float(s.mods["damage_mult"]), float(def.get("rof", 0.0))
+			float(def["dmg"]) * eff * float(s.mods["damage_mult"]),
+			float(def.get("rof", 0.0)) * Build.rof_scale(type, lvl),
 		])
+	if float(def.get("slow", 0.0)) > 0.0:
+		# 光環塔的**全部效果**都在這一行。B3.5 起它一直沒有被級數乘過，而面板
+		# 也從來沒有印出來——使用者實玩才發現「潮鳴跟霜礁升級都沒用」（B3.8）。
+		lines.append("減速　%d%%%s" % [
+			int(round(minf(float(def["slow"]) * eff, Combat.SLOW_MAX) * 100.0)),
+			"　破甲 %d%%" % int(round(float(def["armor_break"]) * eff * 100.0))
+				if float(def.get("armor_break", 0.0)) > 0.0 else "",
+		])
+	if Build.splash_radius(type, lvl) > 0.0:
+		lines.append("濺射　%.1f 格" % Build.splash_radius(type, lvl))
+	if float(def.get("reclaim", 0.0)) > 0.0:
+		lines.append("回收　射程內任何死亡的 %d%% 換能量" % int(round(
+			float(def["reclaim"]) * eff * 100.0
+		)))
 	if float(def.get("ore_out", 0.0)) > 0.0:
-		lines.append("產出　%.1f 礦砂/秒" % (float(def["ore_out"]) * scale
+		lines.append("產出　%.1f 礦砂/秒" % (float(def["ore_out"]) * eff
 			* float(s.mods["produce_mult"])))
 	if float(def.get("power_out", 0.0)) > 0.0:
-		lines.append("發電　%.0f 能量/秒" % (float(def["power_out"]) * scale
+		lines.append("發電　%.0f 能量/秒" % (float(def["power_out"]) * eff
 			* float(s.mods["produce_mult"])))
 
 	# ── 耗能：**帳面**與**當下**分開講 ──
@@ -4310,9 +4362,12 @@ func _refresh_inspect() -> void:
 	if type == "core":
 		_show_verbs("", "")
 	else:
-		var up := "已滿級" if lvl >= Build.NODE_MAX_LEVEL else "升級　%d 礦砂" % (
-			Build.node_upgrade_cost(NodeDefs.cost(type), lvl)
-		)
+		# ★ B3.8：鈕上寫**這一級買到的是什麼**。三級各不相同，而玩家在按下去
+		#   之前必須知道自己買的是射程還是射速——否則「多元化」對他等於隨機。
+		var up := "已滿級" if lvl >= Build.NODE_MAX_LEVEL else "升級　%s　%d 礦砂" % [
+			_step_text(Build.next_step(type, lvl)),
+			Build.node_upgrade_cost(NodeDefs.cost(type), lvl),
+		]
 		var refund := BuildController.node_refund(type)
 		_show_verbs(up, "拆除　退 %d 礦砂" % refund.x, lvl < Build.NODE_MAX_LEVEL)
 	_place_inspect(lines)
@@ -4423,6 +4478,17 @@ func _on_codex_hide() -> void:
 
 ## 一種節點的簡介。**先講它在取捨裡的位置，再列數字**——
 ## 一串沒有脈絡的數值幫不了正在決定「這一分鐘要蓋什麼」的人。
+## 升級階梯的一個台階講成人話（B3.8）。**四個詞的唯一翻譯處**——
+## 圖鑑與檢視面板讀同一支，兩邊各寫一份的話遲早有一邊沒跟上資料表。
+func _step_text(step: String) -> String:
+	return {
+		Build.STEP_POWER: "出力 +%d%%" % int(Build.NODE_STEP * 100.0),
+		Build.STEP_RANGE: "射程 +1 格",
+		Build.STEP_ROF: "射速 +%d%%" % int(Build.NODE_STEP * 100.0),
+		Build.STEP_SPLASH: "濺射 +1 格",
+	}.get(step, step)
+
+
 func _codex_lines(type: String) -> Array[String]:
 	var def := NodeDefs.of(type)
 	var out: Array[String] = [BuildController.price_text(type)]
@@ -4464,6 +4530,13 @@ func _codex_lines(type: String) -> Array[String]:
 			"　濺射 %.1f 格" % float(def["splash"]) if def.has("splash") else ""
 		])
 	out.append("生命　%.0f　※ 退開敵人路徑 2 格就打不到" % NodeDefs.hp(type))
+	# ★ B3.8：把三級的階梯寫在**花錢之前**看得到的地方（§4.3）。
+	#   「每一級加的不是同一樣東西」如果只有升級當下才看得到，玩家在擺位時
+	#   就沒有辦法把它算進去——而擺位是本作的主要決策。
+	var ladder := PackedStringArray()
+	for lv in Build.NODE_MAX_LEVEL:
+		ladder.append("%d 級 %s" % [lv + 1, _step_text(Build.next_step(type, lv))])
+	out.append("升級　" + "　→　".join(ladder))
 	return out
 
 

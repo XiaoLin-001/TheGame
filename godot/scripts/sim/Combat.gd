@@ -14,6 +14,7 @@ extends RefCounted
 
 const Tide := preload("res://scripts/sim/Tide.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
+const Build := preload("res://scripts/sim/Build.gd")
 
 const Clock := preload("res://scripts/sim/Clock.gd")
 ## 固定時間步。**值的唯一來源是 `sim/Clock.gd`**（B1.9）——這裡只是別名，
@@ -28,6 +29,12 @@ const EPS := 0.0001
 
 ## 稜鏡可用的四條軸線，**固定順序＝平手時的裁決順序**（水平→垂直→↘→↗）。
 const AXES := [Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1), Vector2i(1, -1)]
+
+## ★ 減速的硬上限（B3.8）。**敵人永不停步**是鎖定設計（walk-by，`10_GDD.md` §3.5）
+## ——1.0 的減速就是停下來，而升級開始乘光環強度之後，那個乘積不再是設計時
+## 看得到的一個數字。夾在這裡而不是在資料表上：資料表管的是「這隻多強」，
+## 這條管的是「再強也不准把敵人釘住」。
+const SLOW_MAX := 0.85
 
 
 # ── 幾何 ──────────────────────────────────────────────────────────────
@@ -63,7 +70,12 @@ static func engaged(nodes: Array, cells: Array) -> Dictionary:
 		var def := NodeDefs.of(String(n["type"]))
 		if not def.get("tower", false):
 			continue
-		out[int(n["id"])] = not in_range_indices(n["cell"], cells, float(def["range"])).is_empty()
+		# ★ 射程讀 `Build.node_range()`，**不是表上的原值**（B3.8）：有些塔的
+		# 升級加的就是射程，而交戰判定是「這一刻付不付交戰電費」——
+		# 讀原值的話，一座升過射程的塔會打到它自己不用付電費的敵人。
+		out[int(n["id"])] = not in_range_indices(
+			n["cell"], cells, Build.node_range(String(n["type"]), int(n.get("level", 0)))
+		).is_empty()
 	return out
 
 
@@ -114,10 +126,20 @@ static func auras(nodes: Array, cells: Array, satisfaction: Dictionary) -> Array
 		if not def.has("slow"):
 			continue
 		var k := clampf(float(satisfaction.get(int(n["id"]), 1.0)), 0.0, 1.0)
-		for i: int in in_range_indices(n["cell"], cells, float(def.get("range", 0.0))):
+		# ★ B3.8：光環的**強度與範圍都吃級數**。使用者實玩回報「潮鳴跟霜礁升級
+		#   都沒用」——這兩隻的 `dmg` 與 `rof` 都是 0，效果全在下面這兩欄上，
+		#   而在此之前只有 `dmg` 被級數乘過。升級只讓它們多吃 25% 的電。
+		var type := String(n["type"])
+		var lvl := int(n.get("level", 0))
+		var g := Build.effect_scale(type, lvl) * k
+		for i: int in in_range_indices(n["cell"], cells, Build.node_range(type, lvl)):
 			out[i] = Vector2(
-				maxf(out[i].x, float(def["slow"]) * k),
-				maxf(out[i].y, float(def.get("armor_break", 0.0)) * k)
+				# ⚠ 減速夾在 `SLOW_MAX`：**敵人永不停步**是鎖定設計（walk-by），
+				#   而 1.0 的減速就是停下來，超過 1.0 是倒著走。現行最強的組合
+				#   （霜礁 0.65 ＋ 一個 power 級）是 0.81，這條夾子不會咬到它——
+				#   它守的是日後新增光環塔時沒有人記得算這個乘積。
+				maxf(out[i].x, minf(float(def["slow"]) * g, SLOW_MAX)),
+				maxf(out[i].y, minf(float(def.get("armor_break", 0.0)) * g, 1.0))
 			)
 	return out
 

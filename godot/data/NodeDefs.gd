@@ -65,8 +65,20 @@ const DEFS := {
 	# ── 塔（§7.4）────────────────────────────────────────────────────
 	# `engage_power` 是**射程內有敵人時**的每秒耗能；`power_in`（待機）刻意
 	# 不寫＝0。這一欄就是全案的心臟：同一份能量，餵塔還是餵生產線。
+	#
+	# ★ `steps` ＝ **局內升級的三級各加什麼**（§4.3，B3.8，使用者指定「每次升級
+	#   有不同效果」）。四個詞：`power` 出力 ×1.25 累乘、`range` 射程 +1 格、
+	#   `rof` 射速 ×1.25、`splash` 濺射半徑 +1 格。**耗能一律 ×1.25/級，不看 steps**
+	#   ——那是鎖定設計（效果與耗能一起長），這一欄只決定「長的是哪一項」。
+	#
+	#   沒有這一欄的節點（採集器、發電機、熔爐、儲槽、中繼）走預設三個 `power`，
+	#   也就是 B3.5 的原行為，一個數字都不變。
+	#
+	#   ⚠ 三個詞的順序就是三級的順序，**要各自對得起那隻角色的定位**：
+	#     霜礁的短板是射程 3，所以它第一級就給射程；碎浪賣的是濺射，第二級給半徑。
 	"anchor": {
 		"name": "錨",
+		"steps": ["power", "rof", "range"],
 		"cost": 50,
 		"hp": 60.0,
 		"tower": true,
@@ -78,6 +90,7 @@ const DEFS := {
 	},
 	"prism": {
 		"name": "稜鏡",
+		"steps": ["power", "range", "rof"],
 		"cost": 120,
 		"hp": 60.0,
 		"tower": true,
@@ -90,6 +103,7 @@ const DEFS := {
 	},
 	"knell": {
 		"name": "潮鳴",
+		"steps": ["power", "range", "power"],
 		"cost": 90,
 		"hp": 60.0,
 		"tower": true,
@@ -103,6 +117,7 @@ const DEFS := {
 	},
 	"reclaimer": {
 		"name": "回收者",
+		"steps": ["power", "range", "power"],
 		"cost": 100,
 		"hp": 60.0,
 		"tower": true,
@@ -121,6 +136,7 @@ const DEFS := {
 	},
 	"breaker": {
 		"name": "碎浪",
+		"steps": ["power", "splash", "range"],
 		"cost": 140,
 		"alloy_cost": 60,       # ★ 第一個要合金的東西（另一個是導管 2/3 級）
 		"hp": 60.0,
@@ -146,6 +162,7 @@ const DEFS := {
 	# 五關難度不受影響。它們活在無盡與每日的自由配置榜。
 	"longcall": {
 		"name": "長哨",
+		"steps": ["power", "rof", "range"],
 		"cost": 180,
 		"hp": 60.0,
 		"tower": true,
@@ -159,6 +176,7 @@ const DEFS := {
 	},
 	"frostreef": {
 		"name": "霜礁",
+		"steps": ["range", "power", "range"],
 		"cost": 200,
 		"alloy_cost": 40,
 		"hp": 60.0,
@@ -175,6 +193,7 @@ const DEFS := {
 	},
 	"ballast": {
 		"name": "定潮",
+		"steps": ["power", "range", "rof"],
 		"cost": 240,
 		"alloy_cost": 100,
 		# 90（其餘塔 60）。它是壓在路邊撐的那一座，撐不住就沒有存在的理由。

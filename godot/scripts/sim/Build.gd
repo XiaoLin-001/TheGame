@@ -5,6 +5,8 @@ extends RefCounted
 ## 要用上幾十次的規則，它必須能被測試斷言鎖住，而不是散在 UI 的 if 裡。
 ## 不引用 autoload，也不回傳中文字串（**回傳原因碼**，文案在遊戲層 `BuildController`）。
 
+const NodeDefs := preload("res://data/NodeDefs.gd")
+
 ## 導管基礎吞吐與升級（§7.2）。
 const CAP_BASE := 10.0
 const CAP_PER_LEVEL := 6.0
@@ -71,9 +73,75 @@ const NODE_MAX_LEVEL := 3
 const NODE_STEP := 0.25
 
 
-## 這座建築的等級倍率。**產出與需求都乘它**——見上面為什麼。
+## 這座建築的**耗能**倍率。與 `steps` 無關——每一級一律 +25%。
+##
+## ★ B3.8 起這不再同時是效果倍率（效果走 `effect_scale()`）。分開的理由是
+## 使用者實玩回報的兩件事：**潮鳴與霜礁升級完全沒用**（它們的效果全在
+## `slow`／`armor_break` 上，而只有 `dmg` 被乘過），以及「應該要每次升級有不同效果」。
+## **耗能這一半保持原樣**——「效果與耗能一起長」是鎖定設計（§4.3），
+## 變的只有「長的是哪一項」。
 static func node_scale(level: int) -> float:
 	return 1.0 + NODE_STEP * float(clampi(level, 0, NODE_MAX_LEVEL))
+
+
+# ── ★ 三級各不相同（`10_GDD.md` §4.3，B3.8，使用者指定）───────────────
+#
+# 每一級加什麼寫在 `NodeDefs` 的 `steps` 裡，四個詞：
+#   `power`  出力 ×1.25 累乘（傷害／減速／破甲／回收／產出／發電）
+#   `range`  射程 +1 格
+#   `rof`    射速 ×1.25 累乘
+#   `splash` 濺射半徑 +1 格
+#
+# 沒有 `steps` 的節點走三個 `power` ＝ B3.5 的原行為，一個數字都不變。
+const STEP_POWER := "power"
+const STEP_RANGE := "range"
+const STEP_ROF := "rof"
+const STEP_SPLASH := "splash"
+const DEFAULT_STEPS: Array[String] = [STEP_POWER, STEP_POWER, STEP_POWER]
+
+
+## 這個級數為止，某一種 step 出現了幾次。
+static func step_count(type: String, level: int, step: String) -> int:
+	var steps: Array = NodeDefs.of(type).get("steps", DEFAULT_STEPS)
+	var n := 0
+	for i in mini(clampi(level, 0, NODE_MAX_LEVEL), steps.size()):
+		if String(steps[i]) == step:
+			n += 1
+	return n
+
+
+## 出力倍率（傷害／減速／破甲／回收／產出／發電都乘它）。
+static func effect_scale(type: String, level: int) -> float:
+	return 1.0 + NODE_STEP * float(step_count(type, level, STEP_POWER))
+
+
+## 這座塔此刻的射程（格）。**畫面上的圈、交戰判定、光環範圍全部讀這一支**
+## ——各讀各的話，玩家會看到一個和實際打得到的範圍不一樣的圈。
+static func node_range(type: String, level: int) -> float:
+	return (float(NodeDefs.of(type).get("range", 0.0))
+		+ float(step_count(type, level, STEP_RANGE)))
+
+
+## 射速倍率。
+static func rof_scale(type: String, level: int) -> float:
+	return 1.0 + NODE_STEP * float(step_count(type, level, STEP_ROF))
+
+
+## 濺射半徑（格）。**沒有濺射的塔永遠是 0**——`splash` 那個 step 只寫給有的那隻，
+## 但這條守衛讓「手滑寫給沒有濺射的塔」的後果是無效而不是憑空長出濺射。
+static func splash_radius(type: String, level: int) -> float:
+	var base := float(NodeDefs.of(type).get("splash", 0.0))
+	if base <= 0.0:
+		return 0.0
+	return base + float(step_count(type, level, STEP_SPLASH))
+
+
+## 下一級會加什麼（給面板寫在鈕旁邊）。滿級回空字串。
+static func next_step(type: String, level: int) -> String:
+	if level < 0 or level >= NODE_MAX_LEVEL:
+		return ""
+	var steps: Array = NodeDefs.of(type).get("steps", DEFAULT_STEPS)
+	return String(steps[level]) if level < steps.size() else ""
 
 
 ## 升到「下一級」的礦砂造價 ＝ **造價 × (級數+1) ÷ 2**（半價、全價、一倍半）。
