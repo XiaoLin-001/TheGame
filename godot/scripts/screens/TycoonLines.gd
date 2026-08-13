@@ -62,9 +62,7 @@ func _build() -> void:
 		col.add_child(nav)
 		_back_button = nav.get_child(0) as Button
 
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var scroll := UiKit.scroll()
 	col.add_child(scroll)
 	var list := UiKit.vbox(12)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL

@@ -75,9 +75,7 @@ func _build() -> void:
 		col.add_child(UiKit.back_row("返回", on_exit))
 	col.add_child(_build_recruit())
 
-	_scroll = ScrollContainer.new()
-	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll = UiKit.scroll()
 	col.add_child(_scroll)
 
 	# `HFlowContainer`：卡片數會從 M2 的 8 隻長到 M3 的 24 隻（§5），

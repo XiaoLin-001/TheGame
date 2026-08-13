@@ -118,9 +118,7 @@ func _build() -> void:
 	if nav != null:
 		col.add_child(nav)
 
-	_scroll = ScrollContainer.new()
-	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll = UiKit.scroll()
 	col.add_child(_scroll)
 
 	# 兩欄。20 條排成一直行要捲三次才看得完，而「我還差哪幾條」是一個要一眼掃的問題。

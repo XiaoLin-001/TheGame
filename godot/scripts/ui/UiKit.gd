@@ -172,6 +172,31 @@ static func esc_returns(node: Node, event: InputEvent, on_exit: Callable) -> boo
 
 ## ★ 自檢：「ESC 到得了這個畫面的處理器嗎」（B1.9）。
 ##
+## 直向捲動區。四個畫面（成就／名冊／科技／訂單板）各寫一份逐字相同的四行，
+## 而橫向捲動**一律關掉**是規則不是喜好：內容超出寬度時該換行，不該讓玩家去找
+## 一條藏在右邊的捲軸。
+static func scroll() -> ScrollContainer:
+	var sc := ScrollContainer.new()
+	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	return sc
+
+
+## 合成一次 ESC（按下＋放開）。走 `Input.parse_input_event()` 的完整輸入管線，
+## 才驗得到「`ui_cancel` 這個 action 真的對得上 ESC 鍵」與「事件真的傳到
+## `_unhandled_key_input`」——直接呼叫處理器兩件都驗不到。
+##
+## 這六行曾經在 `UiKit` / `Battle` / `Campaign` / `Main` 各寫一份（同一個錯法
+## 第二次：滑鼠那一份已經收在 `press()` 裡了）。
+static func press_escape() -> void:
+	for pressed: bool in [true, false]:
+		var ev := InputEventKey.new()
+		ev.keycode = KEY_ESCAPE
+		ev.physical_keycode = KEY_ESCAPE
+		ev.pressed = pressed
+		Input.parse_input_event(ev)
+
+
 ## **不能真的呼叫 `on_exit`**——那會把畫面拆掉，後面的 print 就落在一個正在被
 ## 釋放的節點上。所以暫時把它換成一個只翻旗標的 Callable：要驗的是**事件到不到
 ## 得了那支處理器**，不是返回本身。驗完換回來。
@@ -184,12 +209,7 @@ static func esc_reaches(screen: Node) -> bool:
 	var real_exit: Callable = screen.on_exit
 	var escaped := [false]
 	screen.on_exit = func() -> void: escaped[0] = true
-	for pressed: bool in [true, false]:
-		var ev := InputEventKey.new()
-		ev.keycode = KEY_ESCAPE
-		ev.physical_keycode = KEY_ESCAPE
-		ev.pressed = pressed
-		Input.parse_input_event(ev)
+	press_escape()
 	for _i in 3:
 		await screen.get_tree().process_frame
 	screen.on_exit = real_exit

@@ -115,9 +115,7 @@ func _build() -> void:
 			"還差 %s 資金 → %s" % [UiKit.commas(short), gain], 13, Palette.WARN_ORANGE, false
 		))
 
-	_scroll = ScrollContainer.new()
-	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll = UiKit.scroll()
 	col.add_child(_scroll)
 	var list := UiKit.vbox(12)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL

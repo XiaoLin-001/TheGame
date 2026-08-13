@@ -634,8 +634,7 @@ func _glyph_selftest() -> void:
 				break
 	_no_glyph.clear()
 	queue_redraw()
-	for _i in 2:
-		await get_tree().process_frame
+	await _frames(2)
 	var missing := PackedStringArray()
 	for ty: Variant in _no_glyph:
 		missing.append(String(ty))
@@ -733,13 +732,11 @@ func _click_selftest() -> void:
 	var before: int = s.nodes.size()
 
 	_click(ore)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var placed: bool = s.nodes.size() == before + 1
 
 	_click(on_path)          # 路徑格禁節點 → 要被擋下且**說明原因**
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var rejected: bool = s.nodes.size() == before + 1 and _message.begins_with("✕")
 
 	# ★ 45° 導管（使用者回報「沒辦法 45 度放置管道」）：在礦點的正斜角放一個
@@ -749,12 +746,10 @@ func _click_selftest() -> void:
 	var to := Vector2i(13, 13)     # 正斜角，且遠離路徑（路徑走 y=4 與 x=30）
 	_click(from)
 	_click(to)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var diag_placed: bool = s.nodes.size() == before + 3
 	_drag(from, to)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var wired: bool = s.conduits.size() == 1
 
 	# ★ 使用者回報：「45 度的線似乎沒辦法加粗」（B1.2.1）。一格長的 45°——
@@ -764,20 +759,16 @@ func _click_selftest() -> void:
 	_press(_build_buttons["relay"])
 	_click(Vector2i(6, 12))
 	_click(Vector2i(7, 13))
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	_drag(Vector2i(6, 12), Vector2i(7, 13))
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	_click_at(_to_screen((_center(Vector2i(6, 12)) + _center(Vector2i(7, 13))) * 0.5))
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var short_diag: int = s.conduit_near(Vector2(6.5, 12.5))
 	var picked_diag: bool = short_diag >= 0 and _sel_wire == int((s.conduits[short_diag])["id"])
 	if picked_diag:
 		_click_button(_inspect_up)
-		for _i in 3:
-			await get_tree().process_frame
+		await _frames(3)
 	short_diag = s.conduit_near(Vector2(6.5, 12.5))
 	var upgraded: bool = (
 		picked_diag and short_diag >= 0 and int((s.conduits[short_diag])["level"]) == 1
@@ -788,13 +779,11 @@ func _click_selftest() -> void:
 	#   （只驗級數的話，一個免費升級的實作照樣全綠）。
 	var lvl_cell := Vector2i(6, 12)
 	_click(lvl_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var ore_before: float = s.ore
 	var price := Build.node_upgrade_cost(NodeDefs.cost("relay"), 0)
 	_click_button(_inspect_up)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var node_lvl: bool = int(s.node_at(lvl_cell).get("level", 0)) == 1
 	var node_paid: bool = is_equal_approx(s.ore, ore_before - float(price))
 	# ★ **鈕不得在按下之後跑掉**（B3.9.1，使用者回報「點了升級之後，滑鼠會位移到
@@ -832,8 +821,7 @@ func _click_selftest() -> void:
 	var btn_still: bool = btn_drift < 0.5 and pos_stable
 	# 收起來，交給下一段從零開始驗「點一下就開」。
 	_click(lvl_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 
 	# ★ 點一下建築＝檢視它（§B3.6）。走完整輸入路徑，因為這是一個**新的點擊語意**
 	#   （舊行為是「這一格已經有東西了」）。三條斷言：面板真的開了、
@@ -842,8 +830,7 @@ func _click_selftest() -> void:
 	#   索引不存在的鍵會丟執行期錯誤，而那會**中止整支自檢**：`quit()` 跑不到，
 	#   視窗就一直開著（RG-164 的同一個形狀，B3.6 當場踩過）。
 	_click(lvl_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var sel_open: bool = _selected == lvl_cell and _inspect_panel != null and _inspect_panel.visible
 	var sel_says: bool = sel_open and _inspect_label.text.contains(NodeDefs.label("relay"))
 	# ★ 面板要**整個在畫面內**（RG-139／RG-149／RG-170 的同一句話第四次）。
@@ -861,8 +848,7 @@ func _click_selftest() -> void:
 			Rect2(_inspect_panel.position, _inspect_panel.size)
 		)
 	_click(lvl_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var sel_toggles: bool = _selected.x < 0 and not _inspect_panel.visible
 
 	# ★ 拖曳拉線（B1.6.2）：**全程停在建造模式**。會壞的地方有兩個——按下時
@@ -871,12 +857,10 @@ func _click_selftest() -> void:
 	_press(_build_buttons["relay"])
 	_click(Vector2i(3, 8))
 	_click(Vector2i(3, 11))
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var wires_before: int = s.conduits.size()
 	_drag(Vector2i(3, 8), Vector2i(3, 11))
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var dragged: bool = s.conduits.size() == wires_before + 1 and _mode == Mode.BUILD
 
 	# ★ 點一條導管＝檢視它，動詞在面板上（B3.7，使用者提出）。
@@ -891,20 +875,17 @@ func _click_selftest() -> void:
 	var wire_mid := _to_screen((_center(Vector2i(3, 8)) + _center(Vector2i(3, 11))) * 0.5)
 	var wire_id: int = int((s.conduits[s.conduits.size() - 1])["id"])
 	_click_at(wire_mid)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var wire_sel: bool = (
 		_sel_wire == wire_id and _inspect_panel != null and _inspect_panel.visible
 		and _inspect_label.text.contains("導管") and _selected.x < 0
 	)
 	# 再點一次＝取消（選取是開關；沒有這條的話面板一開就關不掉，而它蓋著右半邊）。
 	_click_at(wire_mid)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var wire_toggle: bool = _sel_wire < 0 and not _inspect_panel.visible
 	_click_at(wire_mid)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	# ★ 版面規則對**兩種選取都要成立**（RG-139／149／162／170 的同一句話）：
 	#   整個在畫面內、不疊能量面板、不疊小地圖那一角。導管面板比節點面板更高
 	#   （多一行「加粗後」），所以它才是會先掉出去的那一個。
@@ -924,8 +905,7 @@ func _click_selftest() -> void:
 	var w_ore0: float = s.ore
 	var w_price := Build.upgrade_cost(0)
 	_click_button(_inspect_up)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var wi_now := _sel_wire_index()
 	var wire_up: bool = wi_now >= 0 and int((s.conduits[wi_now])["level"]) == 1 and (
 		is_equal_approx(s.ore, w_ore0 - float(w_price))
@@ -935,8 +915,7 @@ func _click_selftest() -> void:
 	var w_refund := BuildController.conduit_refund(s.conduits[maxi(wi_now, 0)])
 	var wires_now: int = s.conduits.size()
 	_click_button(_inspect_del)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var wire_del: bool = (
 		s.conduits.size() == wires_now - 1 and _sel_wire < 0
 		and not _inspect_panel.visible and is_equal_approx(s.ore, w_ore1 + float(w_refund.x))
@@ -946,21 +925,18 @@ func _click_selftest() -> void:
 	#   上一段驗的是加粗（導管），這一段是同兩顆鈕的另一半（建築）。
 	var nd_cell := Vector2i(3, 11)
 	_click(nd_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var n_ore0: float = s.ore
 	var n_price := Build.node_upgrade_cost(NodeDefs.cost("relay"), 0)
 	_click_button(_inspect_up)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var node_btn_up: bool = int(s.node_at(nd_cell).get("level", 0)) == 1 and (
 		is_equal_approx(s.ore, n_ore0 - float(n_price))
 	)
 	var n_ore1: float = s.ore
 	var n_refund := BuildController.node_refund("relay")
 	_click_button(_inspect_del)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var node_btn_del: bool = (
 		s.node_at(nd_cell).is_empty() and _selected.x < 0 and not _inspect_panel.visible
 		and is_equal_approx(s.ore, n_ore1 + float(n_refund.x))
@@ -974,15 +950,13 @@ func _click_selftest() -> void:
 			core_cell = n0["cell"]
 			break
 	_click(core_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var core_verbs: bool = (
 		_selected == core_cell and _inspect_panel.visible
 		and not _inspect_up.visible and not _inspect_del.visible
 	)
 	_click(core_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 
 	# ★ B3.8：**升級鈕要說出這一級買到的是什麼**（使用者：「每次升級有不同效果」）。
 	#   規則本身由 `combat_test` 的階梯斷言顧；這裡驗的是**它有沒有走到鈕上**。
@@ -999,15 +973,12 @@ func _click_selftest() -> void:
 	_press(_build_buttons["anchor"])
 	s.ore += 500.0
 	_click(step_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	_click(step_cell)          # 蓋完再點一下＝選取它
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var step_lv0: String = _inspect_up.text
 	_click_button(_inspect_up)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var step_lv1: String = _inspect_up.text
 	var step_says: bool = (
 		not s.node_at(step_cell).is_empty()
@@ -1022,8 +993,7 @@ func _click_selftest() -> void:
 	var pan_before := _pan
 	# 中鍵拖曳＝「移動」模式鈕拿掉之後唯一的平移路徑（B1.3.1），所以它得有自檢。
 	_drag_px(Vector2(600, 400), Vector2(540, 360), MOUSE_BUTTON_MIDDLE)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var panned: bool = _pan != pan_before
 	_on_zoom_reset()
 
@@ -1079,8 +1049,7 @@ func _click_selftest() -> void:
 			alloy_cell = cand
 			break
 	_click(alloy_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var alloy_gated: bool = (
 		NodeDefs.alloy_cost(last_type) > 0
 		and _build_type == last_type and _message.contains("合金")
@@ -1094,23 +1063,19 @@ func _click_selftest() -> void:
 	#     而那是這件事唯一會咬到玩家的地方。用第一顆鈕（採集器）——最後一顆在
 	#     捲動區底部，合成點擊會打到它上面蓋著的東西。
 	_press(_build_buttons["extractor"])
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var armed: bool = _build_type == "extractor"
 	var nodes_before_idle: int = s.nodes.size()
 	_click_button(_build_buttons["extractor"])
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var disarmed: bool = armed and _build_type == ""
 	_click(alloy_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	# 空手點空地要**安靜地什麼都不做**——不是丟一句 ✕。「我只是想收起面板」
 	# 和「我蓋錯地方了」不是同一件事。
 	var idle_click: bool = disarmed and s.nodes.size() == nodes_before_idle and _message == ""
 	_press(_build_buttons["extractor"])
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var rearmed: bool = _build_type == "extractor"
 
 	# ★ 藍圖庫（B2.3）。走完整條路徑：框選 → 存 → 拿起來 → 放下去。
@@ -1128,8 +1093,7 @@ func _click_selftest() -> void:
 		lo = Vector2i(mini(lo.x, c.x), mini(lo.y, c.y))
 		hi = Vector2i(maxi(hi.x, c.x), maxi(hi.y, c.y))
 	_drag(lo, hi)
-	for _i in 2:
-		await get_tree().process_frame
+	await _frames(2)
 	var bp_saved: bool = (GameState.data["blueprints"] as Array).size() == 1
 	# 存的是**真的框到的東西**，不是一張空藍圖。
 	# ⚠ 前置條件要一起驗：只框到一個節點時「節點數對得上」是**恆真**的，
@@ -1159,8 +1123,7 @@ func _click_selftest() -> void:
 	var bp_nodes_before: int = s.nodes.size()
 	if spot.x >= 0:
 		_click(spot)
-	for _i in 2:
-		await get_tree().process_frame
+	await _frames(2)
 	var bp_expanded: bool = s.nodes.size() > bp_nodes_before and _bp_index < 0
 	# ★ 錢不夠時要**說出缺口，而且一格都不放**（DoD 第二條）。
 	#   位置沿用同一格 → 唯一的失敗理由只剩錢。
@@ -1170,8 +1133,7 @@ func _click_selftest() -> void:
 	var nodes_broke: int = s.nodes.size()
 	if spot.x >= 0:
 		_click(spot)
-	for _i in 2:
-		await get_tree().process_frame
+	await _frames(2)
 	var bp_short: bool = _message.contains("礦砂差") and s.nodes.size() == nodes_broke
 	# ★ 把局面還原給後面的斷言用：**展開出來的節點要拆掉**、錢改回去、
 	#   藍圖放下、模式回建造。
@@ -1232,36 +1194,29 @@ func _click_selftest() -> void:
 	_press(_build_buttons["relay"])
 	var free_cell := Vector2i(20, 12)
 	_escape()
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var menu_open: bool = _menu_layer != null and _menu_buttons.size() == 4
 	var nodes_before: int = s.nodes.size()
 	_click(free_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var menu_blocks: bool = s.nodes.size() == nodes_before
 
 	_press(_menu_buttons[2])          # 設定
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var settings_open: bool = _settings_layer != null
 	_escape()                          # 設定的 ESC ＝ 回選單，**不是**回戰場
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var settings_back: bool = _settings_layer == null and _menu_layer != null
 	_escape()
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var menu_closed: bool = _menu_layer == null
 	# 同一格在選單關掉之後蓋得起來 → 上面那個「蓋不起來」才證明得了是遮罩擋的，
 	# 而不是那一格本來就不能蓋。
 	_click(free_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var buildable_after: bool = s.nodes.size() == nodes_before + 1
 	_press(_menu_button)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var menu_by_button: bool = _menu_layer != null
 	# 選單面板整個要留在畫面內。`CenterContainer` 幾乎不會出錯，但科技樹那張
 	# 掉出畫面的卡片與設定畫面溢出的最後一行都是「`_draw()` 一個字都不會說」
@@ -1318,8 +1273,7 @@ func _click_selftest() -> void:
 	_press(_build_buttons["anchor"])
 	var tower_cell := Vector2i(22, 12)
 	_click(tower_cell)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var tower_built: bool = String(s.node_at(tower_cell).get("type", "")) == "anchor"
 
 	# ★ 潮鳴的場（B1.8）。要守的回歸是「**繪圖層真的去讀了光環**」——
@@ -1329,25 +1283,21 @@ func _click_selftest() -> void:
 	#   而 `_draw()` 對此一個字都不會說（B0.7.2 那個 size (0,0) 的同一類缺陷）。
 	_press(_build_buttons["knell"])
 	_click(Vector2i(20, 8))              # 離路徑 (20,4) 四格 → 在 5 格射程內
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var knell: Dictionary = s.node_at(Vector2i(20, 8))
 	s.add_enemy("drifter")
 	(s.enemies[0] as Dictionary)["progress"] = 20.0   # 路徑上的 (20,4)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var field_ok: bool = (
 		not knell.is_empty()
 		and _auras.size() == s.enemies.size()         # 繪圖層每幀算了它
 		and _engaged.get(int(knell["id"]), false)     # 而且潮鳴確實在交戰
 	)
 	s.enemies.clear()
-	for _i in 2:
-		await get_tree().process_frame
+	await _frames(2)
 
 	s.phase = "won"
-	for _i in 4:
-		await get_tree().process_frame
+	await _frames(4)
 	# ① 局末面板出現的那一刻，凍住的開火線與碎片要被收乾淨。
 	var over_cleared: bool = s.shots.is_empty() and _over_panel != null
 	# ② 面板已經在了（`_refresh_over` 之後不會再清一次），這時再塞一條滿 `ttl` 的
@@ -1356,13 +1306,11 @@ func _click_selftest() -> void:
 		"from": tower_cell, "to": Vector2i(22, 4), "ttl": BattleController.SHOT_TTL,
 	})
 	var plays_before: int = AudioBus.plays
-	for _i in 12:
-		await get_tree().process_frame
+	await _frames(12)
 	var over_silent: bool = AudioBus.plays == plays_before
 	s.shots.clear()
 	s.phase = phase_before
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 
 	# ③ ★ 死因歸因（B1.7）。M1 的驗收句子是「說得出自己為什麼輸」，所以
 	#    **輸掉的那一面板上一定要有那一句**，而且整張面板要留在畫面內
@@ -1371,8 +1319,7 @@ func _click_selftest() -> void:
 	_diag["starved"] = 300
 	_diag["leak_wave"] = 3
 	s.phase = "lost"
-	for _i in 4:
-		await get_tree().process_frame
+	await _frames(4)
 	var why_shown := false
 	if _over_panel != null:
 		for n: Node in _over_panel.find_children("*", "Label", true, false):
@@ -1383,8 +1330,7 @@ func _click_selftest() -> void:
 		and _over_panel.position.y + _over_panel.size.y <= float(size.y)
 	)
 	s.phase = phase_before
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var over_ok: bool = (
 		tower_built and over_cleared and over_silent and why_shown and why_fits
 		and field_ok
@@ -1510,8 +1456,7 @@ func _view_selftest() -> bool:
 	_clamp_pan()
 	var before: int = s.nodes.size()
 	_click(target)
-	for _i in 3:
-		await get_tree().process_frame
+	await _frames(3)
 	var hit_ok: bool = s.nodes.size() == before + 1 and not s.node_at(target).is_empty()
 
 	# ★ 滾輪只在地圖框架裡縮放（B2.4.7，使用者實玩回報：「選單滑到最上面，
@@ -1575,13 +1520,15 @@ func _click_button(b: Button) -> void:
 ## 合成一次 ESC。走 `Input.parse_input_event()` 的完整輸入管線，才驗得到
 ## 「`ui_cancel` 這個 action 真的對得上 ESC 鍵」與「事件真的傳到 `_unhandled_key_input`」
 ## ——直接呼叫 `_toggle_menu()` 兩件都驗不到。
+## 等 n 幀。自檢每送一次事件都要讓版面與 `_process` 跑完，而那件事本來寫成
+## 兩行 ×65 次——同一個慣用語重複到那個數量，它就是一個函式。
+func _frames(n: int) -> void:
+	for _i in n:
+		await get_tree().process_frame
+
+
 func _escape() -> void:
-	for pressed: bool in [true, false]:
-		var ev := InputEventKey.new()
-		ev.keycode = KEY_ESCAPE
-		ev.physical_keycode = KEY_ESCAPE
-		ev.pressed = pressed
-		Input.parse_input_event(ev)
+	UiKit.press_escape()
 
 
 ## GUI 的滑鼠路由要先有「游標在這裡」才認得出按下的是誰，所以**先送一個移動事件**。
@@ -2327,18 +2274,15 @@ func _guide_selftest() -> void:
 		#   會被輸入層擋掉（第一版就是這樣紅的——而那個行為是對的，玩家也
 		#   點不到看不見的格子）。蓋完再 `_reset_view()` 把它送回畫面外。
 		_center_view_on(target, true)
-		for _i in 2:
-			await get_tree().process_frame
+		await _frames(2)
 		_press(_build_buttons["extractor"])
 		_click(target)
-		for _i in 3:
-			await get_tree().process_frame
+		await _frames(3)
 		# 推幾個 tick，`node_state` 才算得出 `滿溢`。
 		for _i in 6:
 			BattleController.step(s)
 		_reset_view()
-		for _i in 2:
-			await get_tree().process_frame
+		await _frames(2)
 	var placed: bool = not s.node_at(target).is_empty()
 	var back_offscreen: bool = placed and not _view_world_rect().has_point(_center(target))
 	var flagged: bool = _problem_cells().has(target)
@@ -2358,8 +2302,7 @@ func _guide_selftest() -> void:
 	var jumped := false
 	if arrowed:
 		_click_at(arrow_at)
-		for _i in 2:
-			await get_tree().process_frame
+		await _frames(2)
 		# ★ 補間中途的 `_pan` 還沒到位——`_settle_view()` 把「動畫沒跑完」
 		#   和「位置算錯」分開，否則這條斷言會變成在驗補間速度。
 		_settle_view()
@@ -2401,8 +2344,7 @@ func _guide_selftest() -> void:
 		6.0 if vcen.x > 0.5 else r.size.x - 6.0,
 		6.0 if vcen.y > 0.5 else r.size.y - 6.0
 	))
-	for _i in 2:
-		await get_tree().process_frame
+	await _frames(2)
 	var mini_moved: bool = _pan_goal != pan_before
 	var mini_safe: bool = _message == "＿哨兵＿"
 
@@ -2414,19 +2356,16 @@ func _guide_selftest() -> void:
 		r.size.y - 6.0 if vcen.y > 0.5 else 6.0
 	)
 	_press_at(r.position + r.size * 0.5, true)
-	for _i in 2:
-		await get_tree().process_frame
+	await _frames(2)
 	var drag_from := _pan_goal
 	_move_at(opp)
-	for _i in 2:
-		await get_tree().process_frame
+	await _frames(2)
 	var dragged: bool = _pan_goal != drag_from
 	# 放開之後再移動就**不可以**再跟著跑，否則等於滑鼠一直黏著小地圖。
 	_press_at(opp, false)
 	var after_release := _pan_goal
 	_move_at(r.position + r.size * 0.5)
-	for _i in 2:
-		await get_tree().process_frame
+	await _frames(2)
 	var drag_stops: bool = _pan_goal == after_release
 	# 平滑：目標已經到了，但 `_pan` 還在路上（補間真的存在，不是瞬移）。
 	var smooth: bool = not _pan.is_equal_approx(_pan_goal)
@@ -2441,13 +2380,11 @@ func _guide_selftest() -> void:
 	_press(_build_buttons["relay"])
 	_message = "＿哨兵＿"
 	_click_at(r.position + r.size * 0.5)
-	for _i in 2:
-		await get_tree().process_frame
+	await _frames(2)
 	var mini_gone: bool = _message != "＿哨兵＿"
 	# 再動一下視野，它要自己回來。
 	_center_view_on(target)
-	for _i in 2:
-		await get_tree().process_frame
+	await _frames(2)
 	var mini_back: bool = _mini_ttl > 0.0
 	_settle_view()
 
@@ -4914,10 +4851,6 @@ func _refresh_top() -> void:
 ## （`text.lg`），附屬的是波號、快進倍率、殘敵（`text.sm`）。
 ## **原本是一整串塞在同一個 22px 的標籤裡**，量到那一格 299px、把整條頂欄
 ## 撐出畫面 —— 而它裡面本來就有兩階資訊。
-func _phase_text() -> String:
-	return _phase_parts()[0]
-
-
 func _phase_parts() -> Array:
 	# ★ 難度層掛在附屬那一段（B2.6）。**只在第 1 層以上出現**：第 0 層寫「標準」
 	#   等於在每一局的頂欄佔一格去講「沒有任何額外規則」。

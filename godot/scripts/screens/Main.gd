@@ -198,12 +198,7 @@ func _click_selftest() -> void:
 
 ## ESC ＝ 回標題（`_enter()` 把 `on_exit` 指成 `_back_to_title`）。
 func _escape() -> void:
-	for pressed: bool in [true, false]:
-		var ev := InputEventKey.new()
-		ev.keycode = KEY_ESCAPE
-		ev.physical_keycode = KEY_ESCAPE
-		ev.pressed = pressed
-		Input.parse_input_event(ev)
+	UiKit.press_escape()
 	for _i in 4:
 		await get_tree().process_frame
 

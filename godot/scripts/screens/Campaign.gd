@@ -110,12 +110,7 @@ func _click_selftest() -> void:
 	#   但這種「應該」正是 B0.7.2 那個 `mouse_filter` 教訓的形狀，**量一次**。
 	var esc_to_battle: bool = false
 	if entered:
-		for pressed: bool in [true, false]:
-			var ev := InputEventKey.new()
-			ev.keycode = KEY_ESCAPE
-			ev.physical_keycode = KEY_ESCAPE
-			ev.pressed = pressed
-			Input.parse_input_event(ev)
+		UiKit.press_escape()
 		for _i in 3:
 			await get_tree().process_frame
 		esc_to_battle = is_instance_valid(battle) and battle._menu_layer != null
@@ -175,9 +170,7 @@ func _build() -> void:
 	#
 	# 四欄的格線而不是加寬視窗：§5 的 M3 目標是 25 關，一條橫列在那時要 5700px。
 	# 格線 ＋ 捲動這個組合是既有的（科技樹、成就都是），不新發明一套。
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var scroll := UiKit.scroll()
 	# 高度吃掉標頭以下的全部空間，**不寫死**：寫 `CARD.y + 24` 的話視窗裡會留
 	# 180px 的空白，而第二列只露出一個邊——看起來像壞掉而不是像可以捲。
 	# 下限一張卡：再小就變成「捲動一張卡」那種沒有人看得懂的東西。
