@@ -159,6 +159,11 @@ TL_SHOT="C:/tmp/tiers.png" TL_PANEL=tiers <godot> --path godot --rendering-drive
 #   B2.1a 的兩個真缺陷（轉角廢橋、路徑貼邊）都是這樣才看到的。
 TL_SHOT="C:/tmp/endless.png" TL_PANEL=endless TL_SEED=42 <godot> --path godot --rendering-driver opengl3
 
+# ★ 檢視面板（B3.6／B3.7）：點一座塔或一條導管會開的那個面板是**純互動狀態**。
+# 要拍它得配 TL_CLICKTEST，而且要有示範佈局（合照那一排沒有導管，答不出「電從哪來」）。
+# TL_PICK=wire 改成選一條導管（挑本 tick 流量最大的那條）；不給就是選一座塔。
+TL_CLICKTEST=1 TL_SHOT="C:/tmp/wire.png" TL_MUTE=1 TL_PICK=wire TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> --path godot --rendering-driver opengl3
+
 # ★ 拍特效近照（B1.6）：TL_FOCUS="x,y,zoom" 把鏡頭對到某一格並放大。
 # 特效是 0.2 秒、十幾個像素的東西——在 fit 倍率的全圖截圖上判不出好壞，
 # 沒有這個鉤子就會變成「宣稱做好了但沒真的看過」。

@@ -44,6 +44,18 @@ const BAR_Y := 668.0
 ## 「差幾個像素」的東西不要用眼睛判**，`TL_CLICKTEST` 的 `pinned_ok` 當場印出來。
 const BUILD_LIST_H := BAR_Y - 56.0 - 100.0
 
+## ★ 「點在導管上」的命中半徑，單位是格（B3.7）。
+##
+## **刻意比 `conduit_near()` 的預設 0.5 窄。** 導管的中心線正好穿過它經過的每一格
+## 的**格心**，所以 0.5 等於「整格都算在線上」——那會讓建造模式下再也蓋不出
+## 「線從旁邊經過而不接它」的那種節點，而那是流量網路裡一個真的戰術選擇
+## （`Build.can_connect()` 的原註寫著這條規則刻意不禁止穿過節點）。
+##
+## 0.3 讓線佔住格心那一條帶，格的四周仍然蓋得下去。代價是這條帶在 fit 倍率下
+## 只有十幾個像素寬——低於 P3 的 44px 觸控門檻，所以手機移植時要靠放大操作。
+## 已登記在 `40_PRODUCTION_PLAN.md` 的移植風險表。
+const WIRE_PICK := 0.3
+
 # ── 路徑層的格子偏移（B2.4.2）。**常數，不在 `_draw()` 的內圈裡重建陣列。** ──
 ## 一格的四個角（格點偏移），順時鐘。與 `SIDES` 同序：`SIDES[i]` 是 `CORNERS[i]`
 ## 到 `CORNERS[i+1]` 那條邊的外向法線方向。
@@ -190,6 +202,13 @@ var _hover: Vector2i = Vector2i(-999, -999)
 ## **不是模式**——選取是一個狀態，模式是一個動詞，兩者混在一起的話
 ## 「選著一座塔的時候還能不能蓋東西」會變成一個要另外回答的問題。
 var _selected: Vector2i = Vector2i(-1, -1)
+## ★ 被檢視的那條導管（B3.7）。存的是**導管 `id` 不是索引**，−1 ＝ 沒有選取。
+##
+## 索引會位移：拆掉任何一條線、或**敵人啃斷一條線**，後面每一條的索引都往前挪。
+## 存索引的話面板會安靜地換成講另一條線——而那正好發生在戰鬥最亂的時候。
+var _sel_wire: int = -1
+## 游標的**格為單位浮點座標**。命中導管要靠它（格解析度分不出「壓在線上」）。
+var _hover_p: Vector2 = Vector2(-999, -999)
 var _accum: float = 0.0
 var _message: String = ""
 
@@ -249,6 +268,9 @@ var _codex_button: Button = null
 var _codex_panel: Control = null
 var _inspect_panel: Control = null
 var _inspect_label: Label = null
+## ★ 檢視面板上的兩顆動詞鈕（B3.7）。升級／加粗共用一顆——選的是什麼就升什麼。
+var _inspect_up: Button = null
+var _inspect_del: Button = null
 var _codex_label: Label = null
 var _codex_on: bool = true
 var _prio_labels: Dictionary = {}
@@ -559,7 +581,21 @@ func _glyph_selftest() -> void:
 		#   選錨（合照那一排的第 6 個）——它有射程，圈畫得出來。
 		# 挑一座**真的接了線**的塔：合照那一排是憑空長出來的，沒有任何導管，
 		# 而「誰在餵它電」正是要靠導管才答得出來的問題。
+		# ★ B3.7：`TL_PICK=wire` 改成選一條導管——導管面板同樣是純互動狀態。
+		#   挑**這一刻真的有東西在流**的那一條：面板上「流量 x / cap」與「已滿載」
+		#   是這一批要看的東西，選一條靜止的線只證明得了版面。
+		if Hooks.pick == "wire" and not s.conduits.is_empty():
+			var flows: Dictionary = s.rates["conduit_flow"]
+			var best := 0
+			for i in s.conduits.size():
+				if float(flows.get((s.conduits[i])["id"], 0.0)) > float(
+					flows.get((s.conduits[best])["id"], 0.0)
+				):
+					best = i
+			_select_wire(int((s.conduits[best])["id"]))
 		for n: Dictionary in s.nodes:
+			if _sel_wire >= 0:
+				break
 			var ty := String(n["type"])
 			if float(NodeDefs.of(ty).get("range", 0.0)) <= 0.0:
 				continue
@@ -787,6 +823,111 @@ func _click_selftest() -> void:
 		await get_tree().process_frame
 	var dragged: bool = s.conduits.size() == wires_before + 1 and _mode == Mode.BUILD
 
+	# ★ 點一條導管＝檢視它，動詞在面板上（B3.7，使用者提出）。
+	#   剛拉出來那一條 (3,8)–(3,11) 是垂直三格，兩端點的中點正壓在線上。
+	#   走完整輸入路徑：這是**建造模式下的一個新點擊語意**（舊行為是在那一格蓋東西），
+	#   而「按下那一刻走哪一條分支」只有真的送事件才驗得出來（B3.6 的教訓）。
+	# ⚠ **先把能量面板打開**。版面那一條要驗的正是「讓不讓得開鄰居」，而面板關著時
+	#   檢視面板貼在 y=56、離能量面板和小地圖都有幾百像素——那樣的斷言是**恆真**的。
+	#   （量了才知道：關著時它在 y 56–230，小地圖在 525–648。）
+	_energy_button.button_pressed = true
+	await get_tree().process_frame
+	var wire_mid := _to_screen((_center(Vector2i(3, 8)) + _center(Vector2i(3, 11))) * 0.5)
+	var wire_id: int = int((s.conduits[s.conduits.size() - 1])["id"])
+	_click_at(wire_mid)
+	for _i in 3:
+		await get_tree().process_frame
+	var wire_sel: bool = (
+		_sel_wire == wire_id and _inspect_panel != null and _inspect_panel.visible
+		and _inspect_label.text.contains("導管") and _selected.x < 0
+	)
+	# 再點一次＝取消（選取是開關；沒有這條的話面板一開就關不掉，而它蓋著右半邊）。
+	_click_at(wire_mid)
+	for _i in 3:
+		await get_tree().process_frame
+	var wire_toggle: bool = _sel_wire < 0 and not _inspect_panel.visible
+	_click_at(wire_mid)
+	for _i in 3:
+		await get_tree().process_frame
+	# ★ 版面規則對**兩種選取都要成立**（RG-139／149／162／170 的同一句話）：
+	#   整個在畫面內、不疊能量面板、不疊小地圖那一角。導管面板比節點面板更高
+	#   （多一行「加粗後」），所以它才是會先掉出去的那一個。
+	var wire_rect := Rect2(_inspect_panel.position, _inspect_panel.size)
+	var wire_fits: bool = (
+		_inspect_panel.visible
+		and wire_rect.position.x >= 0.0 and wire_rect.position.y >= 0.0
+		and wire_rect.end.x <= float(size.x) + 0.5 and wire_rect.end.y <= float(size.y) + 0.5
+		and not wire_rect.intersects(_minimap_rect())
+		and not (
+			_energy_panel != null and _energy_panel.visible
+			and Rect2(_energy_panel.position, _energy_panel.size).intersects(wire_rect)
+		)
+	)
+	# 加粗鈕：級數真的加了、礦砂**真的扣了**、而且扣的是那個價
+	#   （只驗級數的話，一個免費加粗的實作照樣全綠——B3.5 那條的同一句話）。
+	var w_ore0: float = s.ore
+	var w_price := Build.upgrade_cost(0)
+	_click_button(_inspect_up)
+	for _i in 3:
+		await get_tree().process_frame
+	var wi_now := _sel_wire_index()
+	var wire_up: bool = wi_now >= 0 and int((s.conduits[wi_now])["level"]) == 1 and (
+		is_equal_approx(s.ore, w_ore0 - float(w_price))
+	)
+	# 拆除鈕：線真的少一條、退款進帳、而且**選取跟著收掉**（拆掉的東西不能繼續選著）。
+	var w_ore1: float = s.ore
+	var w_refund := BuildController.conduit_refund(s.conduits[maxi(wi_now, 0)])
+	var wires_now: int = s.conduits.size()
+	_click_button(_inspect_del)
+	for _i in 3:
+		await get_tree().process_frame
+	var wire_del: bool = (
+		s.conduits.size() == wires_now - 1 and _sel_wire < 0
+		and not _inspect_panel.visible and is_equal_approx(s.ore, w_ore1 + float(w_refund.x))
+	)
+
+	# ★ 同兩顆鈕的**節點**那一半：選一座建築，升級與拆除都在面板上。
+	#   B3.5 已經驗過「升級模式下點節點」，這裡驗的是**不切模式**的那條路。
+	var nd_cell := Vector2i(3, 11)
+	_click(nd_cell)
+	for _i in 3:
+		await get_tree().process_frame
+	var n_ore0: float = s.ore
+	var n_price := Build.node_upgrade_cost(NodeDefs.cost("relay"), 0)
+	_click_button(_inspect_up)
+	for _i in 3:
+		await get_tree().process_frame
+	var node_btn_up: bool = int(s.node_at(nd_cell).get("level", 0)) == 1 and (
+		is_equal_approx(s.ore, n_ore0 - float(n_price))
+	)
+	var n_ore1: float = s.ore
+	var n_refund := BuildController.node_refund("relay")
+	_click_button(_inspect_del)
+	for _i in 3:
+		await get_tree().process_frame
+	var node_btn_del: bool = (
+		s.node_at(nd_cell).is_empty() and _selected.x < 0 and not _inspect_panel.visible
+		and is_equal_approx(s.ore, n_ore1 + float(n_refund.x))
+	)
+	# ★ **核心兩顆鈕都不該在**：它升不得也拆不得，而一顆按下去保證失敗的鈕
+	#   是在邀請玩家犯錯。規則層擋著（`upgrade_node()`／`demolish()`），
+	#   這一條驗的是畫面沒有和規則講反話。
+	var core_cell: Vector2i = s.nodes[0]["cell"]
+	for n0: Dictionary in s.nodes:
+		if String(n0["type"]) == "core":
+			core_cell = n0["cell"]
+			break
+	_click(core_cell)
+	for _i in 3:
+		await get_tree().process_frame
+	var core_verbs: bool = (
+		_selected == core_cell and _inspect_panel.visible
+		and not _inspect_up.visible and not _inspect_del.visible
+	)
+	_click(core_cell)
+	for _i in 3:
+		await get_tree().process_frame
+
 	# ★ 中鍵平移（B1.3.1）：「移動」模式鈕拿掉之後，**這是唯一的平移路徑**。
 	#   先放大（fit 倍率下平移恆被夾成 0，量不到東西）。
 	_on_zoom(ZOOM_STEP * ZOOM_STEP)
@@ -837,13 +978,26 @@ func _click_selftest() -> void:
 	#   （CLAUDE.md「拍只有互動才到得了的狀態」），而捲到底的建造欄會被拍進去。
 	_build_scroll.scroll_vertical = 0
 	_press(last_button)
-	_click(Vector2i(12, 12))
+	# ★ 這一格要**沒有導管壓在格心**（B3.7）。原本寫死 (12,12)，而 B3.7 讓
+	#   「點在導管上」變成檢視那條線——(12,12) 正好有一條線經過，於是這一條
+	#   當場變紅，理由卻和合金無關（`_message` 是空的，不是「合金不夠」）。
+	#   照這個檔案既有的紀律：**要一格就去找一格**，不要寫死一個會被別批動掉的座標。
+	var alloy_cell := Vector2i(12, 12)
+	for r in 12:
+		var cand := Vector2i(12 - r, 12)
+		if _in_map(cand) and s.node_at(cand).is_empty() and s.conduit_near(
+			Vector2(cand), WIRE_PICK
+		) < 0 and String(BuildController.preview_place(s, last_type, cand)["reason"]) == Build.OK:
+			alloy_cell = cand
+			break
+	_click(alloy_cell)
 	for _i in 3:
 		await get_tree().process_frame
 	var alloy_gated: bool = (
 		NodeDefs.alloy_cost(last_type) > 0
 		and _build_type == last_type and _message.contains("合金")
 	)
+	print("[TL_CLICKTEST/select] 合金閘找到的空格 %s（要求：空地、蓋得下、格心上沒有導管）" % alloy_cell)
 
 	# ★ 藍圖庫（B2.3）。走完整條路徑：框選 → 存 → 拿起來 → 放下去。
 	#   **不直接呼叫 `Blueprint.capture()`**——那只驗得到純函式，而這一批
@@ -1160,6 +1314,8 @@ func _click_selftest() -> void:
 		and view_ok and menu_ok and audio_ok and over_ok and bar_hint_clear and hint_inside
 		and node_lvl and node_paid and node_cap
 		and sel_open and sel_says and sel_inside and sel_toggles and sel_clear
+		and wire_sel and wire_toggle and wire_fits and wire_up and wire_del
+		and node_btn_up and node_btn_del and core_verbs
 		and bp_saved and bp_has_nodes and bp_expanded and bp_short and bp_fits
 	)
 	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s bar_hint=%s(底欄右緣 %.0f／提示 x %.0f) hint_in=%s node_lv=%s(付款 %s／上限 %s) 檢視=%s(說得出是誰 %s／在畫面內 %s／再點收起 %s／不疊能量面板 %s) → %s" % [
@@ -1168,6 +1324,9 @@ func _click_selftest() -> void:
 		bar_hint_clear, bar_rect.end.x, _hint.global_position.x, hint_inside,
 		node_lvl, node_paid, node_cap, sel_open, sel_says, sel_inside, sel_toggles, sel_clear,
 		"PASS" if ok else "FAIL"
+	])
+	print("[TL_CLICKTEST/select] 導管選取=%s 再點收起=%s 版面=%s 面板加粗=%s(付款一併驗) 面板拆除=%s(退款一併驗) 建築升級鈕=%s 建築拆除鈕=%s 核心兩顆鈕都收起=%s" % [
+		wire_sel, wire_toggle, wire_fits, wire_up, wire_del, node_btn_up, node_btn_del, core_verbs
 	])
 	print("[TL_CLICKTEST/audio] prep_music=%s wave_hush=%s wave_sting=%s voice=%s muted=%s tower=%s over_cleared=%s over_silent=%s why=%s why_fits=%s knell_field=%s" % [
 		music_ok, wave_hush, wave_sting, voice_ok, AudioBus.muted, tower_built, over_cleared,
@@ -1282,6 +1441,15 @@ func _view_selftest() -> bool:
 func _press(b: Button) -> void:
 	b.button_pressed = true
 	b.pressed.emit()
+
+
+## ★ 用**合成滑鼠事件**按一顆鈕（B3.7），不是直接 emit。
+##
+## 檢視面板的容器是 `MOUSE_FILTER_IGNORE`（RG-39），而「IGNORE 的容器裡的鈕
+## 收不收得到點擊」正是 B0.7.2 那一類缺陷的所在層——`_press()` 直接發訊號，
+## 那一層它一條都測不到。面板上的鈕一律走這裡。
+func _click_button(b: Button) -> void:
+	_click_at(b.global_position + b.size * 0.5)
 
 
 ## 合成一次 ESC。走 `Input.parse_input_event()` 的完整輸入管線，才驗得到
@@ -1618,6 +1786,9 @@ func _gui_input(event: InputEvent) -> void:
 		if _mini_drag:
 			_mini_seek(mm.position)
 			return
+		# 浮點座標每次都更新（不只格變的時候）：命中導管靠的是它，
+		# 而「壓在線上」與「在同一格但離線遠」是同一格裡的兩件事。
+		_hover_p = _point_at(mm.position)
 		var c := _cell_at(mm.position)
 		if c != _hover:
 			_hover = c
@@ -1673,7 +1844,23 @@ func _gui_input(event: InputEvent) -> void:
 		queue_redraw()
 		_refresh_hint()
 		return
-	_act(c, _point_at(mb.position))
+	var p := _point_at(mb.position)
+	# ★ **點在導管上＝檢視那條線**（B3.7，使用者提出）。
+	#
+	#   放在建造模式裡而不是另開一個模式，理由和 B3.6 選節點同一條：玩家的意圖是
+	#   「這條線我要看一下、要動它」，那不該先去底欄按一顆鈕再回來。
+	#
+	#   ⚠ 節點優先——上面那條已經 return 了，和拆除模式同一個順序。
+	#   ⚠ 拿著藍圖時不攔：那時左鍵是「把它放在這裡」，一個明確得多的意圖。
+	#   命中帶刻意窄（`WIRE_PICK`），格的其他地方照舊蓋得下去——理由見那個常數。
+	if _mode == Mode.BUILD and _bp_index < 0:
+		var wi: int = s.conduit_near(p, WIRE_PICK)
+		if wi >= 0:
+			_select_wire(int((s.conduits[wi])["id"]))
+			_refresh_hint()
+			queue_redraw()
+			return
+	_act(c, p)
 	_refresh_hint()
 
 
@@ -1711,7 +1898,11 @@ func _release(pos: Vector2) -> void:
 		#
 		#   不另開「檢視模式」：模式鈕在 B2.4.2 已經因為十三種節點擠過一次；
 		#   也不綁右鍵——P3「操作不得只靠 hover／右鍵／鍵盤」。
+		#
+		#   ★ B3.7：再點一次同一座就取消選取（使用者提出）。選取是**開關**——
+		#   沒有取消的路的話，面板一開就再也關不掉，而它蓋著地圖右半邊。
 		_selected = Vector2i(-1, -1) if _selected == from else from
+		_sel_wire = -1
 		_refresh_inspect()
 		_message = "" if _selected.x >= 0 else "從這個節點按住往另一個節點拖，就能拉一條導管。"
 	_refresh_hint()
@@ -1734,6 +1925,7 @@ func _act(cell: Vector2i, point: Vector2 = Vector2(-999, -999)) -> void:
 				return
 			# 蓋在空地上就取消選取：選取講的是「這一座」，而畫面已經換人了。
 			_selected = Vector2i(-1, -1)
+			_sel_wire = -1
 			_refresh_inspect()
 			var code_b := BuildController.place(s, _build_type, cell)
 			if code_b == Build.OK:
@@ -3182,6 +3374,28 @@ func _enemy_pos(e: Dictionary) -> Vector2:
 ## 供電鏈逆著本 tick 的**實際流向**走（`FlowNetwork.upstream_power()`），
 ## 不是「有沒有連著」——一座塔可能連著五條線而這一刻只有兩條在餵它。
 func _draw_selection() -> void:
+	# ★ 選著一條導管（B3.7）：把它整條描出來。用**外框而不是換色**——導管自己的
+	#   顏色正在講流量與滿載（§1.4a），塗掉它等於為了指出一條線而讓它不能讀。
+	var wi := _sel_wire_index()
+	if wi >= 0:
+		var sc: Dictionary = s.conduits[wi]
+		var a := _center(sc["a"])
+		var b := _center(sc["b"])
+		# ⚠ **外框要明確伸出管緣**，而管緣的位置隨流量走（2–8px）。
+		#   第一版寫死 ±7px，於是選一條滿載的幹線時外框正好壓在它自己的邊上——
+		#   截圖當場看不出哪一條被選中。`_draw_conduits()` 的刻度在 B1.6.1 踩過
+		#   一模一樣的坑，那裡的解法是 `w * 0.5 + 3`，這裡照抄。
+		var bonus := float(s.mods["cap_bonus"])
+		var w := Shapes.conduit_width(
+			float((s.rates["conduit_flow"] as Dictionary).get(sc["id"], 0.0)),
+			Build.conduit_cap(Build.CAP_MAX_LEVEL, bonus)
+		)
+		var n := (b - a).normalized().orthogonal() * (w * 0.5 + 4.0)
+		var t := (b - a).normalized() * (w * 0.5 + 4.0)
+		draw_polyline(PackedVector2Array([
+			a + n - t, b + n + t, b - n + t, a - n - t, a + n - t,
+		]), Palette.ORDER_BRIGHT, 2.0)
+		return
 	if _selected.x < 0:
 		return
 	var n: Dictionary = s.node_at(_selected)
@@ -3219,7 +3433,17 @@ func _draw_hover() -> void:
 		return
 	var p := _world(_hover)
 	var g := Vector2(Shapes.GRID, Shapes.GRID)
-	if _mode == Mode.BUILD:
+	# ★ 游標壓在導管上時，**不畫落點預覽，改把那條線點亮**（B3.7）。
+	#   一次點擊只能做一件事，而畫面得先說出它會做哪一件——B3.4 才剛把落點預覽
+	#   做成「畫那隻角色本人」，若它在會被導管攔下的地方照樣現身，那是畫面在說謊。
+	var hover_wire: int = -1
+	if _mode == Mode.BUILD and _bp_index < 0 and _drag_from.x < 0:
+		hover_wire = s.conduit_near(_hover_p, WIRE_PICK)
+	if hover_wire >= 0:
+		var hc: Dictionary = s.conduits[hover_wire]
+		draw_line(_center(hc["a"]), _center(hc["b"]),
+			Palette.alpha(Palette.ORDER_BRIGHT, 0.45), 8.0)
+	elif _mode == Mode.BUILD:
 		var pv := BuildController.preview_place(s, _build_type, _hover)
 		var col: Color = Palette.OK_GREEN if pv["ok"] else Palette.WARN_ORANGE
 		draw_rect(Rect2(p, g), Palette.alpha(col, 0.18))
@@ -3862,16 +4086,96 @@ func _watchdog() -> void:
 	)
 
 
+## ★ B3.7：面板底下多兩顆鈕（升級／加粗、拆除）。
+##
+## 動詞跟著**被選中的那個東西**走，不再跟著模式走。原本要動一座塔得先去底欄按
+## 「升級」、點它、再按回來——三步裡有兩步不是決定。現在點它就看得到它，
+## 而它能做的兩件事就寫在旁邊。
+##
+## ⚠ `UiKit.panel()` 是 `MOUSE_FILTER_IGNORE`（RG-39：浮層是資訊不是障礙物），
+##   但那只管容器自己——Godot 的命中測試照樣會走進子節點，所以鈕收得到點擊，
+##   而鈕以外的地方仍然穿透到底下的地圖。
 func _build_inspect_panel() -> void:
-	# 半透明同角色簡介：它浮在地圖上，而玩家正在看的就是地圖（被選取的那一格
-	# 與供電來源都在底下）。
-	var box := UiKit.panel(0.9)
+	# ★ B3.7 起用標準不透明度（0.96），不再是角色簡介那種半透明。
+	# 半透明的理由是「讓玩家看見底下是什麼」，而這個面板底下不是它要講的東西
+	# ——被選取的那一格與供電來源都在畫面另一邊。加了兩顆鈕之後代價更明顯：
+	# 節點圖形從字和鈕後面透出來，而**可以按的東西要讀起來是實心的**。
+	var box := UiKit.panel()
 	box.visible = false
+	var col := UiKit.vbox(8)
 	_inspect_label = UiKit.label("", 13, Palette.TEXT_PRIMARY, false)
 	_inspect_label.custom_minimum_size.x = 250.0
-	box.add_child(_inspect_label)
+	col.add_child(_inspect_label)
+	var row := UiKit.hbox(8)
+	_inspect_up = Button.new()
+	_inspect_up.pressed.connect(_on_inspect_upgrade)
+	_inspect_del = Button.new()
+	_inspect_del.pressed.connect(_on_inspect_demolish)
+	for b: Button in [_inspect_up, _inspect_del]:
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(UiKit.touchable(b))
+	col.add_child(row)
+	box.add_child(col)
 	add_child(box)
 	_inspect_panel = box
+
+
+## 被選取那條導管在 `s.conduits` 裡的索引。找不到（被拆了、被敵人啃斷了）回 −1。
+##
+## 每次都重找而不是記索引——理由寫在 `_sel_wire` 的宣告上。線性掃：一局的導管
+## 是幾十條，而這只在玩家選著一條線的那些幀跑。
+func _sel_wire_index() -> int:
+	if _sel_wire < 0:
+		return -1
+	for i in s.conduits.size():
+		if int((s.conduits[i])["id"]) == _sel_wire:
+			return i
+	return -1
+
+
+## 選一條導管。再點同一條＝取消（和選節點同一個開關語意）。
+func _select_wire(id: int) -> void:
+	_selected = Vector2i(-1, -1)
+	_sel_wire = -1 if _sel_wire == id else id
+	_message = ""
+	_refresh_inspect()
+
+
+func _on_inspect_upgrade() -> void:
+	var wi := _sel_wire_index()
+	if wi >= 0:
+		var code := BuildController.upgrade(s, wi)
+		if code == Build.OK:
+			AudioBus.play("build_wire")
+		_message = _text_of(code)
+	elif _selected.x >= 0:
+		var code := BuildController.upgrade_node(s, _selected)
+		if code == Build.OK:
+			AudioBus.play("build_place")
+		_message = _text_of(code)
+	_refresh_inspect()
+	_refresh_hint()
+	queue_redraw()
+
+
+func _on_inspect_demolish() -> void:
+	var wi := _sel_wire_index()
+	var code := ""
+	if wi >= 0:
+		code = BuildController.demolish_conduit(s, wi)
+	elif _selected.x >= 0:
+		code = BuildController.demolish(s, _selected)
+	else:
+		return
+	if code == Build.OK:
+		AudioBus.play("build_destroyed", -4.0)
+		# 拆掉的東西不能繼續選著：面板下一幀就沒有東西可講了。
+		_selected = Vector2i(-1, -1)
+		_sel_wire = -1
+	_message = _text_of(code)
+	_refresh_inspect()
+	_refresh_hint()
+	queue_redraw()
 
 
 ## ★ 被選取那一座的**當下數據**（B3.6）。每幀重算——它講的是這個 tick。
@@ -3881,8 +4185,19 @@ func _build_inspect_panel() -> void:
 func _refresh_inspect() -> void:
 	if _inspect_panel == null:
 		return
+	if Hooks.naked:
+		_inspect_panel.visible = false
+		return
+	# 選著的那條線可能已經不在了（自己拆的、或敵人啃斷的）。**在這裡收掉**，
+	# 而不是等某個讀 `s.conduits[i]` 的地方越界——那個症狀是整支函式中止（RG-164）。
+	var wi := _sel_wire_index()
+	if _sel_wire >= 0 and wi < 0:
+		_sel_wire = -1
+	if wi >= 0:
+		_refresh_inspect_wire(wi)
+		return
 	var n: Dictionary = s.node_at(_selected) if _selected.x >= 0 else {}
-	if n.is_empty() or Hooks.naked:
+	if n.is_empty():
 		_inspect_panel.visible = false
 		return
 	var type := String(n["type"])
@@ -3949,6 +4264,65 @@ func _refresh_inspect() -> void:
 		if feeders.is_empty():
 			supply_text = "沒有外部來源，這一刻靠自己的存量" if self_fed 				else "這一刻沒有電流進來"
 		lines.append("供電　%s" % supply_text)
+
+	# ── ★ 兩顆動詞鈕（B3.7）──
+	# **核心兩顆都關**：它升不得也拆不得（`upgrade_node()`／`demolish()` 都擋著）。
+	# 鈕在那裡而按不動，等於邀請玩家去按一個保證失敗的東西。
+	if type == "core":
+		_show_verbs("", "")
+	else:
+		var up := "已滿級" if lvl >= Build.NODE_MAX_LEVEL else "升級　%d 礦砂" % (
+			Build.node_upgrade_cost(NodeDefs.cost(type), lvl)
+		)
+		var refund := BuildController.node_refund(type)
+		_show_verbs(up, "拆除　退 %d 礦砂" % refund.x, lvl < Build.NODE_MAX_LEVEL)
+	_place_inspect(lines)
+
+
+## ★ 被選取那條導管的當下數據（B3.7）。
+##
+## 玩家點一條線要問的是同一組問題，只是主詞換了：**它多粗 → 這一刻擠不擠 →
+## 加粗要多少錢**。「擠不擠」是這一批真正要答的——導管滿載在圖上是變色與線寬，
+## 那是給掃視用的；點下去要拿得到數字。
+func _refresh_inspect_wire(wi: int) -> void:
+	var c: Dictionary = s.conduits[wi]
+	var lvl := int(c["level"])
+	var cap := Build.conduit_cap(lvl, float(s.mods["cap_bonus"]))
+	var flow := float((s.rates["conduit_flow"] as Dictionary).get(c["id"], 0.0))
+	var lines: Array[String] = []
+	lines.append("導管%s" % ("　%d 級" % lvl if lvl > 0 else ""))
+	lines.append("生命　%d / 40" % int(c["hp"]))
+	lines.append("長度　%d 格" % (Build.conduit_cost(c["a"], c["b"]) / Build.CONDUIT_COST_PER_CELL))
+	# 「這一刻擠不擠」：滿載是這條線正在**卡住**它下游的每一個節點。
+	lines.append("流量　%.1f / %.0f 每秒%s" % [
+		flow, cap, "　已滿載" if flow >= cap - 0.05 else ""
+	])
+	if lvl < Build.CAP_MAX_LEVEL:
+		lines.append("加粗後　%.0f 每秒" % Build.conduit_cap(lvl + 1, float(s.mods["cap_bonus"])))
+
+	var up := "已滿級"
+	if lvl < Build.CAP_MAX_LEVEL:
+		var alloy := Build.upgrade_alloy(lvl)
+		up = "加粗　%d 礦砂%s" % [
+			Build.upgrade_cost(lvl), "" if alloy == 0 else " ＋ %d 合金" % alloy
+		]
+	var refund := BuildController.conduit_refund(c)
+	_show_verbs(up, "拆除　退 %d 礦砂" % refund.x, lvl < Build.CAP_MAX_LEVEL)
+	_place_inspect(lines)
+
+
+## 兩顆鈕的文字與可按性。空字串＝那顆鈕整個收起來。
+func _show_verbs(up: String, del: String, up_on: bool = true) -> void:
+	_inspect_up.visible = up != ""
+	_inspect_up.text = up
+	_inspect_up.disabled = not up_on
+	_inspect_del.visible = del != ""
+	_inspect_del.text = del
+
+
+## 面板的內容與座標。**兩種選取共用**——版面規則只有一份，不然加第三種選取時
+## 會有一種悄悄跑到畫面外（RG-139／149／162／170 都是同一個錯法）。
+func _place_inspect(lines: Array[String]) -> void:
 	_inspect_label.text = "
 ".join(lines)
 	_inspect_panel.visible = true
@@ -3959,10 +4333,21 @@ func _refresh_inspect() -> void:
 	var below: float = 56.0
 	if _energy_panel != null and _energy_panel.visible:
 		below = _energy_panel.position.y + _energy_panel.size.y + 12.0
-	_inspect_panel.position = Vector2(
+	var pos := Vector2(
 		float(size.x) - _inspect_panel.size.x - 24.0,
 		clampf(below, 56.0, float(size.y) - _inspect_panel.size.y - 70.0)
 	)
+	# ⚠ **小地圖也住在這個角落**（右下）。B3.6 只讓開了能量面板，而多了兩顆鈕之後
+	#   面板長高，在無盡的大圖上會壓到小地圖——RG-162 的第三次。
+	#
+	#   讓位要**往左挪，不能往上擠**：能量面板自己就有 358 高，右緣從 y 96 排到 454，
+	#   小地圖從 525 起——中間只剩 71px，塞不下一個 174px 高的面板。第一版把上限
+	#   夾在小地圖上緣，結果是面板被推回去壓在能量面板身上（量出來 339–513 對
+	#   96–454）——**那只是把一個重疊換成另一個重疊**。
+	var mini := _minimap_rect()
+	if Rect2(pos, _inspect_panel.size).intersects(mini):
+		pos.x = maxf(FRAME.position.x + 12.0, mini.position.x - _inspect_panel.size.x - 12.0)
+	_inspect_panel.position = pos
 
 
 ## 本 tick 每條導管的**能量**淨流（沿 a→b 為正）。
@@ -4632,6 +5017,10 @@ func _restart() -> void:
 	_build_buttons.clear()
 	_mode = Mode.BUILD
 	_build_type = "extractor"
+	# 選取要跟著局一起歸零。**`_sel_wire` 存的是 id，而新的一局的 id 從頭發**——
+	# 不清的話重開一關會看到面板指著一條玩家沒選過的線（B3.7）。
+	_selected = Vector2i(-1, -1)
+	_sel_wire = -1
 	s = SessionState.new()
 	_setup_session()
 	_accum = 0.0
@@ -4656,7 +5045,11 @@ func _refresh_hint() -> void:
 		return
 	match _mode:
 		Mode.BUILD:
-			if _in_map(_hover):
+			# ★ 游標壓在導管上時，落點提示是**錯的**——點下去不會蓋東西（B3.7）。
+			#   順便把逃生門講出來：想在這一格蓋，就避開線，往格子邊緣點。
+			if _bp_index < 0 and s.conduit_near(_hover_p, WIRE_PICK) >= 0:
+				parts.append("這條導管：左鍵點一下就檢視它，面板上可以加粗或拆除。想在這一格蓋東西，避開線往格子邊緣點。")
+			elif _in_map(_hover):
 				parts.append_array(BuildController.preview_place(s, _build_type, _hover)["lines"])
 			else:
 				parts.append("建造 %s：左鍵點一格放下；從既有節點按住拖到另一個節點＝拉導管。" % NodeDefs.label(_build_type))

@@ -114,6 +114,39 @@ static func upgrade_node(s: RefCounted, cell: Vector2i) -> String:
 	return Build.OK
 
 
+## ★ 拆掉會退多少（礦砂, 合金）。**退款規則只有這一份**（B3.7）。
+##
+## 檢視面板的拆除鈕要把數字寫在鈕上，而「鈕上寫的」和「真的退的」各算一份的話，
+## 遲早會有一次不一樣——那種缺陷玩家會當成偷他的錢。
+static func node_refund(type: String) -> Vector2i:
+	return Vector2i(
+		int(floorf(float(NodeDefs.cost(type)) * REFUND)),
+		int(floorf(float(NodeDefs.alloy_cost(type)) * REFUND))
+	)
+
+
+## 同上，導管版。導管退的是**鋪設價 ＋ 已買的每一級加粗**。
+static func conduit_refund(c: Dictionary) -> Vector2i:
+	var spent := Build.conduit_cost(c["a"], c["b"])
+	var spent_alloy := 0
+	for lv in range(int(c["level"])):
+		spent += Build.upgrade_cost(lv)
+		spent_alloy += Build.upgrade_alloy(lv)
+	return Vector2i(int(floorf(float(spent) * REFUND)), int(floorf(float(spent_alloy) * REFUND)))
+
+
+## 拆一條導管（**指標版**，B3.7）。檢視面板已經知道玩家選的是哪一條，
+## 不必再用座標猜一次——用座標猜的那條路徑（`demolish()`）留給模式點擊。
+static func demolish_conduit(s: RefCounted, index: int) -> String:
+	if index < 0 or index >= s.conduits.size():
+		return Build.OCCUPIED
+	var refund := conduit_refund(s.conduits[index])
+	s.ore += float(refund.x)
+	s.alloy += float(refund.y)
+	s.remove_conduit(index)
+	return Build.OK
+
+
 ## 拆除：節點或導管都走這裡，返還 75%。
 ## `point`（格為單位的浮點座標）只在「這一格沒有節點」時才用得上——
 ## 它讓拆導管和加粗一樣點得準（B1.2.1）。省略時退回格中心。
@@ -122,24 +155,12 @@ static func demolish(s: RefCounted, cell: Vector2i, point: Vector2 = Vector2(-99
 	if not n.is_empty():
 		if n["type"] == "core":
 			return Build.OCCUPIED  # 核心拆不得
-		var type := String(n["type"])
-		s.ore += floorf(float(NodeDefs.cost(type)) * REFUND)
-		s.alloy += floorf(float(NodeDefs.alloy_cost(type)) * REFUND)
+		var refund := node_refund(String(n["type"]))
+		s.ore += float(refund.x)
+		s.alloy += float(refund.y)
 		s.remove_node_at(cell)
 		return Build.OK
-	var ci: int = s.conduit_near(Vector2(cell) if point.x < -900.0 else point)
-	if ci >= 0:
-		var c: Dictionary = s.conduits[ci]
-		var spent := Build.conduit_cost(c["a"], c["b"])
-		var spent_alloy := 0
-		for lv in range(int(c["level"])):
-			spent += Build.upgrade_cost(lv)
-			spent_alloy += Build.upgrade_alloy(lv)
-		s.ore += floorf(float(spent) * REFUND)
-		s.alloy += floorf(float(spent_alloy) * REFUND)
-		s.remove_conduit(ci)
-		return Build.OK
-	return Build.OCCUPIED
+	return demolish_conduit(s, s.conduit_near(Vector2(cell) if point.x < -900.0 else point))
 
 
 ## ★ 藍圖展開的**事前檢查**（B2.3、`10_GDD.md` §3.7）。

@@ -35,6 +35,11 @@ var level: int = 0
 ## 空字串＝照原本的 fit 全景。
 var focus: Vector2i = Vector2i(-1, -1)
 var focus_zoom: float = 1.0
+## ★ `TL_PICK=wire`：合照那一張改成**選一條導管**（B3.7）。
+##
+## 同 `TL_FOCUS` 的理由：檢視面板是**純互動狀態**，沒有鉤子就拍不到，
+## 於是「導管面板做好了」只能用宣稱的。預設（空字串）選一座塔，維持 B3.6 那張圖。
+var pick: String = ""
 
 
 func _ready() -> void:
@@ -47,6 +52,7 @@ func _ready() -> void:
 	click_test = Env.flag("TL_CLICKTEST")
 	stress = Env.flag("TL_STRESS")
 	level = Env.int_of("TL_LEVEL", 0)
+	pick = Env.str_of("TL_PICK")
 	var f := Env.str_of("TL_FOCUS")
 	if f != "":
 		var parts := f.split(",")
