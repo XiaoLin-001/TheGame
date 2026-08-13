@@ -22,6 +22,7 @@ const NodeDefs := preload("res://data/NodeDefs.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
 const Build := preload("res://scripts/sim/Build.gd")
+const Shapes := preload("res://scripts/render/Shapes.gd")
 const FlowNetwork := preload("res://scripts/sim/FlowNetwork.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
 
@@ -476,9 +477,12 @@ func _in_battle_node_upgrade(t: RefCounted) -> void:
 	# ── 規則本身 ──
 	t.eq(Build.node_scale(0), 1.0, "0 級＝原值")
 	t.eq(Build.node_scale(3), 1.75, "3 級 ＝ ×1.75（每級 +25%）")
-	t.eq(Build.node_scale(9), Build.node_scale(3), "★ 越界夾回上限，不是無限成長")
+	t.eq(Build.node_scale(5), 2.25, "★ 5 級 ＝ ×2.25（B3.9 把上限從 3 抬到 5）")
+	t.eq(Build.NODE_MAX_LEVEL, 5, "★ 上限就是 5（使用者指定「升級會有共 5 級」）")
+	t.eq(Build.node_scale(9), Build.node_scale(5), "★ 越界夾回上限，不是無限成長")
 	t.eq(Build.node_upgrade_cost(50, 0), 25, "錨（50）升 1 級 ＝ 半價")
 	t.eq(Build.node_upgrade_cost(50, 2), 75, "升 3 級 ＝ 一倍半")
+	t.eq(Build.node_upgrade_cost(50, 4), 125, "★ 升 5 級 ＝ 兩倍半（五級全升 ＝ 造價的 7.5 倍）")
 
 	# ── 產出真的變（採集器：它沒有輸入，量得到乾淨的倍率） ──
 	var s := _session()
@@ -494,14 +498,14 @@ func _in_battle_node_upgrade(t: RefCounted) -> void:
 	BattleController.step(s)
 	var base := float(s.rates["ore_in"])
 	t.ok(base > 0.0, "（前提）採集器在送礦")
-	for _i in 3:
+	for _i in Build.NODE_MAX_LEVEL:
 		t.eq(
 			BuildController.upgrade_node(s, Vector2i(16, 8)), Build.OK,
 			"採集器升得了級"
 		)
 	t.eq(
 		BuildController.upgrade_node(s, Vector2i(16, 8)), Build.MAX_LEVEL,
-		"★ 到 3 級就升不上去（上限是規則不是提示）"
+		"★ 到 5 級就升不上去（上限是規則不是提示）"
 	)
 	BattleController.step(s)
 	# ★★ **升級把瓶頸推回導管上**——這一條就是 `Build.gd` 那段註解的證據。
@@ -511,7 +515,7 @@ func _in_battle_node_upgrade(t: RefCounted) -> void:
 	#    我寫斷言時假設了「產得出來就送得到」，那正是這個機制要打掉的假設。
 	t.near(
 		float(s.rates["ore_in"]), 10.0,
-		"★★ 3 級採集器產 10.5，而 cap 10 的線只送得到 10（升級把瓶頸推給導管）", 0.01
+		"★★ 滿級採集器產 13.5，而 cap 10 的線只送得到 10（升級把瓶頸推給導管）", 0.01
 	)
 	# 加粗**整條**線之後，那 0.5 才真的到得了帳上。
 	# （只加粗第一段是不夠的——瓶頸是那一串裡最窄的任何一段，
@@ -520,8 +524,8 @@ func _in_battle_node_upgrade(t: RefCounted) -> void:
 		BuildController.upgrade(s, ci)
 	BattleController.step(s)
 	t.near(
-		float(s.rates["ore_in"]), base * 1.75,
-		"★ 加粗之後才拿得到完整的 ×1.75", 0.01
+		float(s.rates["ore_in"]), base * 2.25,
+		"★ 加粗之後才拿得到完整的 ×2.25", 0.01
 	)
 
 	# ── ★ **消費者的胃口也一起長**。發電機升級之後每秒吃 4 → 7 礦砂，
@@ -532,14 +536,14 @@ func _in_battle_node_upgrade(t: RefCounted) -> void:
 	_power_plant(g)
 	BattleController.step(g)
 	var g0 := float(g.rates["power_supply"])
-	for _i in 3:
+	for _i in Build.NODE_MAX_LEVEL:
 		BuildController.upgrade_node(g, Vector2i(16, 11))
 	BattleController.step(g)
 	var g1 := float(g.rates["power_supply"])
-	t.ok(g1 > g0, "3 級發電機供得比較多")
+	t.ok(g1 > g0, "滿級發電機供得比較多")
 	t.ok(
-		g1 < g0 * 1.75,
-		"★★ 但**達不到 ×1.75**——它自己的礦砂需求也 ×1.75，而那台採集器沒跟著升"
+		g1 < g0 * 2.25,
+		"★★ 但**達不到 ×2.25**——它自己的礦砂需求也 ×2.25，而那台採集器沒跟著升"
 	)
 
 	# ── 耗能也真的變（塔）──**這一條是這一段存在的理由** ──
@@ -551,12 +555,12 @@ func _in_battle_node_upgrade(t: RefCounted) -> void:
 	BattleController.step(s2)
 	var d0 := float(s2.rates["power_demand"])
 	t.ok(d0 > 0.0, "（前提）錨在交戰、正在吃電")
-	for _i in 3:
+	for _i in Build.NODE_MAX_LEVEL:
 		BuildController.upgrade_node(s2, Vector2i(16, 7))
 	BattleController.step(s2)
 	t.near(
-		float(s2.rates["power_demand"]), d0 * 1.75,
-		"★★ 3 級塔的**耗能**也 ×1.75——升級買的是集中，不是效率", 0.01
+		float(s2.rates["power_demand"]), d0 * 2.25,
+		"★★ 5 級塔的**耗能**也 ×2.25——升級買的是集中，不是效率", 0.01
 	)
 
 	# ── ★★ 使用者實玩回報：「潮鳴跟霜礁升級都沒用」（B3.8）────────────────
@@ -575,19 +579,19 @@ func _in_battle_node_upgrade(t: RefCounted) -> void:
 			[{"id": 1, "type": aura_type, "cell": cell, "level": 0}], probe, {}
 		)
 		var hi: Array[Vector2] = Combat.auras(
-			[{"id": 1, "type": aura_type, "cell": cell, "level": 3}], probe, {}
+			[{"id": 1, "type": aura_type, "cell": cell, "level": Build.NODE_MAX_LEVEL}], probe, {}
 		)
 		var base_def := NodeDefs.of(aura_type)
 		# 減速與破甲**至少有一項要真的變強**（霜礁沒有破甲，只有減速）。
 		t.ok(
 			hi[0].x > lo[0].x or hi[0].y > lo[0].y,
-			"★★ %s 升到 3 級之後光環真的更強（使用者回報「升級都沒用」）"
+			"★★ %s 升到滿級之後光環真的更強（使用者回報「升級都沒用」）"
 			% NodeDefs.label(aura_type)
 		)
 		# 而且**耗能確實有漲**——沒有這一句，一個「效果不變、耗能也不變」的
 		# 實作也能讓上面那條變綠（只要它的 `power` 級數夠多）。
 		t.ok(
-			Build.node_scale(3) > Build.node_scale(0),
+			Build.node_scale(Build.NODE_MAX_LEVEL) > Build.node_scale(0),
 			"（對照）%s 的耗能本來就在漲——所以效果不漲＝嚴格更差" % NodeDefs.label(aura_type)
 		)
 		if float(base_def.get("slow", 0.0)) > 0.0:
@@ -621,15 +625,15 @@ func _in_battle_node_upgrade(t: RefCounted) -> void:
 		"★ 碎浪的第 2 級加濺射半徑（它賣的就是這個）"
 	)
 	t.eq(
-		Build.splash_radius("anchor", 3), 0.0,
+		Build.splash_radius("anchor", Build.NODE_MAX_LEVEL), 0.0,
 		"★ 沒有濺射的塔升到滿級也長不出濺射"
 	)
 	t.ok(
 		Build.node_range("frostreef", 1) > Build.node_range("frostreef", 0),
 		"★ 霜礁的短板是射程 3，所以它第一級就補射程"
 	)
-	# ★ 每一隻塔的三級**必須都寫了**，而且只用得上那四個詞。
-	#   漏寫一隻的症狀是「它安靜地退回三個 power」——那正是 B3.8 要修掉的東西，
+	# ★ 每一隻塔的五級**必須都寫了**，而且只用得上那四個詞。
+	#   漏寫一隻的症狀是「它安靜地退回五個 power」——那正是 B3.8 要修掉的東西，
 	#   而它不會報錯（`10_GDD.md` §4.3；B2.4 的 `_no_glyph` 是同一個錯法）。
 	var vocab := [Build.STEP_POWER, Build.STEP_RANGE, Build.STEP_ROF, Build.STEP_SPLASH]
 	var no_steps := PackedStringArray()
@@ -647,19 +651,67 @@ func _in_battle_node_upgrade(t: RefCounted) -> void:
 				bad_steps.append("%s:%s" % [type, st])
 	t.eq(
 		String(",".join(no_steps)), "",
-		"★★ 每一隻塔都要寫滿三級的 `steps`（漏寫會安靜地退回三個 power）"
+		"★★ 每一隻塔都要寫滿五級的 `steps`（漏寫會安靜地退回五個 power）"
 	)
 	t.eq(String(",".join(bad_steps)), "", "★ `steps` 只能用那四個詞（打錯字＝那一級無效）")
-	# 而生產節點**刻意沒有** `steps`：它們沒有第二個維度，退回三個 power 是對的。
+	# 而生產節點**刻意沒有** `steps`：它們沒有第二個維度，退回五個 power 是對的。
 	t.eq(
-		Build.effect_scale("extractor", 3), Build.node_scale(3),
-		"★ 沒寫 `steps` 的節點＝三個 power ＝ B3.5 的原行為，一個數字都不變"
+		Build.effect_scale("extractor", 5), Build.node_scale(5),
+		"★ 沒寫 `steps` 的節點＝五個 power ＝ B3.5 的原行為，一個數字都不變"
+	)
+
+	# ── ★★ B3.9：五級，而且**每一級都看得出來**（使用者指定）────────────────
+	#
+	#    「升級會有共 5 級，且每一級都要有外觀上的改變。」
+	#    外觀有兩個通道，這裡釘住的是**尺寸**那一個——它是唯一一個
+	#    「每一種節點、每一級都保證不同」的通道（級章的形狀只有升到那一項時才變，
+	#    而採集器五級都是出力）。尺寸只要有一級沒長，那一級在畫面上就是隱形的。
+	var seen_scales: Array[float] = []
+	for lv in Build.NODE_MAX_LEVEL + 1:
+		var sc := Shapes.level_scale(lv)
+		for prev: float in seen_scales:
+			t.ok(sc > prev + 0.001, "★★ %d 級的塔身比每一個更低的級數都大（每一級都看得出來）" % lv)
+		seen_scales.append(sc)
+	t.eq(Shapes.level_scale(0), 1.0, "★ 沒升過的塔是原尺寸（擺放預覽走的也是這條）")
+	t.ok(
+		Shapes.level_scale(Build.NODE_MAX_LEVEL) * 13.0 < Shapes.GRID * 0.55,
+		"★ 滿級塔身仍在自己那一格裡（最大的塔身半徑 13px，半格 16px）"
+	)
+	# ★ **`power` 最多三級**。`slow`／`reclaim` 是比例，乘四次就越過自己的物理意義
+	#   ——回收 1.05 ＝ 回收得比敵人的價值還多，那是印鈔機不是塔。
+	#   逐塔查而不是只查現有的兩隻：這張表以 type 為鍵，而漏掉的那一隻不會報錯。
+	var over_power := PackedStringArray()
+	for type: String in NodeDefs.BUILDABLE:
+		var d := NodeDefs.of(type)
+		if not d.get("tower", false):
+			continue
+		var mx := Build.NODE_MAX_LEVEL
+		if Build.step_count(type, mx, Build.STEP_POWER) > 3:
+			over_power.append(type)
+		var eff := Build.effect_scale(type, mx)
+		if float(d.get("reclaim", 0.0)) * eff > 1.0:
+			over_power.append("%s:回收 %.2f" % [type, float(d["reclaim"]) * eff])
+		if float(d.get("slow", 0.0)) * eff > Combat.SLOW_MAX + 0.001:
+			over_power.append("%s:減速 %.2f" % [type, float(d["slow"]) * eff])
+	t.eq(
+		String(",".join(over_power)), "",
+		"★★ 滿級的比例欄位不得越界（回收 ≤ 100%、減速 ≤ 上限、`power` ≤ 3 級）"
+	)
+	# ★ 五級的階梯**真的用到了新的兩級**：至少一隻塔的第 4／5 級加的東西
+	#   和它前三級的最後一項不同——否則「擴到五級」等於多買兩份同樣的東西。
+	t.ok(
+		Build.node_range("frostreef", 5) - Build.node_range("frostreef", 3) >= 2.0,
+		"★ 霜礁的第 4、5 級都在補射程（3 → 7 格的減速場）"
+	)
+	t.ok(
+		Build.rof_scale("anchor", 5) > Build.rof_scale("anchor", 3),
+		"★ 錨的第 5 級加射速——五級走完是一挺機槍"
 	)
 
 	# ── 核心升不得 ──
 	t.eq(
 		BuildController.upgrade_node(s, s.core()["cell"]), Build.OCCUPIED,
-		"★ 核心升不得（它沒有產出也沒有耗能，一顆「3 級核心」只會騙人）"
+		"★ 核心升不得（它沒有產出也沒有耗能，一顆「5 級核心」只會騙人）"
 	)
 	# ── 錢不夠就不給升，而且**不扣款** ──
 	var s3 := _session()

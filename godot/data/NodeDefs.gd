@@ -66,19 +66,22 @@ const DEFS := {
 	# `engage_power` 是**射程內有敵人時**的每秒耗能；`power_in`（待機）刻意
 	# 不寫＝0。這一欄就是全案的心臟：同一份能量，餵塔還是餵生產線。
 	#
-	# ★ `steps` ＝ **局內升級的三級各加什麼**（§4.3，B3.8，使用者指定「每次升級
-	#   有不同效果」）。四個詞：`power` 出力 ×1.25 累乘、`range` 射程 +1 格、
+	# ★ `steps` ＝ **局內升級的五級各加什麼**（§4.3，B3.8 立、B3.9 擴到五級，
+	#   兩次都是使用者指定）。四個詞：`power` 出力 ×1.25 累乘、`range` 射程 +1 格、
 	#   `rof` 射速 ×1.25、`splash` 濺射半徑 +1 格。**耗能一律 ×1.25/級，不看 steps**
 	#   ——那是鎖定設計（效果與耗能一起長），這一欄只決定「長的是哪一項」。
 	#
-	#   沒有這一欄的節點（採集器、發電機、熔爐、儲槽、中繼）走預設三個 `power`，
+	#   沒有這一欄的節點（採集器、發電機、熔爐、儲槽、中繼）走預設五個 `power`，
 	#   也就是 B3.5 的原行為，一個數字都不變。
 	#
-	#   ⚠ 三個詞的順序就是三級的順序，**要各自對得起那隻角色的定位**：
-	#     霜礁的短板是射程 3，所以它第一級就給射程；碎浪賣的是濺射，第二級給半徑。
+	#   ⚠ 五個詞的順序就是五級的順序，**要各自對得起那隻角色的定位**：
+	#     霜礁的短板是射程 3，所以它五級有四級都在補射程；碎浪賣的是濺射，給兩級半徑。
+	#   ⚠ **`power` 最多給三個**——`slow`／`reclaim` 這種「比例」欄位乘四次就會
+	#     越過它們自己的物理意義（回收 1.05 ＝ 回收得比敵人的價值還多）。
+	#     `combat_test` 有一條斷言釘住這件事。
 	"anchor": {
 		"name": "錨",
-		"steps": ["power", "rof", "range"],
+		"steps": ["power", "rof", "range", "power", "rof"],
 		"cost": 50,
 		"hp": 60.0,
 		"tower": true,
@@ -90,7 +93,7 @@ const DEFS := {
 	},
 	"prism": {
 		"name": "稜鏡",
-		"steps": ["power", "range", "rof"],
+		"steps": ["power", "range", "rof", "power", "range"],
 		"cost": 120,
 		"hp": 60.0,
 		"tower": true,
@@ -103,7 +106,7 @@ const DEFS := {
 	},
 	"knell": {
 		"name": "潮鳴",
-		"steps": ["power", "range", "power"],
+		"steps": ["power", "range", "power", "range", "power"],
 		"cost": 90,
 		"hp": 60.0,
 		"tower": true,
@@ -117,7 +120,7 @@ const DEFS := {
 	},
 	"reclaimer": {
 		"name": "回收者",
-		"steps": ["power", "range", "power"],
+		"steps": ["power", "range", "power", "rof", "range"],
 		"cost": 100,
 		"hp": 60.0,
 		"tower": true,
@@ -136,7 +139,7 @@ const DEFS := {
 	},
 	"breaker": {
 		"name": "碎浪",
-		"steps": ["power", "splash", "range"],
+		"steps": ["power", "splash", "range", "power", "splash"],
 		"cost": 140,
 		"alloy_cost": 60,       # ★ 第一個要合金的東西（另一個是導管 2/3 級）
 		"hp": 60.0,
@@ -162,7 +165,7 @@ const DEFS := {
 	# 五關難度不受影響。它們活在無盡與每日的自由配置榜。
 	"longcall": {
 		"name": "長哨",
-		"steps": ["power", "rof", "range"],
+		"steps": ["power", "rof", "range", "rof", "power"],
 		"cost": 180,
 		"hp": 60.0,
 		"tower": true,
@@ -176,7 +179,7 @@ const DEFS := {
 	},
 	"frostreef": {
 		"name": "霜礁",
-		"steps": ["range", "power", "range"],
+		"steps": ["range", "power", "range", "range", "range"],
 		"cost": 200,
 		"alloy_cost": 40,
 		"hp": 60.0,
@@ -193,7 +196,7 @@ const DEFS := {
 	},
 	"ballast": {
 		"name": "定潮",
-		"steps": ["power", "range", "rof"],
+		"steps": ["power", "range", "rof", "power", "rof"],
 		"cost": 240,
 		"alloy_cost": 100,
 		# 90（其餘塔 60）。它是壓在路邊撐的那一座，撐不住就沒有存在的理由。

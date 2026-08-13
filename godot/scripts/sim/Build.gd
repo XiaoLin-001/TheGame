@@ -57,7 +57,7 @@ static func upgrade_alloy(level: int) -> int:
 
 # ── ★ 局內臨時升級（`10_GDD.md` §4.3、B3.5）────────────────────────
 #
-# 規格從 M0 就寫著：「局內可用礦砂即時升級**單座建築**（+1 級，最多 3 級），
+# 規格從 M0 就寫著：「局內可用礦砂即時升級**單座建築**（+1 級，最多 5 級），
 # **隨局結束消失**」。做到 B3.4 為止，`upgrade()` 只吃導管——這條一直沒有實作。
 #
 # ── 為什麼「效果」和「耗能」一起長 ────────────────────────────────
@@ -68,8 +68,12 @@ static func upgrade_alloy(level: int) -> int:
 # 代價是那一條線要扛得動更大的量：一座 3 級稜鏡要 35 能量/秒，
 # 而一條 cap 10 的線送不進去——**集中會把瓶頸推回導管上**。
 # 核心取捨（同一份能量餵塔還是餵產線）因此原封不動，而多了一個空間維度。
-const NODE_MAX_LEVEL := 3
-## 每級 +25%（效果與耗能同步）。3 級 ＝ ×1.75。
+##
+## ★ B3.9：上限 3 → **5**（使用者指定「升級會有共 5 級，且每一級都要有外觀上的改變」）。
+## 造價公式沒有動，所以五級全升 ＝ 造價的 **7.5 倍**（3 級時是 3 倍）——後兩級
+## 是「已經沒有格子可蓋了」才會做的事，這正是升級應該待的位置。
+const NODE_MAX_LEVEL := 5
+## 每級 +25%（效果與耗能同步）。5 級 ＝ ×2.25。
 const NODE_STEP := 0.25
 
 
@@ -92,12 +96,14 @@ static func node_scale(level: int) -> float:
 #   `rof`    射速 ×1.25 累乘
 #   `splash` 濺射半徑 +1 格
 #
-# 沒有 `steps` 的節點走三個 `power` ＝ B3.5 的原行為，一個數字都不變。
+# 沒有 `steps` 的節點走五個 `power` ＝ B3.5 的原行為，一個數字都不變。
 const STEP_POWER := "power"
 const STEP_RANGE := "range"
 const STEP_ROF := "rof"
 const STEP_SPLASH := "splash"
-const DEFAULT_STEPS: Array[String] = [STEP_POWER, STEP_POWER, STEP_POWER]
+const DEFAULT_STEPS: Array[String] = [
+	STEP_POWER, STEP_POWER, STEP_POWER, STEP_POWER, STEP_POWER,
+]
 
 
 ## 這個級數為止，某一種 step 出現了幾次。
@@ -144,9 +150,9 @@ static func next_step(type: String, level: int) -> String:
 	return String(steps[level]) if level < steps.size() else ""
 
 
-## 升到「下一級」的礦砂造價 ＝ **造價 × (級數+1) ÷ 2**（半價、全價、一倍半）。
+## 升到「下一級」的礦砂造價 ＝ **造價 × (級數+1) ÷ 2**（半價、全價、一倍半、兩倍、兩倍半）。
 ##
-## 三級全升的總價是造價的 3 倍，換到 ×1.75——**比多蓋兩座還貴而且更弱**。
+## 五級全升的總價是造價的 7.5 倍，換到耗能 ×2.25——**比多蓋七座還貴**。
 ## 那是刻意的：升級買的是格子與導管，不是數值效率。划算與否由地形決定，
 ## 而地形是關卡設計的主要刻度尺（§7.7）。
 static func node_upgrade_cost(base_cost: int, level: int) -> int:

@@ -564,16 +564,24 @@ func _glyph_selftest() -> void:
 			for e: Dictionary in s.enemies:
 				if int(e["id"]) == id:
 					e["progress"] = float(4 + i * 3)
-	# ★ 合照裡順便排出**升級級數的階梯**（B3.5）：第 2/3/4 座各設 1/2/3 級。
-	#   級數標記是節點上緣 5×4 的小方點，在 fit 倍率下只有幾個像素——
-	#   「一級和三級分得出來嗎」只有人眼判得了，而那需要它們排在一起。
+	# ★ 合照裡順便排出**升級級數的階梯**（B3.5，★ B3.9 改寫）：
+	#   **同一種塔的 0..5 級排成第二列**。
+	#
+	#   B3.8 之前這個階梯是設在上面那一列的第 2..6 座上，而那是採集器、發電機、
+	#   熔爐、中繼、儲槽——**五種不同的形狀，而且五級全都是「出力」**。
+	#   於是這張照片答不了它唯一要答的兩個問題：一級和五級**大小**分得出來嗎
+	#   （不同型別本來就不一樣大）、級章的**形狀**分得出來嗎（全是實心方）。
+	#   換成一排錨之後兩個都答得了：它的階梯是 出力 → 射速 → 射程 → 出力 → 射速，
+	#   四種形狀裡出現三種，而六座並排的塔身只差在級數。
 	#   直接設欄位不走 `upgrade_node()`：這是**畫面**的驗收，不是規則的
-	#   （規則由 `combat_test` 的 21 條斷言顧）。
+	#   （規則由 `combat_test` 顧）。
 	if gallery:
-		for k in 3:
-			var idx := k + 1
-			if idx < s.nodes.size():
-				(s.nodes[idx] as Dictionary)["level"] = k + 1
+		for k in Build.NODE_MAX_LEVEL + 1:
+			# `s` 未標型別 → `:=` 推不出來，會編譯錯（CLAUDE.md 的嚴格型別地雷）
+			var id: int = s.add_node("anchor", Vector2i(4 + k * 2, 17))
+			for n: Dictionary in s.nodes:
+				if int(n["id"]) == id:
+					n["level"] = k
 	# ★ **擺放預覽也留在同一張圖上**（B3.4）。它擺在那一排真節點的正上方，
 	#   所以這張圖同時回答兩件事：預覽畫的是不是那隻角色的形狀、
 	#   以及它和真的蓋出來那一個長不長得一樣。
@@ -789,8 +797,8 @@ func _click_selftest() -> void:
 		await get_tree().process_frame
 	var node_lvl: bool = int(s.node_at(lvl_cell).get("level", 0)) == 1
 	var node_paid: bool = is_equal_approx(s.ore, ore_before - float(price))
-	# 上限是規則：連按五次也只到 3 級（滿級之後那顆鈕自己會關掉）。
-	for _i in 5:
+	# 上限是規則：連按八次也只到 5 級（B3.9；滿級之後那顆鈕自己會關掉）。
+	for _i in 8:
 		_click_button(_inspect_up)
 		await get_tree().process_frame
 	var node_cap: bool = int(s.node_at(lvl_cell).get("level", 0)) == Build.NODE_MAX_LEVEL
@@ -2859,28 +2867,60 @@ func _draw_nodes() -> void:
 	for n: Dictionary in s.nodes:
 		var p := _center(n["cell"])
 		var full := NodeDefs.hp(String(n["type"]))
+		var lv := int(n.get("level", 0))
+		var sc := Shapes.level_scale(lv)
 		if float(n["hp"]) < full:
 			# **血條不是圓環**：儲槽的充能也是琥珀色圓弧，兩個圓弧疊在同一顆
 			# 12px 的節點上肉眼分不出來（本批截圖當場抓到）。形狀不同才分得開。
+			# ★ B3.9：`15 × sc` 而不是 15——塔身跟著級數長，血條不跟就會被壓在底下。
 			var frac := clampf(float(n["hp"]) / full, 0.0, 1.0)
 			var bar := Vector2(24.0, 3.0)
-			var at := p + Vector2(-bar.x * 0.5, 15.0)
+			var at := p + Vector2(-bar.x * 0.5, 15.0 * sc)
 			draw_rect(Rect2(at, bar), Palette.alpha(Palette.BG_DEEP, 0.8))
 			draw_rect(Rect2(at, Vector2(bar.x * frac, bar.y)), Palette.WARN_ORANGE)
 		_draw_node_body(n, p)
-		# ★ 局內升級的級數（§4.3、B3.5）：**節點上緣的小方點**，一級一顆。
-		#   放在上緣是因為下緣、外圈、中心都被佔走了——血條在下（y+15）、
-		#   交戰環與缺料徽章在外圈與角落。§4.3b：同一個位置上的兩個訊息，
-		#   換顏色不夠，要換位置或形狀。
-		#   用 `alloy.steel` 不是青或琥珀：那兩個各自專屬秩序與能量（§1.1 配色紀律），
-		#   而「這座被我升過」跨越生產側與防線側，不屬於任何一邊。
-		var lv := int(n.get("level", 0))
-		for k in lv:
-			draw_rect(Rect2(p + Vector2(-9.0 + float(k) * 8.0, -19.0), Vector2(5, 4)),
-				Palette.ALLOY_STEEL)
+		_draw_level_marks(lv, String(n["type"]), p)
 		_draw_threat(n["cell"], p)
 		_draw_engaged(n, p)
-		_draw_badge(n, p)
+		# ★ 級章佔了上緣，徽章再往上退 6px（升過的塔才退）。兩個都畫在同一條
+		#   帶子上的話，缺料徽章——**地圖上唯一指出瓶頸的元素**——會被級章遮掉。
+		_draw_badge(n, p - Vector2(0.0, 6.0) if lv > 0 else p)
+
+
+## ★ 級章：一級一枚，**形狀說出那一級買到什麼**（`10_GDD.md` §4.3，B3.9）。
+##
+## 使用者指定「共 5 級，且每一級都要有外觀上的改變」。體積那個通道
+## （`Shapes.level_scale()`）答的是「這座升過幾級」，這個通道答的是
+## 「升到的是什麼」——只有數量的話，五級的錨和五級的長哨長得一樣，
+## 而它們買到的東西完全不同（一個是機槍，一個是狙擊）。
+##
+## 四種形狀而不是四種顏色：§4.3b「同一個位置上的兩個訊息，換顏色不夠，
+## 要換位置或形狀」。顏色全走 `alloy.steel`——青與琥珀各自專屬秩序與能量
+## （§1.1 配色紀律），而「這座被我升過」不屬於任何一邊。
+func _draw_level_marks(lv: int, type: String, p: Vector2) -> void:
+	for k in lv:
+		# 置中排開：五枚 6px 間距 ＝ 總寬 28px，剛好在一格內。
+		var x := p.x + float(k) * 6.0 - float(lv - 1) * 3.0
+		var y := p.y - 19.0
+		match Build.next_step(type, k):
+			Build.STEP_RANGE:
+				# 朝外（上）的尖角＝伸出去。
+				draw_colored_polygon(PackedVector2Array([
+					Vector2(x, y - 2.0), Vector2(x + 2.5, y + 2.5), Vector2(x - 2.5, y + 2.5),
+				]), Palette.ALLOY_STEEL)
+			Build.STEP_ROF:
+				# 兩根細直條＝連發。
+				draw_rect(Rect2(x - 2.5, y - 2.0, 1.5, 5.0), Palette.ALLOY_STEEL)
+				draw_rect(Rect2(x + 1.0, y - 2.0, 1.5, 5.0), Palette.ALLOY_STEEL)
+			Build.STEP_SPLASH:
+				# 菱形＝往四面炸開（和碎浪的爆散星同一族）。
+				draw_colored_polygon(PackedVector2Array([
+					Vector2(x, y - 3.0), Vector2(x + 3.0, y),
+					Vector2(x, y + 3.0), Vector2(x - 3.0, y),
+				]), Palette.ALLOY_STEEL)
+			_:
+				# 出力（以及沒有 `steps` 的節點）＝實心方，B3.5 起就是這個。
+				draw_rect(Rect2(x - 2.5, y - 2.0, 5.0, 4.0), Palette.ALLOY_STEEL)
 
 
 ## ★ 一座節點**畫成什麼樣子**——只看型別，不看它蓋起來沒有（B3.4）。
@@ -2897,6 +2937,18 @@ func _draw_nodes() -> void:
 ## `n` 只需要 `type`；`hp`／`charge` 缺了就當作滿血、空槽（預覽正是這個狀態）。
 func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 	var full := NodeDefs.hp(String(n["type"]))
+	# ★ B3.9：**升過的塔整體變大**（`10_GDD.md` §4.3，使用者指定「每一級都要有
+	#   外觀上的改變」）。掛在 `draw_set_transform` 上而不是改十三種形狀的每一個
+	#   座標——那是 65 個要維護的數字，而漏掉一種的症狀是隱形。
+	#
+	#   `p * (1 - sc)` 這個偏移是「以 p 為中心縮放」的展開式：
+	#   q ↦ p(1-sc) + sc·q，代入 q = p + off 得 p + sc·off。**不能只寫
+	#   `draw_set_transform(p, 0, sc)`**——下面每一筆都畫在絕對座標 `p + off`，
+	#   那樣會把整座塔甩到 p + sc·p 去。
+	#   預覽傳進來的字典沒有 `level` → sc = 1.0 → 這兩行是空操作。
+	var sc := Shapes.level_scale(int(n.get("level", 0)))
+	if sc != 1.0:
+		draw_set_transform(p * (1.0 - sc), 0.0, Vector2(sc, sc))
 	match String(n["type"]):
 		"core":
 			# ★ **最大的幾何體**，order.bright 描邊（§1.6）。
@@ -3018,6 +3070,10 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 			#   ——GDScript 的 `match` 沒對到就靜靜地什麼都不做。B2.4 加三隻招募塔
 			#   時三隻全中，而使用者是**用眼睛**發現的（「長哨沒有模型顯示」）。
 			_no_glyph[String(n["type"])] = true
+	# ⚠ 一定要還原：變換是 canvas item 的狀態，不還原的話**這一幀後面畫的每一個
+	#   東西**（敵人、彈道、徽章）都會跟著縮放並位移。
+	if sc != 1.0:
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 ## ★ 交戰指示：**琥珀＝能量**（配色紀律 2）。有環＝這座塔本 tick 正在吃電。
@@ -3025,7 +3081,9 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 ## 橙色缺口弧，那和 `缺料` 徽章編碼的是同一件事，留一個就好）。
 func _draw_engaged(n: Dictionary, p: Vector2) -> void:
 	if _engaged.get(int(n["id"]), false):
-		draw_arc(p, 15.0, 0.0, TAU, 32, Palette.ENERGY_AMBER, 2.0)
+		# ★ B3.9：半徑跟著級數長，否則滿級的塔會把環頂穿。
+		draw_arc(p, 15.0 * Shapes.level_scale(int(n.get("level", 0))), 0.0, TAU, 32,
+			Palette.ENERGY_AMBER, 2.0)
 
 
 ## ★ 節點三態徽章（`10_GDD.md` §3.1）。**`正常` 不畫任何東西**——徽章是例外
@@ -3968,7 +4026,7 @@ func _build_help_panel() -> void:
 		"　蓋節點：左欄選一種 → 左鍵點地圖上的一格",
 		"　拉導管：從一個節點按住左鍵，拖到另一個節點放開（隨時都能拖，不用切模式）",
 		"　檢　視：左鍵點一座建築或一條導管 → 右邊出現它的數據，升級與拆除也在那個面板上",
-		"　　　　　升級：效果與耗能同時 +25%／級，上限 3 級，隨局結束消失｜拆除返還 75%",
+		"　　　　　升級：每一級加的東西不同，耗能一律 +25%／級，上限 5 級，隨局結束消失｜拆除返還 75%",
 		"　取　消：再點一次同一個東西＝收起面板；再按一次左欄的節點鈕＝放下手上那一種",
 		"　移　動：按住滑鼠中鍵拖動地圖（放大之後才需要）",
 		"",
@@ -4438,6 +4496,15 @@ func _place_inspect(lines: Array[String]) -> void:
 	#   小地圖從 525 起——中間只剩 71px，塞不下一個 174px 高的面板。第一版把上限
 	#   夾在小地圖上緣，結果是面板被推回去壓在能量面板身上（量出來 339–513 對
 	#   96–454）——**那只是把一個重疊換成另一個重疊**。
+	# ★ 讓開能量面板也**只能往左挪**（B3.9 補；`版面=false` 在 B3.8 就是紅的）。
+	#   上面那個 `clampf` 的上限是「面板底部不出畫面」，而導管面板有 258 高——
+	#   720p 上算出來的 466 被夾回 392，於是它**被推回去疊在能量面板身上**
+	#   （量到 392–650 對 96–454）。RG-162 的同一句話第四次：夾一個座標不等於
+	#   讓開一個鄰居，鄰居要當成矩形算。
+	if _energy_panel != null and _energy_panel.visible:
+		var energy := Rect2(_energy_panel.position, _energy_panel.size)
+		if Rect2(pos, _inspect_panel.size).intersects(energy):
+			pos.x = maxf(FRAME.position.x + 12.0, energy.position.x - _inspect_panel.size.x - 12.0)
 	var mini := _minimap_rect()
 	if Rect2(pos, _inspect_panel.size).intersects(mini):
 		pos.x = maxf(FRAME.position.x + 12.0, mini.position.x - _inspect_panel.size.x - 12.0)
