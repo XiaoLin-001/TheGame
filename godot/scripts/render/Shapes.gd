@@ -42,6 +42,20 @@ static func level_scale(level: int) -> float:
 	return pow(1.05, float(maxi(level, 0)))
 
 
+## ★ 「以某一格為中心放大 `sc` 倍」的畫布變換（B3.9.2a）。
+##
+## ⚠ **`draw_set_transform()` 是取代，不是疊加。** 地圖那一層變換
+## （`_draw()` 開頭的 `draw_set_transform(origin, 0, zoom)`）必須自己乘進來，
+## 不然畫出來的東西就少了原點與縮放——而且 `draw_*` 之後**還原**時如果還原成
+## 單位矩陣，那一幀後面畫的每一樣東西都一起少掉。
+##
+## 抽成純函式是為了**斷言得到**：這件事在畫面上的症狀是「塔跑掉了、游標和格子
+## 對不上」，而那是最後才有人看得見的一層。這裡直接驗數學：
+## **那一格的中心必須落在地圖變換原本就會把它放的位置**（縮放是繞著它轉的）。
+static func level_xform(origin: Vector2, zoom: float, p: Vector2, sc: float) -> Transform2D:
+	return Transform2D(0.0, Vector2(zoom * sc, zoom * sc), 0.0, origin + p * zoom * (1.0 - sc))
+
+
 ## ★ 可讀性地板（B1.2.2）。**視覺編碼是在 32px 的格子上校準與驗收的**
 ## （線寬 2–8px、三態徽章、射程圈，B0.6 的 `TL_NAKED` 讀圖紀錄）。
 ##

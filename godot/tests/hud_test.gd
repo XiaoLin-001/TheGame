@@ -15,6 +15,8 @@ extends SceneTree
 
 const T := preload("res://tests/_assert.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
+const Shapes := preload("res://scripts/render/Shapes.gd")
+const Build := preload("res://scripts/sim/Build.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const Maps := preload("res://data/Maps.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
@@ -35,6 +37,7 @@ func _initialize() -> void:
 	_core_and_silo_never_starve(t)
 	_clearing_the_table_wins(t)
 	_conduit_net_direction(t)
+	_level_xform_keeps_the_tower_in_its_cell(t)
 	quit(t.report())
 
 
@@ -402,3 +405,35 @@ func _played(reduce: bool) -> Dictionary:
 		seen += s.bursts.size()
 	Motion.reduce = false
 	return {"hash": s.state_hash(), "bursts_seen": seen}
+
+
+## ★ 升過級的塔**只變大，不換位置**（B3.9.2a，使用者回報「升級完之後鼠標跟遊戲
+## 指定的格子會有 offset，升級的東西會不見」）。
+##
+## B3.9 用 `draw_set_transform()` 做那個放大，而它是**取代**不是疊加——一行就把
+## `_draw()` 開頭那層地圖變換（原點＋縮放）蓋掉了。症狀有兩層，第二層更糟：
+##   ① 升過級的塔畫到沒有原點的地方去（玩家看到的是「它不見了」）
+##   ② 還原時還原成單位矩陣 → **那一幀後面畫的每一樣東西**（其他節點、敵人、
+##      選取框、hover 框）全都少掉原點與縮放（玩家看到的是「游標和格子對不上」）
+##
+## 斷言驗的是數學不是畫面：**那一格的中心，套上這個變換之後必須落在地圖變換
+## 原本就會把它放的位置**。畫面上的證據另外走一支讀圖腳本（`50_QA_PLAN.md` §7）。
+func _level_xform_keeps_the_tower_in_its_cell(t: T) -> void:
+	var origin := Vector2(120.0, 55.0)
+	var zoom := 0.9931
+	var p := Vector2(144.0, 560.0)          # 合照那一排第一座的格心
+	var want := origin + p * zoom           # 地圖變換原本會把它放的地方
+	for lv in Build.NODE_MAX_LEVEL + 1:
+		var sc := Shapes.level_scale(lv)
+		var xf := Shapes.level_xform(origin, zoom, p, sc)
+		t.near((xf * p).x, want.x, "★★ %d 級的塔還在同一格（x）" % lv, 0.01)
+		t.near((xf * p).y, want.y, "★★ %d 級的塔還在同一格（y）" % lv, 0.01)
+		t.near(xf.x.x, zoom * sc, "★ 縮放 ＝ 地圖縮放 × 級數倍率（地圖那一層要乘進來）", 0.001)
+		# 偏離格心的每一筆（塔身的每一個角）繞著格心放大
+		var off := Vector2(11.0, -9.0)
+		t.near((xf * (p + off)).x, (origin + (p + off * sc) * zoom).x,
+			"★ %d 級：塔身的角繞著格心放大" % lv, 0.01)
+	# 0 級必須和地圖變換**一模一樣**——沒升過的塔與擺放預覽走的都是這一條
+	var id := Shapes.level_xform(origin, zoom, p, 1.0)
+	t.near(id.origin.x, origin.x, "★ 0 級 ＝ 地圖變換本身（x）", 0.01)
+	t.near(id.origin.y, origin.y, "★ 0 級 ＝ 地圖變換本身（y）", 0.01)

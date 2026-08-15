@@ -2906,14 +2906,17 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 	#   外觀上的改變」）。掛在 `draw_set_transform` 上而不是改十三種形狀的每一個
 	#   座標——那是 65 個要維護的數字，而漏掉一種的症狀是隱形。
 	#
-	#   `p * (1 - sc)` 這個偏移是「以 p 為中心縮放」的展開式：
-	#   q ↦ p(1-sc) + sc·q，代入 q = p + off 得 p + sc·off。**不能只寫
-	#   `draw_set_transform(p, 0, sc)`**——下面每一筆都畫在絕對座標 `p + off`，
-	#   那樣會把整座塔甩到 p + sc·p 去。
+	# ⚠ **`draw_set_transform()` 是取代，不是疊加**（B3.9.2a，使用者回報
+	#   「升級完之後鼠標跟遊戲指定的格子會有 offset，升級的東西會不見」）。
+	#   B3.9 這裡直接蓋掉了 `_draw()` 開頭那一層地圖變換（原點＋縮放），於是
+	#   ①升過級的塔畫到別的地方去（＝不見了），②還原時還原成**單位矩陣**，
+	#   那一幀後面畫的每一樣東西——其他節點、敵人、選取框、hover 框——
+	#   全都少掉原點與縮放（＝游標和格子對不上）。
+	#   算式收在 `Shapes.level_xform()` 裡，因為畫面上的症狀是最後才看得見的一層。
 	#   預覽傳進來的字典沒有 `level` → sc = 1.0 → 這兩行是空操作。
 	var sc := Shapes.level_scale(int(n.get("level", 0)))
 	if sc != 1.0:
-		draw_set_transform(p * (1.0 - sc), 0.0, Vector2(sc, sc))
+		draw_set_transform_matrix(Shapes.level_xform(_map_origin(), _zoom, p, sc))
 	match String(n["type"]):
 		"core":
 			# ★ **最大的幾何體**，order.bright 描邊（§1.6）。
@@ -3035,10 +3038,11 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 			#   ——GDScript 的 `match` 沒對到就靜靜地什麼都不做。B2.4 加三隻招募塔
 			#   時三隻全中，而使用者是**用眼睛**發現的（「長哨沒有模型顯示」）。
 			_no_glyph[String(n["type"])] = true
-	# ⚠ 一定要還原：變換是 canvas item 的狀態，不還原的話**這一幀後面畫的每一個
-	#   東西**（敵人、彈道、徽章）都會跟著縮放並位移。
+	# ⚠ 一定要還原，而且是還原成**地圖那一層變換**不是單位矩陣：變換是 canvas item
+	#   的狀態，還原錯的話這一幀後面畫的每一個東西都跟著錯（B3.9.2a 就是這樣，
+	#   而症狀是「游標和格子對不上」——沒有人會把那句話讀成一個繪圖 bug）。
 	if sc != 1.0:
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		draw_set_transform(_map_origin(), 0.0, Vector2(_zoom, _zoom))
 
 
 ## ★ 交戰指示：**琥珀＝能量**（配色紀律 2）。有環＝這座塔本 tick 正在吃電。
