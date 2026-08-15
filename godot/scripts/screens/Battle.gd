@@ -570,7 +570,7 @@ func _glyph_selftest() -> void:
 	#   B3.8 之前這個階梯是設在上面那一列的第 2..6 座上，而那是採集器、發電機、
 	#   熔爐、中繼、儲槽——**五種不同的形狀，而且五級全都是「出力」**。
 	#   於是這張照片答不了它唯一要答的兩個問題：一級和五級**大小**分得出來嗎
-	#   （不同型別本來就不一樣大）、級章的**形狀**分得出來嗎（全是實心方）。
+	#   （不同型別本來就不一樣大）、零件的**形狀**分得出來嗎（全是出力，只長托架）。
 	#   換成一排錨之後兩個都答得了：它的階梯是 出力 → 射速 → 射程 → 出力 → 射速，
 	#   四種形狀裡出現三種，而六座並排的塔身只差在級數。
 	#   直接設欄位不走 `upgrade_node()`：這是**畫面**的驗收，不是規則的
@@ -2844,48 +2844,74 @@ func _draw_nodes() -> void:
 			draw_rect(Rect2(at, bar), Palette.alpha(Palette.BG_DEEP, 0.8))
 			draw_rect(Rect2(at, Vector2(bar.x * frac, bar.y)), Palette.WARN_ORANGE)
 		_draw_node_body(n, p)
-		_draw_level_marks(lv, String(n["type"]), p)
 		_draw_threat(n["cell"], p)
 		_draw_engaged(n, p)
-		# ★ 級章佔了上緣，徽章再往上退 6px（升過的塔才退）。兩個都畫在同一條
-		#   帶子上的話，缺料徽章——**地圖上唯一指出瓶頸的元素**——會被級章遮掉。
-		_draw_badge(n, p - Vector2(0.0, 6.0) if lv > 0 else p)
+		# ★ B3.9.3：零件長在塔身周圍（半徑 17px）而不是頭上那一條帶子，所以
+		#   缺料徽章（y −16 起）不必再讓位——它是**地圖上唯一指出瓶頸的元素**。
+		_draw_badge(n, p)
 
 
-## ★ 級章：一級一枚，**形狀說出那一級買到什麼**（`10_GDD.md` §4.3，B3.9）。
+## ★ **升級長出來的零件**（`10_GDD.md` §4.3，B3.9.3，使用者指定「升級會對於外型
+## 真的有變化，不只是變大而已」）。
 ##
-## 使用者指定「共 5 級，且每一級都要有外觀上的改變」。體積那個通道
-## （`Shapes.level_scale()`）答的是「這座升過幾級」，這個通道答的是
-## 「升到的是什麼」——只有數量的話，五級的錨和五級的長哨長得一樣，
-## 而它們買到的東西完全不同（一個是機槍，一個是狙擊）。
+## B3.9 的第一版是「塔身放大 ＋ 頭上一排 4px 的小級章」。放大是**同一個形狀的
+## 同一份**，而 4px 的級章在 32px 的格子上要盯著看——兩個加起來就是使用者說的
+## 「只是變大而已」。
 ##
-## 四種形狀而不是四種顏色：§4.3b「同一個位置上的兩個訊息，換顏色不夠，
-## 要換位置或形狀」。顏色全走 `alloy.steel`——青與琥珀各自專屬秩序與能量
-## （§1.1 配色紀律），而「這座被我升過」不屬於任何一邊。
-func _draw_level_marks(lv: int, type: String, p: Vector2) -> void:
-	for k in lv:
-		# 置中排開：五枚 6px 間距 ＝ 總寬 28px，剛好在一格內。
-		var x := p.x + float(k) * 6.0 - float(lv - 1) * 3.0
-		var y := p.y - 19.0
-		match Build.next_step(type, k):
-			Build.STEP_RANGE:
-				# 朝外（上）的尖角＝伸出去。
-				draw_colored_polygon(PackedVector2Array([
-					Vector2(x, y - 2.0), Vector2(x + 2.5, y + 2.5), Vector2(x - 2.5, y + 2.5),
-				]), Palette.ALLOY_STEEL)
-			Build.STEP_ROF:
-				# 兩根細直條＝連發。
-				draw_rect(Rect2(x - 2.5, y - 2.0, 1.5, 5.0), Palette.ALLOY_STEEL)
-				draw_rect(Rect2(x + 1.0, y - 2.0, 1.5, 5.0), Palette.ALLOY_STEEL)
-			Build.STEP_SPLASH:
-				# 菱形＝往四面炸開（和碎浪的爆散星同一族）。
-				draw_colored_polygon(PackedVector2Array([
-					Vector2(x, y - 3.0), Vector2(x + 3.0, y),
-					Vector2(x, y + 3.0), Vector2(x - 3.0, y),
-				]), Palette.ALLOY_STEEL)
-			_:
-				# 出力（以及沒有 `steps` 的節點）＝實心方，B3.5 起就是這個。
-				draw_rect(Rect2(x - 2.5, y - 2.0, 5.0, 4.0), Palette.ALLOY_STEEL)
+## 這一版讓塔**長出零件**，而零件的種類就是那一級買到的東西
+## （四個詞見 §4.3）——所以外型的變化和數值的變化是同一件事：
+##
+## | 買到 | 長出來 | 為什麼是這個形狀 |
+## |---|---|---|
+## | 出力 | 裝甲環（越厚） | 加厚＝更重的那一座 |
+## | 射速 | 環上的砲口方釘（一級兩顆） | 數得出來有幾管 |
+## | 射程 | 外圈的斷續環（越密） | 圈本身就是射程的語彙（選取時畫的就是圈） |
+## | 濺射 | 對角尖刺（越長） | 往四面炸開，和碎浪的爆散星同一族 |
+##
+## 全部畫在**塔身的變換裡**（跟著級數一起放大）、全部 `alloy.steel`：青與琥珀
+## 各自專屬秩序與能量（§1.1 配色紀律），而「這座被我升過」不屬於任何一邊。
+##
+## 半徑守在 17px 以內（半格 16px）。滿級再乘 1.276 會吃到隔壁格幾個像素——
+## 那是刻意的取捨：五級塔就是該佔位置，而它稀有。
+func _draw_level_kit(type: String, lv: int, p: Vector2) -> void:
+	if lv <= 0:
+		return
+	var c := Palette.ALLOY_STEEL
+	var n_pow := Build.step_count(type, lv, Build.STEP_POWER)
+	var n_rof := Build.step_count(type, lv, Build.STEP_ROF)
+	var n_rng := Build.step_count(type, lv, Build.STEP_RANGE)
+	var n_spl := Build.step_count(type, lv, Build.STEP_SPLASH)
+	# ── 出力：四個角的**直角托架**（方的語彙）。越厚＝越重的那一座。
+	# ⚠ 半徑 12.5 不是 13.5：**±15 那一圈是受威脅的橘色角括號**
+	#   （`_draw_threat()`，貼著格子邊界）。同一個形狀的兩個訊息交錯在
+	#   同一圈上，換顏色不夠（§4.3b）——所以托架往內縮，貼著塔身。
+	if n_pow > 0:
+		var w := 1.6 + 0.9 * float(n_pow)
+		var arm := 4.5 + 1.0 * float(n_pow)
+		for d in 4:
+			var sx: float = 1.0 if d % 2 == 0 else -1.0
+			var sy: float = 1.0 if d < 2 else -1.0
+			var corner := p + Vector2(sx * 12.5, sy * 12.5)
+			draw_line(corner, corner - Vector2(sx * arm, 0.0), c, w)
+			draw_line(corner, corner - Vector2(0.0, sy * arm), c, w)
+	# ── 射速：上下左右的**砲管**（一級兩管，數得出來）。
+	for k in n_rof * 2:
+		var a := TAU * float(k) / float(n_rof * 2) + PI * 0.5
+		var dir := Vector2(1, 0).rotated(a)
+		draw_line(p + dir * 9.0, p + dir * 16.5, c, 2.6)
+	# ── 射程：**外圈的細環**，一級一圈往外推（圈就是射程的語彙）。
+	for k in n_rng:
+		draw_arc(p, 14.0 + 2.0 * float(k), 0.0, TAU, 40, c, 1.4)
+	# ── 濺射：四個對角的**尖刺**，越長＝炸得越開。
+	for k in n_spl:
+		for d in 4:
+			var dir2 := Vector2(1, 1).normalized().rotated(TAU * float(d) / 4.0)
+			var base := 12.0 + 2.4 * float(k)
+			var tip := dir2 * (base + 4.0)
+			var side := Vector2(-dir2.y, dir2.x) * 2.6
+			draw_colored_polygon(PackedVector2Array([
+				p + tip, p + dir2 * base + side, p + dir2 * base - side,
+			]), c)
 
 
 ## ★ 一座節點**畫成什麼樣子**——只看型別，不看它蓋起來沒有（B3.4）。
@@ -2917,6 +2943,10 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 	var sc := Shapes.level_scale(int(n.get("level", 0)))
 	if sc != 1.0:
 		draw_set_transform_matrix(Shapes.level_xform(_map_origin(), _zoom, p, sc))
+	# ★ 升級長出來的零件畫在**同一個變換裡**（跟著塔身一起放大），而且畫在塔身
+	#   **後面**——蓋在上面的話，那十三種各有意義的輪廓會被一圈零件吃掉
+	#   （第一版就是這樣：五座塔全變成同一顆灰甜甜圈）。
+	_draw_level_kit(String(n["type"]), int(n.get("level", 0)), p)
 	match String(n["type"]):
 		"core":
 			# ★ **最大的幾何體**，order.bright 描邊（§1.6）。
