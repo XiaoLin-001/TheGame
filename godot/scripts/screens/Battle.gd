@@ -2851,69 +2851,6 @@ func _draw_nodes() -> void:
 		_draw_badge(n, p)
 
 
-## ★ **升級長出來的零件**（`10_GDD.md` §4.3，B3.9.3，使用者指定「升級會對於外型
-## 真的有變化，不只是變大而已」）。
-##
-## B3.9 的第一版是「塔身放大 ＋ 頭上一排 4px 的小級章」。放大是**同一個形狀的
-## 同一份**，而 4px 的級章在 32px 的格子上要盯著看——兩個加起來就是使用者說的
-## 「只是變大而已」。
-##
-## 這一版讓塔**長出零件**，而零件的種類就是那一級買到的東西
-## （四個詞見 §4.3）——所以外型的變化和數值的變化是同一件事：
-##
-## | 買到 | 長出來 | 為什麼是這個形狀 |
-## |---|---|---|
-## | 出力 | 裝甲環（越厚） | 加厚＝更重的那一座 |
-## | 射速 | 環上的砲口方釘（一級兩顆） | 數得出來有幾管 |
-## | 射程 | 外圈的斷續環（越密） | 圈本身就是射程的語彙（選取時畫的就是圈） |
-## | 濺射 | 對角尖刺（越長） | 往四面炸開，和碎浪的爆散星同一族 |
-##
-## 全部畫在**塔身的變換裡**（跟著級數一起放大）、全部 `alloy.steel`：青與琥珀
-## 各自專屬秩序與能量（§1.1 配色紀律），而「這座被我升過」不屬於任何一邊。
-##
-## 半徑守在 17px 以內（半格 16px）。滿級再乘 1.276 會吃到隔壁格幾個像素——
-## 那是刻意的取捨：五級塔就是該佔位置，而它稀有。
-func _draw_level_kit(type: String, lv: int, p: Vector2) -> void:
-	if lv <= 0:
-		return
-	var c := Palette.ALLOY_STEEL
-	var n_pow := Build.step_count(type, lv, Build.STEP_POWER)
-	var n_rof := Build.step_count(type, lv, Build.STEP_ROF)
-	var n_rng := Build.step_count(type, lv, Build.STEP_RANGE)
-	var n_spl := Build.step_count(type, lv, Build.STEP_SPLASH)
-	# ── 出力：四個角的**直角托架**（方的語彙）。越厚＝越重的那一座。
-	# ⚠ 半徑 12.5 不是 13.5：**±15 那一圈是受威脅的橘色角括號**
-	#   （`_draw_threat()`，貼著格子邊界）。同一個形狀的兩個訊息交錯在
-	#   同一圈上，換顏色不夠（§4.3b）——所以托架往內縮，貼著塔身。
-	if n_pow > 0:
-		var w := 1.6 + 0.9 * float(n_pow)
-		var arm := 4.5 + 1.0 * float(n_pow)
-		for d in 4:
-			var sx: float = 1.0 if d % 2 == 0 else -1.0
-			var sy: float = 1.0 if d < 2 else -1.0
-			var corner := p + Vector2(sx * 12.5, sy * 12.5)
-			draw_line(corner, corner - Vector2(sx * arm, 0.0), c, w)
-			draw_line(corner, corner - Vector2(0.0, sy * arm), c, w)
-	# ── 射速：上下左右的**砲管**（一級兩管，數得出來）。
-	for k in n_rof * 2:
-		var a := TAU * float(k) / float(n_rof * 2) + PI * 0.5
-		var dir := Vector2(1, 0).rotated(a)
-		draw_line(p + dir * 9.0, p + dir * 16.5, c, 2.6)
-	# ── 射程：**外圈的細環**，一級一圈往外推（圈就是射程的語彙）。
-	for k in n_rng:
-		draw_arc(p, 14.0 + 2.0 * float(k), 0.0, TAU, 40, c, 1.4)
-	# ── 濺射：四個對角的**尖刺**，越長＝炸得越開。
-	for k in n_spl:
-		for d in 4:
-			var dir2 := Vector2(1, 1).normalized().rotated(TAU * float(d) / 4.0)
-			var base := 12.0 + 2.4 * float(k)
-			var tip := dir2 * (base + 4.0)
-			var side := Vector2(-dir2.y, dir2.x) * 2.6
-			draw_colored_polygon(PackedVector2Array([
-				p + tip, p + dir2 * base + side, p + dir2 * base - side,
-			]), c)
-
-
 ## ★ 一座節點**畫成什麼樣子**——只看型別，不看它蓋起來沒有（B3.4）。
 ##
 ## 抽出來的理由是**擺放預覽要畫同一個東西**。原本預覽只有一個綠框，
@@ -2940,134 +2877,185 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 	#   全都少掉原點與縮放（＝游標和格子對不上）。
 	#   算式收在 `Shapes.level_xform()` 裡，因為畫面上的症狀是最後才看得見的一層。
 	#   預覽傳進來的字典沒有 `level` → sc = 1.0 → 這兩行是空操作。
-	var sc := Shapes.level_scale(int(n.get("level", 0)))
+	var type := String(n["type"])
+	var lv := int(n.get("level", 0))
+	var sc := Shapes.level_scale(lv)
 	if sc != 1.0:
 		draw_set_transform_matrix(Shapes.level_xform(_map_origin(), _zoom, p, sc))
-	# ★ 升級長出來的零件畫在**同一個變換裡**（跟著塔身一起放大），而且畫在塔身
-	#   **後面**——蓋在上面的話，那十三種各有意義的輪廓會被一圈零件吃掉
-	#   （第一版就是這樣：五座塔全變成同一顆灰甜甜圈）。
-	_draw_level_kit(String(n["type"]), int(n.get("level", 0)), p)
-	match String(n["type"]):
+	# ★ **級數驅動的是幾何本身**（`10_GDD.md` §4.3，B3.9.4，使用者指定：「我需要的
+	#   是外型的變化…而不是外圍的變化，是形狀真正的變化」）。
+	#
+	#   B3.9.3 把零件（托架／砲管／細環）掛在塔身**外面**，那正是被退回的那一版。
+	#   現在每一種節點的**輪廓參數**直接讀那一級買到的是什麼：
+	#     出力 → 更厚重（層數／齒數／邊數／配重）
+	#     射速 → 更多管口（砲口／橫桿／吊索）
+	#     射程 → 更高更長（軸向拉長／輻條）
+	#     濺射 → 更尖（尖角更多更深）
+	#
+	#   **0 級一律走原本那一份形狀，一個像素都不變**：既有的十三種輪廓是 B2.4.8
+	#   照遊玩測試調出來的。升級要做的是「這一座和旁邊那一座不一樣」，
+	#   不是「這遊戲換了美術」。
+	var n_pow := Build.step_count(type, lv, Build.STEP_POWER)
+	var n_rof := Build.step_count(type, lv, Build.STEP_ROF)
+	var n_rng := Build.step_count(type, lv, Build.STEP_RANGE)
+	var n_spl := Build.step_count(type, lv, Build.STEP_SPLASH)
+	match type:
 		"core":
-			# ★ **最大的幾何體**，order.bright 描邊（§1.6）。
-			#
-			# B2.4.2（§7.1 A-4）：原本是 30px，和採集器的 22px 圓沒有量級差，
-			# 而**這是全遊戲唯一一個「歸零就結束」的物件**。42px（1.3 格）＋
-			# 3px 描邊（`stroke.emphasis`）讓它在 fit 倍率下就是畫面上最大的一塊。
-			#
-			# 形狀仍是**正方**，和儲槽的同心圓、交戰環、受擊環都分得開
-			# （§4.3b「同一個位置上的兩個訊息，換顏色不夠，要換形狀」）。
-			# 48 ＝ **1.5 格**（§7.1 A-4 自己訂的數字；第一版寫 42 ＝ 1.3 格，
-			# code review 抓到它低於自己的規格）。
+			# ★ **最大的幾何體**，order.bright 描邊（§1.6）。核心升不得，所以它是
+			#   唯一一個不吃級數的分支。48 ＝ 1.5 格（§7.1 A-4）。
 			var half := Vector2(24, 24)
-			# ★ §1.6 還有一句「**受擊時整體閃 `warn.orange`**」——B2.4.2 之前
-			#   核心只有那條和所有節點共用的 24×3 血條，而**核心掉血是這一局
-			#   唯一不可逆的事**，它不該和一個中繼被啃長得一樣。
-			#   受傷時整顆換成橙色並脈動（`dur.base` ＝ 比心跳急一個量級）。
-			# `.get()` 而不是 `n["hp"]`：預覽傳進來的是一個只有 `type` 的字典。
-			# 直接索引缺鍵會丟執行期錯誤，而 GDScript 的執行期錯誤**中止這一支函式**
-			# ——預覽會變成「什麼都沒畫」，而不是「報錯」（RG-164 的同一個形狀）。
+			# ★ §1.6：**受擊時整體閃 `warn.orange`**——核心掉血是這一局唯一不可逆
+			#   的事，它不該和一個中繼被啃長得一樣。
+			# `.get()` 而不是 `n["hp"]`：預覽傳進來的是一個只有 `type` 的字典，
+			# 直接索引缺鍵會丟執行期錯誤，而那會**中止這一支函式**（RG-164 的形狀）。
 			var hurt: bool = float(n.get("hp", full)) < full
 			var body: Color = Palette.WARN_ORANGE if hurt else Palette.ORDER_BRIGHT
 			var alarm := Motion.pulse01(s.tick_count, Motion.BASE * 4.0, 0.5) if hurt else 1.0
 			draw_rect(Rect2(p - half, half * 2.0), Palette.BG_RAISED)
 			draw_rect(Rect2(p - half, half * 2.0), Palette.alpha(body, alarm), false, 3.0)
-			# 極慢的呼吸＝這張圖的心跳。**不是警示**（警示是橙色、而且更急），
-			# 所以週期取 `dur.ambient` 的兩倍、振幅只在透明度上。
+			# 極慢的呼吸＝這張圖的心跳。**不是警示**（警示是橙色而且更急）。
 			var beat := Motion.pulse01(s.tick_count, Motion.AMBIENT * 2.0, 0.55)
 			draw_rect(
 				Rect2(p - Vector2(8, 8), Vector2(16, 16)),
 				Palette.alpha(body, beat if not hurt else alarm)
 			)
 		"extractor":
-			draw_circle(p, 11.0, Palette.ORDER_CYAN)
-			draw_arc(p, 11.0, 0.0, TAU, 24, Palette.ORDER_BRIGHT, 1.5)
+			# 圓 → **齒輪**（每級一齒）。採集器沒有 `steps`，五級全是出力。
+			if lv == 0:
+				draw_circle(p, 11.0, Palette.ORDER_CYAN)
+				draw_arc(p, 11.0, 0.0, TAU, 24, Palette.ORDER_BRIGHT, 1.5)
+			else:
+				draw_colored_polygon(Shapes.gear(p, 11.5, 4 + lv, 3.0), Palette.ORDER_CYAN)
+				draw_circle(p, 4.0, Palette.ORDER_BRIGHT)
 		"generator":
-			# 琥珀專屬於能量（§1.1 配色紀律 2）。
-			draw_rect(Rect2(p - Vector2(11, 11), Vector2(22, 22)), Palette.ENERGY_AMBER)
+			# 方 → **切角 → 八邊**（每級削 1.7px）。琥珀專屬於能量（§1.1 配色紀律 2）。
+			draw_colored_polygon(
+				Shapes.chamfer_square(p, 11.0, 1.7 * float(lv)), Palette.ENERGY_AMBER
+			)
 		"smelter":
-			# 六邊形＝加工。合金銀是它的產物色，內圈琥珀講「它一直在吃電」
-			# ——熔爐是全圖唯一待機也耗能的建築，那件事要看得出來。
-			var hex := PackedVector2Array()
-			for k in 6:
-				hex.append(p + Vector2(12, 0).rotated(TAU * float(k) / 6.0))
-			draw_colored_polygon(hex, Palette.ALLOY_STEEL)
+			# 六邊 → **六芒**（每級把交錯的角往內收）。內圈琥珀＝它待機也在吃電。
+			var hexp: PackedVector2Array = (
+				Shapes.ngon(p, 12.0, 6) if lv == 0
+				else Shapes.star(p, 12.0 + 0.6 * float(lv), 12.0 - 1.4 * float(lv), 6)
+			)
+			draw_colored_polygon(hexp, Palette.ALLOY_STEEL)
 			draw_circle(p, 5.0, Palette.ENERGY_AMBER)
 		"relay":
-			var d := PackedVector2Array([
-				p + Vector2(0, -8), p + Vector2(8, 0), p + Vector2(0, 8), p + Vector2(-8, 0)
-			])
-			draw_colored_polygon(d, Palette.ORDER_DIM)
+			# 菱 → **越來越尖的四芒**。
+			var dia: PackedVector2Array = (
+				Shapes.ngon(p, 8.0, 4) if lv == 0
+				else Shapes.star(p, 8.0 + 1.0 * float(lv), 8.0 - 1.2 * float(lv), 4)
+			)
+			draw_colored_polygon(dia, Palette.ORDER_DIM)
 		"silo":
+			# 圓槽 → **打成多邊形的槽**（每級少兩個面，越來越像一個加固過的桶）。
 			var frac := float(n.get("charge", 0.0)) / maxf(1.0, float(NodeDefs.of("silo")["capacity"]))
-			draw_arc(p, 12.0, 0.0, TAU, 32, Palette.ORDER_DIM, 2.0)
+			if lv == 0:
+				draw_arc(p, 12.0, 0.0, TAU, 32, Palette.ORDER_DIM, 2.0)
+			else:
+				var tank := Shapes.ngon(p, 12.5, maxi(5, 13 - 2 * lv), -PI * 0.5)
+				tank.append(tank[0])
+				draw_polyline(tank, Palette.ORDER_DIM, 2.4)
 			if frac > 0.0:
 				draw_arc(p, 12.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 32, Palette.ENERGY_AMBER, 4.0)
-			# 四隻塔各給一個一眼可辨的幾何體（`20_ART_DIRECTION.md` §1.6）。
-			# 全部嚴格對齊格中心——與敵潮的不規則凸包形成對比，那個對比就是主題。
 		"anchor":
-			# ★ **上寬下窄的梯形＝打進地裡的樁**（B2.4.8，遊玩測試 P3-1）。
-			#   舊版是 16px 的青色實心方，而發電機是 22px 的琥珀實心方——
-			#   **同一個形狀，只差 6px 與顏色**，違反 §1.6「不靠顏色分辨」。
-			#   而這兩個分屬生產側與防線側，正是「這 40 礦砂餵產線還是餵防線」
-			#   那個核心決定的兩端，也是最不該混淆的一對。
-			#   改錨不改發電機：琥珀實心方和「能量」的關係更強，波及也更大。
-			draw_colored_polygon(PackedVector2Array([
-				p + Vector2(-11, -9), p + Vector2(11, -9),
-				p + Vector2(6, 10), p + Vector2(-6, 10),
-			]), Palette.ORDER_CYAN)
+			# ★ 上寬下窄的梯形＝**打進地裡的樁**（B2.4.8，遊玩測試 P3-1）。
+			#   出力 → 多疊一層（階梯狀的樁基）；射速 → 頂端多兩管；射程 → 整支拉高。
+			var top := -9.0 - 2.2 * float(n_rng)
+			var tiers := 1 + n_pow
+			for k in tiers:
+				var t0 := lerpf(top, 10.0, float(k) / float(tiers))
+				# 每一層之間留 1.4px 的縫——**堆疊要看得出是幾層**，貼在一起就只是一塊。
+				var t1 := lerpf(top, 10.0, float(k + 1) / float(tiers)) - (1.4 if k < tiers - 1 else 0.0)
+				var wa := lerpf(11.0, 6.0, float(k) / float(tiers)) - 0.9 * float(k)
+				var wb := lerpf(11.0, 6.0, float(k + 1) / float(tiers)) - 0.9 * float(k)
+				draw_colored_polygon(PackedVector2Array([
+					p + Vector2(-wa, t0), p + Vector2(wa, t0),
+					p + Vector2(wb, t1), p + Vector2(-wb, t1),
+				]), Palette.ORDER_CYAN)
+			for k in n_rof * 2:
+				var mx := -7.5 + 15.0 * float(k) / float(maxi(n_rof * 2 - 1, 1))
+				draw_rect(
+					Rect2(p + Vector2(mx - 1.6, top - 6.0), Vector2(3.2, 7.0)), Palette.ORDER_CYAN
+				)
 		"prism":
-			# 三角形＝稜鏡。合金銀把「它是最貴的那一座」講出來。
-			draw_colored_polygon(PackedVector2Array([
-				p + Vector2(0, -12), p + Vector2(11, 7), p + Vector2(-11, 7)
-			]), Palette.ALLOY_STEEL)
+			# 三角＝稜鏡。出力 → 多一個切面；射程 → 拉高；射速 → 從中間裂成兩瓣。
+			var poly := Shapes.ngon(p, 11.0, 3 + n_pow, -PI * 0.5)
+			var hk := (12.0 + 2.2 * float(n_rng)) / 11.0
+			var tall := PackedVector2Array()
+			for v: Vector2 in poly:
+				tall.append(Vector2(v.x, p.y + (v.y - p.y) * hk))
+			draw_colored_polygon(tall, Palette.ALLOY_STEEL)
+			for k in n_rof:
+				# 裂縫用背景色切出去——**輪廓真的斷開**，不是在上面畫一條線。
+				draw_line(
+					p + Vector2(-3.0 + 6.0 * float(k), -13.0 * hk),
+					p + Vector2(-3.0 + 6.0 * float(k), 8.0 * hk), Palette.BG_PANEL, 2.0
+				)
 		"knell":
-			# 同心圓＝場。它不開火，畫成「發散」比畫成砲塔誠實。
-			draw_arc(p, 11.0, 0.0, TAU, 28, Palette.ORDER_CYAN, 2.0)
-			draw_arc(p, 5.0, 0.0, TAU, 20, Palette.ORDER_CYAN, 2.0)
+			# 同心圓＝場。出力 → 圈變成越來越尖的多邊形；射程 → 多一圈往外長。
+			var rings := 2 + n_rng
+			var sides := 24 if n_pow == 0 else maxi(5, 11 - 2 * n_pow)
+			for k in rings:
+				var r := lerpf(5.0, 13.0, float(k) / float(maxi(rings - 1, 1)))
+				var ring := Shapes.ngon(p, r, sides, -PI * 0.5)
+				ring.append(ring[0])
+				draw_polyline(ring, Palette.ORDER_CYAN, 2.0)
 		"reclaimer":
-			draw_rect(Rect2(p - Vector2(10, 10), Vector2(20, 20)), Palette.ORDER_CYAN, false, 2.0)
-			draw_circle(p, 6.0, Palette.ORDER_BRIGHT)
+			# 空心方 ＋ 內圓。出力 → 外框多一邊；射程 → 內圓（回收範圍）長大。
+			if lv == 0:
+				draw_rect(Rect2(p - Vector2(10, 10), Vector2(20, 20)), Palette.ORDER_CYAN, false, 2.0)
+			else:
+				var shell := Shapes.ngon(p, 13.5, 4 + n_pow, PI * 0.25 if n_pow == 0 else 0.0)
+				shell.append(shell[0])
+				draw_polyline(shell, Palette.ORDER_CYAN, 2.0)
+			draw_circle(p, 6.0 + 1.3 * float(n_rng), Palette.ORDER_BRIGHT)
 		"breaker":
-			# ★ **四角爆散星＝濺射**（B2.4.8，遊玩測試 P3-2）。舊版是「實心方
-			#   ＋外框」，和回收者的「空心方＋內圓」在 fit 倍率下都讀成
-			#   「方框裡包了東西」，內部差異要盯著看。
-			#   換成向外炸開的形狀之後，它同時**把自己的機制講出來**——
-			#   碎浪是全遊戲唯一一隻範圍傷害的塔（§1.6：形狀要說得出角色是什麼）。
-			var burst := PackedVector2Array()
-			for k in 8:
-				var rad: float = 13.0 if k % 2 == 0 else 5.0
-				burst.append(p + Vector2(rad, 0).rotated(TAU * float(k) / 8.0))
-			draw_colored_polygon(burst, Palette.ALLOY_STEEL)
-			# ── 招募專屬的三隻（B2.4.6）───────────────────────────────
-			# 形狀規則同上：**不靠顏色分辨**（§1.6）。方（錨／碎浪）、圓（採集器
-			# ／潮鳴）、三角（稜鏡）、菱（中繼）、六邊（熔爐）都已經被佔走了，
-			# 所以這三隻各取一個沒人用過的輪廓。
+			# ★ 四角爆散星＝濺射（B2.4.8，遊玩測試 P3-2）。
+			#   濺射 → 多一個尖；出力 → 尖挖得更深；射程 → 整體更大。
+			draw_colored_polygon(Shapes.star(
+				p, 13.0 + 1.2 * float(n_rng), maxf(5.0 - 0.8 * float(n_pow), 2.4), 4 + n_spl
+			), Palette.ALLOY_STEEL)
 		"longcall":
-			# 細長的桅杆，橫桿在**頂端**＝一座瞭望塔。射程 12 是它唯一的賣點，
-			# 而「又高又細」是最短的講法。不用合金 → 秩序青。
-			# ★ 第一版橫桿在中間，截圖上讀起來是一個**十字**不是一座塔
-			#   （分辨得出來，但講錯了話）。移到頂端才成立。
-			draw_rect(Rect2(p - Vector2(3, 13), Vector2(6, 26)), Palette.ORDER_CYAN)
-			draw_rect(Rect2(p - Vector2(8, 13), Vector2(16, 4)), Palette.ORDER_CYAN)
+			# 細長的桅杆，橫桿在**頂端**＝一座瞭望塔（B2.4.6）。
+			#   射程 → 更高；射速 → 多一根橫桿；出力 → 桿身更粗。
+			var hh := 13.0 + 2.6 * float(n_rng)
+			var mw := 3.0 + 0.9 * float(n_pow)
+			draw_rect(Rect2(p - Vector2(mw, hh), Vector2(mw * 2.0, hh + 13.0)), Palette.ORDER_CYAN)
+			for k in 1 + n_rof:
+				var bw := 8.0 - 1.4 * float(k)
+				draw_rect(
+					Rect2(p + Vector2(-bw, -hh + 5.0 * float(k)), Vector2(bw * 2.0, 4.0)),
+					Palette.ORDER_CYAN
+				)
 		"frostreef":
-			# 六芒星（三條穿心線）＝發散，和潮鳴的同心圓同一族但認得出是兩隻。
-			# 要 40 合金 → 合金銀（與稜鏡／碎浪同一條規則）。
-			for k in 3:
-				var spoke := Vector2(12, 0).rotated(PI * float(k) / 3.0)
-				draw_line(p - spoke, p + spoke, Palette.ALLOY_STEEL, 2.5)
+			# 六芒星（穿心線）＝發散，和潮鳴的同心圓同一族但認得出是兩隻。
+			#   射程 → 多一條輻條、伸得更長；出力 → 更粗 ＋ 中心軸。
+			var spokes := 3 + n_rng
+			for k in spokes:
+				var arm := Vector2(12.0 + 0.9 * float(n_rng), 0).rotated(PI * float(k) / float(spokes))
+				draw_line(p - arm, p + arm, Palette.ALLOY_STEEL, 2.5 + 0.7 * float(n_pow))
+			if n_pow > 0:
+				draw_circle(p, 2.6 + 0.9 * float(n_pow), Palette.ALLOY_STEEL)
 		"ballast":
-			# 倒三角 ＋ 頂桿＝一塊吊著的配重。與稜鏡的正三角互為鏡像，
-			# 在同一張圖上一眼分得開。要 100 合金 → 合金銀。
-			draw_rect(Rect2(p - Vector2(13, 12), Vector2(26, 4)), Palette.ALLOY_STEEL)
-			draw_colored_polygon(PackedVector2Array([
-				p + Vector2(-11, -5), p + Vector2(11, -5), p + Vector2(0, 12)
-			]), Palette.ALLOY_STEEL)
+			# 倒三角 ＋ 頂桿＝一塊吊著的配重（B2.4.6）。
+			#   出力 → 多疊一塊配重；射程 → 吊桿更長；射速 → 多一條吊索。
+			var bw2 := 13.0 + 1.6 * float(n_rng)
+			draw_rect(Rect2(p + Vector2(-bw2, -12.0), Vector2(bw2 * 2.0, 4.0)), Palette.ALLOY_STEEL)
+			for k in n_rof:
+				var hx := -6.0 + 12.0 * float(k) / float(maxi(n_rof - 1, 1))
+				draw_line(p + Vector2(hx, -12.0), p + Vector2(hx, -5.0), Palette.ALLOY_STEEL, 1.8)
+			for k in 1 + n_pow:
+				var t := -5.0 + 3.4 * float(k)
+				var hw := 11.0 - 2.8 * float(k)
+				draw_colored_polygon(PackedVector2Array([
+					p + Vector2(-hw, t), p + Vector2(hw, t), p + Vector2(0, t + 17.0 - 3.4 * float(k)),
+				]), Palette.ALLOY_STEEL)
 		_:
 			# ★ **沒有這條 default 的時候，漏掉一種的症狀是「隱形」而不是「報錯」**
 			#   ——GDScript 的 `match` 沒對到就靜靜地什麼都不做。B2.4 加三隻招募塔
 			#   時三隻全中，而使用者是**用眼睛**發現的（「長哨沒有模型顯示」）。
-			_no_glyph[String(n["type"])] = true
+			_no_glyph[type] = true
 	# ⚠ 一定要還原，而且是還原成**地圖那一層變換**不是單位矩陣：變換是 canvas item
 	#   的狀態，還原錯的話這一幀後面畫的每一個東西都跟著錯（B3.9.2a 就是這樣，
 	#   而症狀是「游標和格子對不上」——沒有人會把那句話讀成一個繪圖 bug）。

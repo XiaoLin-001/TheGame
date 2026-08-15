@@ -42,6 +42,60 @@ static func level_scale(level: int) -> float:
 	return pow(1.05, float(maxi(level, 0)))
 
 
+## ── ★ 多邊形產生器（B3.9.4）──────────────────────────────────────────
+##
+## 使用者要的是「**形狀真正的變化**，不是外圍的變化」。做法是讓**級數去驅動幾何
+## 的參數**（邊數、齒數、尖端深度、層數），而不是在塔身外面掛零件。
+##
+## 放在這裡而不是畫面層的理由和 `fit_zoom()` 一樣：它們是純函式，測試拿得到，
+## 而且十三種節點共用同一組——每種各寫一份的話，「五級的形狀」就是 65 份要維護
+## 的座標，那正是 B3.9 當初繞開這條路的原因。
+
+## 正多邊形。`rot` 讓呼叫端決定「哪一個角朝上」。
+static func ngon(c: Vector2, r: float, sides: int, rot: float = 0.0) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for k in maxi(sides, 3):
+		out.append(c + Vector2(r, 0).rotated(rot + TAU * float(k) / float(maxi(sides, 3))))
+	return out
+
+
+## 星形：`points` 個尖角，外半徑與內半徑交替。`r_in == r_out` 時退化成
+## `2 × points` 邊的正多邊形——所以**要六邊形就用 `ngon(6)`，不是 `star(6)`**。
+static func star(c: Vector2, r_out: float, r_in: float, points: int, rot: float = 0.0) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var n := maxi(points, 2) * 2
+	for k in n:
+		var r: float = r_out if k % 2 == 0 else r_in
+		out.append(c + Vector2(r, 0).rotated(rot + TAU * float(k) / float(n)))
+	return out
+
+
+## 齒輪：`teeth` 個**平頂**的齒，齒谷比齒頂低 `depth`。與 `star()` 的差別是
+## 齒有寬度（每齒四個點），所以它讀起來是機械而不是尖刺。
+static func gear(c: Vector2, r: float, teeth: int, depth: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var n := maxi(teeth, 3)
+	for k in n:
+		var a0 := TAU * float(k) / float(n)
+		var a1 := a0 + TAU / float(n)
+		out.append(c + Vector2(r, 0).rotated(a0))
+		out.append(c + Vector2(r, 0).rotated(a0 + (a1 - a0) * 0.42))
+		out.append(c + Vector2(r - depth, 0).rotated(a0 + (a1 - a0) * 0.52))
+		out.append(c + Vector2(r - depth, 0).rotated(a1 - (a1 - a0) * 0.1))
+	return out
+
+
+## 切角方形：`cut` 是每個角削掉多少。`cut == 0` 是正方，`cut == r` 是正八邊形
+## ——**升級把方形磨成八邊形**就是這一條在做的事。
+static func chamfer_square(c: Vector2, r: float, cut: float) -> PackedVector2Array:
+	var k := clampf(cut, 0.0, r)
+	return PackedVector2Array([
+		c + Vector2(-r + k, -r), c + Vector2(r - k, -r), c + Vector2(r, -r + k),
+		c + Vector2(r, r - k), c + Vector2(r - k, r), c + Vector2(-r + k, r),
+		c + Vector2(-r, r - k), c + Vector2(-r, -r + k),
+	])
+
+
 ## ★ 「以某一格為中心放大 `sc` 倍」的畫布變換（B3.9.2a）。
 ##
 ## ⚠ **`draw_set_transform()` 是取代，不是疊加。** 地圖那一層變換
