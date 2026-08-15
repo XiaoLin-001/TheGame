@@ -1035,12 +1035,12 @@ const LEVELS := [
 	{
 		"map": L3, "demo": L3_DEMO, "unlocked": L3_BUILD,
 		"star_throughput": 0.6, "reward": 55,
-		"lesson": "一座橋就是一條幹線：北岸的產能全擠在它身上",
+		"lesson": "只有一座橋：北岸的產能全要從它過",
 	},
 	{
 		"map": L4, "demo": L4_DEMO, "unlocked": L4_BUILD,
 		"star_throughput": 0.5, "reward": 70,
-		"lesson": "第三資源：合金把幹線加粗到 22，一條線才餵得飽稜鏡",
+		"lesson": "第三資源：合金把幹線加粗到 22（稜鏡吃 20 能量/秒）",
 	},
 	{
 		"map": L5, "demo": L5_DEMO, "unlocked": L5_BUILD,
@@ -1055,7 +1055,7 @@ const LEVELS := [
 	{
 		"map": L7, "demo": L7_DEMO, "unlocked": ACT2_BUILD,
 		"star_throughput": 0.40, "reward": 110,
-		"lesson": "潛涌：免疫減速，潮鳴的光環對它無效",
+		"lesson": "潛涌：免疫減速，潮鳴與霜礁對它無效",
 	},
 	{
 		"map": L8, "demo": L8_DEMO, "unlocked": ACT2_BUILD,
@@ -1065,7 +1065,7 @@ const LEVELS := [
 	{
 		"map": L9, "demo": L9_DEMO, "unlocked": ACT2_BUILD,
 		"star_throughput": 0.35, "reward": 140,
-		"lesson": "混編：苔群、潛涌、癒殼兩兩同時來，一份電要分給三種答案",
+		"lesson": "混編：苔群、潛涌、癒殼兩兩同時來",
 	},
 	{
 		"map": L10, "demo": L10_DEMO, "unlocked": ACT2_BUILD,

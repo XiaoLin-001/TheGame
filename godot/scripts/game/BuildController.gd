@@ -26,7 +26,7 @@ const REASONS := {
 	Build.NO_ORE: "礦砂不夠",
 	Build.NO_ALLOY: "合金不夠——合金要蓋熔爐、而且熔爐要接到核心才入帳",
 	Build.LOCKED: "這一關還沒解鎖這種節點",
-	Build.OVERLAPS: "這條線會和一條既有導管疊在一起——兩條線畫在同一排格上看不出是兩條，請改個走法",
+	Build.OVERLAPS: "這條線會和一條既有導管疊在一起——改個走法，或先放一個中繼繞開",
 }
 
 

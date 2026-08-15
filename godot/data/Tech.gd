@@ -56,7 +56,7 @@ const NODES := [
 	{
 		"id": "eff1", "branch": DEFENSE, "line": "eff", "tier": 1,
 		"name": "能量效率 I", "effect": "engage_mult", "value": 0.92,
-		"desc": "塔的「交戰」耗能 −8%（待機本來就是 0）。",
+		"desc": "塔的「交戰」耗能 −8%（待機耗能 0）。",
 	},
 	{
 		"id": "eff2", "branch": DEFENSE, "line": "eff", "tier": 2,

@@ -140,7 +140,7 @@ func _build() -> void:
 	for v: Array in VOLUMES:
 		col.add_child(_volume_row(String(v[0]), String(v[1])))
 	col.add_child(UiKit.label(
-		"※ 音樂分兩層：準備期只有底層，開打時打擊層淡入。同一首曲子，不換曲。",
+		"※ 音樂分兩層：準備期只有底層，開打時打擊層淡入。",
 		13, Palette.TEXT_DISABLED, false
 	))
 
@@ -172,7 +172,7 @@ func _build() -> void:
 		res_row.add_child(UiKit.touchable(b))
 
 	col.add_child(UiKit.label(
-		"※ 沒有鍵位設定：這款遊戲只綁了一顆鍵（ESC ＝ 選單／返回），其餘全在滑鼠上。",
+		"※ 只有一顆鍵：ESC ＝ 選單／返回。其餘操作都在滑鼠上。",
 		13, Palette.TEXT_DISABLED, false
 	))
 

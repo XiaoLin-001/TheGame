@@ -110,7 +110,7 @@ func _build() -> void:
 		], 16, Palette.ENERGY_AMBER, false
 	))
 	col.add_child(UiKit.label(
-		"達成的當下就入帳，沒有領取鈕。",
+		"達成的當下就入帳。",
 		13, Palette.TEXT_SECONDARY, false
 	))
 

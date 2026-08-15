@@ -105,7 +105,8 @@ python assetgen/gen_audio.py && <godot> --headless --path godot --import
 TL_STRESS=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 
 # ★ 文案稽核（B2.7.3）。規則在 `20_ART_DIRECTION.md` §3.5：**介面說事實，玩家自己下結論**。
-# 基準：破折號 8 條（全是錯誤訊息的補救步驟）、開發代號 0 條、`**` 0 條。
+# 基準：破折號 8 條（全是錯誤訊息的補救步驟）、開發代號 0 條、`**` 0 條、
+# 　　　結論詞 0 條、評價詞 0 條、辯護詞 0 條（後三條 B3.9.5 加）。
 cd godot && python ../qa/copy_extract.py && python ../qa/copy_tells.py
 
 # 截圖驗證（自動靜音、約 3 秒後存圖並退出）
