@@ -394,8 +394,12 @@ static func _on_kill(s: RefCounted, value: float, at: Vector2i) -> void:
 		if not Combat.in_range(n["cell"], at, Build.node_range(rtype, rlv)):
 			continue
 		# 回收率是回收者的**主效果**，所以它跟著 `power` 那一級長（B3.8）。
+		# ⚠ 夾在 1.0（B3.10）：`slow` 與 `armor_break` 都夾在**使用的那一行**
+		#   （`Combat.gd` 的 SLOW_MAX 與 1.0），回收率原本只靠 `combat_test` 的
+		#   資料表斷言擋著。回收率 > 1 ＝ 一次擊殺換回來的能量比那隻敵人的礦砂
+		#   價值還多，那是印鈔機不是塔——多寫一個 `power` 就會到（0.6 × 1.75）。
 		var gain := Combat.reclaim_power(
-			value, float(def["reclaim"]) * Build.effect_scale(rtype, rlv)
+			value, minf(float(def["reclaim"]) * Build.effect_scale(rtype, rlv), 1.0)
 		)
 		var before := float(n["buffer"])
 		n["buffer"] = minf(before + gain, float(def.get("reclaim_buffer", 0.0)))

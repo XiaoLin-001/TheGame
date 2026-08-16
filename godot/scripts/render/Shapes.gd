@@ -110,6 +110,55 @@ static func level_xform(origin: Vector2, zoom: float, p: Vector2, sc: float) -> 
 	return Transform2D(0.0, Vector2(zoom * sc, zoom * sc), 0.0, origin + p * zoom * (1.0 - sc))
 
 
+## 一座節點畫得最遠的那一點離格心多遠（px，未套 `level_scale`）。
+## 參數就是 `Battle._draw_node_body()` 那個 `match` 讀的同一組級數計數。
+##
+## ⚠ **這一支和那個 `match` 是同一份幾何的兩個讀法**，改輪廓要一起改。放在這裡
+## 而不是畫面層的理由是它得**斷言得到**——越界的症狀（塔的輪廓伸進隔壁那一格，
+## 壓在鄰居的血條與缺料徽章上）在合照上看不出來，因為合照把塔排在相隔兩格。
+## 對不到的型別回傳 `GRID`（＝必然被夾），漏一種的後果是「變小」不是「越界」。
+static func body_extent(
+	type: String, level: int, n_pow: int, n_rof: int, n_rng: int, n_spl: int
+) -> float:
+	match type:
+		"core": return 0.0                                   # 1.5 格是它的規格（§7.1 A-4）
+		"extractor": return 11.0 if level == 0 else 11.5
+		"generator":
+			var cut := minf(1.7 * float(n_pow), 11.0)
+			return sqrt(121.0 + (11.0 - cut) * (11.0 - cut))
+		"smelter": return 12.0 if level == 0 else 12.0 + 0.6 * float(n_pow)
+		"relay": return 8.0 if level == 0 else 8.0 + float(n_pow)
+		"silo": return 14.0                                  # 充能弧 r12 ＋ 線寬 4
+		"anchor":
+			var top := 9.0 + 2.2 * float(n_rng)
+			return maxf(11.0, top + (6.0 if n_rof > 0 else 0.0))
+		"prism":
+			var hk := (12.0 + 2.2 * float(n_rng)) / 11.0
+			return (13.0 if n_rof > 0 else 11.0) * hk
+		"knell": return 14.0                                 # 最外圈 r13 ＋ 線寬 2
+		"reclaimer": return 15.6 if level == 0 else 14.5      # 0 級是方框，量的是角
+		"breaker": return 13.0 + 1.2 * float(n_rng)
+		"longcall": return maxf(13.0, 13.0 + 2.6 * float(n_rng))
+		"frostreef": return 12.0 + 0.9 * float(n_rng) + (2.5 + 0.7 * float(n_pow)) * 0.5
+		"ballast": return maxf(12.0, 13.0 + 1.6 * float(n_rng))
+	return GRID
+
+
+## ★ 塔身實際要用的縮放（B3.10）。
+##
+## B3.9 的體積通道（每級 ×1.05）和 B3.9.4 的參數化幾何**相乘**，於是滿級時
+## 13 種裡有 11 種畫到半格（16px）之外——`level_scale()` 上面那段自己寫的預算
+## 「再大就會越界踩到隔壁那一格」沒有任何斷言在守。
+##
+## 修法是**只往下夾**：級數想長多少照舊，但輪廓最遠那一點不得越過格線。
+## 0 級的十三種輪廓最遠 15.6px（發電機的方角），所以夾不到——
+## **0 級一個像素都不變**這條 B3.9.4 的規矩原封不動。
+static func fit_scale(extent: float, level: int) -> float:
+	if extent <= 0.0:
+		return level_scale(level)
+	return minf(level_scale(level), GRID * 0.5 / extent)
+
+
 ## ★ 可讀性地板（B1.2.2）。**視覺編碼是在 32px 的格子上校準與驗收的**
 ## （線寬 2–8px、三態徽章、射程圈，B0.6 的 `TL_NAKED` 讀圖紀錄）。
 ##

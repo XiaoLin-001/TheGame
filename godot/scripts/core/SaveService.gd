@@ -186,6 +186,13 @@ static func _scalar(v: Variant) -> float:
 ## 沒有 `sv` 的檔一律當成 1——那是首版出貨時的形狀，不是「壞檔」。
 static func migrate(d: Dictionary) -> Dictionary:
 	var sv := int(d.get("sv", 1))
+	# ★ 比自己新的檔**原樣放過，版號不動**（B3.10）。原本迴圈不跑、下面那行卻
+	#   無條件把 `sv` 蓋成 `SAVE_VERSION`：玩家升級之後又開了一次留在硬碟上的
+	#   舊 exe，sv4 的資料會被蓋上 sv3 存回去，於是新版下次啟動時對一份**已經
+	#   遷移過**的資料再跑一次 `_migrate_sv3_to_sv4()`。降級一律是不讀不寫，
+	#   而不是「假裝它是舊檔」——後者會把玩家的進度改壞。
+	if sv > SAVE_VERSION:
+		return d
 	while sv < SAVE_VERSION:
 		match sv:
 			1: _migrate_sv1_to_sv2(d)

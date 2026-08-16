@@ -2833,7 +2833,9 @@ func _draw_nodes() -> void:
 		var p := _center(n["cell"])
 		var full := NodeDefs.hp(String(n["type"]))
 		var lv := int(n.get("level", 0))
-		var sc := Shapes.level_scale(lv)
+		# ★ B3.10：血條也夾在半格內——它畫在塔身下緣，跟著沒有上限的體積通道長
+		#   就會落進下面那一格（塔身本身已改由 `Shapes.fit_scale()` 夾住）。
+		var sc := minf(Shapes.level_scale(lv), Shapes.GRID * 0.5 / 15.0)
 		if float(n["hp"]) < full:
 			# **血條不是圓環**：儲槽的充能也是琥珀色圓弧，兩個圓弧疊在同一顆
 			# 12px 的節點上肉眼分不出來（本批截圖當場抓到）。形狀不同才分得開。
@@ -2879,9 +2881,6 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 	#   預覽傳進來的字典沒有 `level` → sc = 1.0 → 這兩行是空操作。
 	var type := String(n["type"])
 	var lv := int(n.get("level", 0))
-	var sc := Shapes.level_scale(lv)
-	if sc != 1.0:
-		draw_set_transform_matrix(Shapes.level_xform(_map_origin(), _zoom, p, sc))
 	# ★ **級數驅動的是幾何本身**（`10_GDD.md` §4.3，B3.9.4，使用者指定：「我需要的
 	#   是外型的變化…而不是外圍的變化，是形狀真正的變化」）。
 	#
@@ -2899,6 +2898,13 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 	var n_rof := Build.step_count(type, lv, Build.STEP_ROF)
 	var n_rng := Build.step_count(type, lv, Build.STEP_RANGE)
 	var n_spl := Build.step_count(type, lv, Build.STEP_SPLASH)
+	# ★ B3.10：縮放**只往下夾**——體積通道（×1.05/級）乘上已經自己長大的幾何之後，
+	#   滿級時 13 種裡有 11 種畫到半格（16px）之外，壓在隔壁那一格的血條與缺料
+	#   徽章上。夾在 `Shapes.fit_scale()`，量的是 `Shapes.body_extent()`
+	#   ——那一支和下面這個 `match` 是同一份幾何的兩個讀法，改輪廓要一起改。
+	var sc := Shapes.fit_scale(Shapes.body_extent(type, lv, n_pow, n_rof, n_rng, n_spl), lv)
+	if sc != 1.0:
+		draw_set_transform_matrix(Shapes.level_xform(_map_origin(), _zoom, p, sc))
 	match type:
 		"core":
 			# ★ **最大的幾何體**，order.bright 描邊（§1.6）。核心升不得，所以它是
@@ -2921,22 +2927,25 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 			)
 		"extractor":
 			# 圓 → **齒輪**（每級一齒）。採集器沒有 `steps`，五級全是出力。
+			# ★ B3.10：讀 `n_pow` 不讀 `lv`——`steps` 對每一種節點都是合法的，
+			#   哪天給採集器排一條有 `range` 的階梯，讀 `lv` 的齒輪就會宣稱那一級
+			#   買到的是出力。這五種生產節點原本是這條規矩之外的例外。
 			if lv == 0:
 				draw_circle(p, 11.0, Palette.ORDER_CYAN)
 				draw_arc(p, 11.0, 0.0, TAU, 24, Palette.ORDER_BRIGHT, 1.5)
 			else:
-				draw_colored_polygon(Shapes.gear(p, 11.5, 4 + lv, 3.0), Palette.ORDER_CYAN)
+				draw_colored_polygon(Shapes.gear(p, 11.5, 4 + n_pow, 3.0), Palette.ORDER_CYAN)
 				draw_circle(p, 4.0, Palette.ORDER_BRIGHT)
 		"generator":
 			# 方 → **切角 → 八邊**（每級削 1.7px）。琥珀專屬於能量（§1.1 配色紀律 2）。
 			draw_colored_polygon(
-				Shapes.chamfer_square(p, 11.0, 1.7 * float(lv)), Palette.ENERGY_AMBER
+				Shapes.chamfer_square(p, 11.0, 1.7 * float(n_pow)), Palette.ENERGY_AMBER
 			)
 		"smelter":
 			# 六邊 → **六芒**（每級把交錯的角往內收）。內圈琥珀＝它待機也在吃電。
 			var hexp: PackedVector2Array = (
 				Shapes.ngon(p, 12.0, 6) if lv == 0
-				else Shapes.star(p, 12.0 + 0.6 * float(lv), 12.0 - 1.4 * float(lv), 6)
+				else Shapes.star(p, 12.0 + 0.6 * float(n_pow), 12.0 - 1.4 * float(n_pow), 6)
 			)
 			draw_colored_polygon(hexp, Palette.ALLOY_STEEL)
 			draw_circle(p, 5.0, Palette.ENERGY_AMBER)
@@ -2944,16 +2953,19 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 			# 菱 → **越來越尖的四芒**。
 			var dia: PackedVector2Array = (
 				Shapes.ngon(p, 8.0, 4) if lv == 0
-				else Shapes.star(p, 8.0 + 1.0 * float(lv), 8.0 - 1.2 * float(lv), 4)
+				else Shapes.star(p, 8.0 + float(n_pow), 8.0 - 1.2 * float(n_pow), 4)
 			)
 			draw_colored_polygon(dia, Palette.ORDER_DIM)
 		"silo":
-			# 圓槽 → **打成多邊形的槽**（每級少兩個面，越來越像一個加固過的桶）。
+			# 圓槽 → **打成多邊形的槽**（每級少一個面，越來越像一個加固過的桶）。
+			# ★ B3.10：原本是「每級少兩個面」並夾在 5，於是 4 級與 5 級是同一個
+			#   十二邊…五邊形——**兩級同形**。以前靠體積通道撐開，而縮放現在會被
+			#   夾住，同形就真的是同形了（使用者指定「每一級都要有外觀上的改變」）。
 			var frac := float(n.get("charge", 0.0)) / maxf(1.0, float(NodeDefs.of("silo")["capacity"]))
 			if lv == 0:
 				draw_arc(p, 12.0, 0.0, TAU, 32, Palette.ORDER_DIM, 2.0)
 			else:
-				var tank := Shapes.ngon(p, 12.5, maxi(5, 13 - 2 * lv), -PI * 0.5)
+				var tank := Shapes.ngon(p, 12.5, maxi(5, 12 - n_pow), -PI * 0.5)
 				tank.append(tank[0])
 				draw_polyline(tank, Palette.ORDER_DIM, 2.4)
 			if frac > 0.0:
@@ -3003,13 +3015,15 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 				draw_polyline(ring, Palette.ORDER_CYAN, 2.0)
 		"reclaimer":
 			# 空心方 ＋ 內圓。出力 → 外框多一邊；射程 → 內圓（回收範圍）長大。
+			# ★ B3.10：內圓也吃 `n_rof`——回收者的第 4 級買的是射速，而輪廓原本
+			#   只讀出力與射程，於是 3 級和 4 級是同一個圖（以前靠體積通道撐開）。
 			if lv == 0:
 				draw_rect(Rect2(p - Vector2(10, 10), Vector2(20, 20)), Palette.ORDER_CYAN, false, 2.0)
 			else:
 				var shell := Shapes.ngon(p, 13.5, 4 + n_pow, PI * 0.25 if n_pow == 0 else 0.0)
 				shell.append(shell[0])
 				draw_polyline(shell, Palette.ORDER_CYAN, 2.0)
-			draw_circle(p, 6.0 + 1.3 * float(n_rng), Palette.ORDER_BRIGHT)
+			draw_circle(p, 6.0 + 1.3 * float(n_rng) + 0.9 * float(n_rof), Palette.ORDER_BRIGHT)
 		"breaker":
 			# ★ 四角爆散星＝濺射（B2.4.8，遊玩測試 P3-2）。
 			#   濺射 → 多一個尖；出力 → 尖挖得更深；射程 → 整體更大。
@@ -3069,8 +3083,10 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 func _draw_engaged(n: Dictionary, p: Vector2) -> void:
 	if _engaged.get(int(n["id"]), false):
 		# ★ B3.9：半徑跟著級數長，否則滿級的塔會把環頂穿。
-		draw_arc(p, 15.0 * Shapes.level_scale(int(n.get("level", 0))), 0.0, TAU, 32,
-			Palette.ENERGY_AMBER, 2.0)
+		# ★ B3.10：但夾在半格內——它是交戰指示不是射程圈，越過格線就變成
+		#   「這一格和隔壁那一格都在吃電」。
+		draw_arc(p, minf(15.0 * Shapes.level_scale(int(n.get("level", 0))), Shapes.GRID * 0.5),
+			0.0, TAU, 32, Palette.ENERGY_AMBER, 2.0)
 
 
 ## ★ 節點三態徽章（`10_GDD.md` §3.1）。**`正常` 不畫任何東西**——徽章是例外
@@ -4493,6 +4509,13 @@ func _place_inspect(lines: Array[String]) -> void:
 	#      不是每 tick 都在變的數字。
 	#   ② **底邊釘住**。兩顆動詞鈕在面板底列，底邊不動＝鈕不動；內容變多時往上長。
 	#      頂邊釘住的話，多一行字就把鈕往下推。
+	#   ③ ★ B3.10：**尺寸每次自己算，不讀上一次留下的**。自由浮動的 `Control`
+	#      只會長不會縮——先點一條導管（面板 258 高）再點一座塔（內容 120），
+	#      `size.y` 停在 258，於是底邊釘住之下頂邊高出 140px，塔的資料浮在一塊
+	#      空白底板的上緣。B3.9.1 把**寬**改成常數就是為了根治這件事，高度這一半
+	#      當時沒改到（那一批的 clicktest 收尾自己寫了 `size = Vector2.ZERO`）。
+	#      `get_combined_minimum_size()` 是這一份內容真正要多高，不必等下一幀。
+	_inspect_panel.size = Vector2(INSPECT_W, _inspect_panel.get_combined_minimum_size().y)
 	var bottom := FRAME.end.y - 12.0
 	var pos := Vector2(float(size.x) - INSPECT_W - 24.0, bottom - _inspect_panel.size.y)
 	var probe := Rect2(Vector2(pos.x, bottom - INSPECT_MAX_H), Vector2(INSPECT_W, INSPECT_MAX_H))

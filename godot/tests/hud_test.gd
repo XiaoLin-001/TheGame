@@ -19,6 +19,7 @@ const Shapes := preload("res://scripts/render/Shapes.gd")
 const Build := preload("res://scripts/sim/Build.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const Maps := preload("res://data/Maps.gd")
+const NodeDefs := preload("res://data/NodeDefs.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
@@ -38,6 +39,7 @@ func _initialize() -> void:
 	_clearing_the_table_wins(t)
 	_conduit_net_direction(t)
 	_level_xform_keeps_the_tower_in_its_cell(t)
+	_every_level_stays_inside_its_cell(t)
 	quit(t.report())
 
 
@@ -437,3 +439,39 @@ func _level_xform_keeps_the_tower_in_its_cell(t: T) -> void:
 	var id := Shapes.level_xform(origin, zoom, p, 1.0)
 	t.near(id.origin.x, origin.x, "★ 0 級 ＝ 地圖變換本身（x）", 0.01)
 	t.near(id.origin.y, origin.y, "★ 0 級 ＝ 地圖變換本身（y）", 0.01)
+
+
+## ★ 每一種節點、每一級，輪廓都留在自己那一格裡（B3.10）。
+##
+## B3.9 的體積通道（每級 ×1.05）乘上 B3.9.4 的參數化幾何之後，滿級時 13 種裡
+## 有 11 種畫到半格（16px）之外——**而 `Shapes.level_scale()` 自己的註解就寫著
+## 「再大就會越界踩到隔壁那一格」**。越界的後果不是難看：塔的輪廓伸進鄰居那一格，
+## 壓在鄰居的血條（自己中心 +15px）與缺料徽章（−16px）上。
+##
+## 這條斷言用舊程式碼會紅 11 條。**簽核用的合照拍不到它**——那一排塔相隔兩格
+## （64px），幾何上不可能重疊（RG-171 的同一課：斷言不看畫面，而畫面看不到全部）。
+func _every_level_stays_inside_its_cell(t: T) -> void:
+	var half := Shapes.GRID * 0.5
+	for type: String in NodeDefs.DEFS:
+		for lv in Build.NODE_MAX_LEVEL + 1:
+			var np := Build.step_count(type, lv, Build.STEP_POWER)
+			var nf := Build.step_count(type, lv, Build.STEP_ROF)
+			var nr := Build.step_count(type, lv, Build.STEP_RANGE)
+			var ns := Build.step_count(type, lv, Build.STEP_SPLASH)
+			var ext := Shapes.body_extent(type, lv, np, nf, nr, ns)
+			if ext <= 0.0:
+				continue                 # 核心的規格就是 1.5 格（§7.1 A-4），它也升不得
+			# ★ 漏掉一種型別的話 `body_extent()` 回傳 `GRID`，夾成 0.5 倍——
+			#   「不出格」照樣是綠的，而畫面上那一種塔會**默默縮成一半**。
+			#   `_no_glyph` 是同一課：以 type 為鍵的表要有覆蓋斷言。
+			t.ok(ext < Shapes.GRID, "★★ %s 有自己的輪廓尺寸（不是掉進 default）" % type)
+			var sc := Shapes.fit_scale(ext, lv)
+			t.ok(ext * sc <= half + 0.001,
+				"★★ %s %d 級的輪廓不出自己那一格（%.1f ≤ %.1f）" % [type, lv, ext * sc, half])
+			t.ok(sc <= Shapes.level_scale(lv) + 0.001,
+				"★ %s %d 級：夾只能往下夾（0 級的十三種輪廓一個像素都不能變）" % [type, lv])
+	# ⚠ **這裡沒有「每一級都長得不一樣」那一條。** 寫過一版，用 (級數計數, 縮放)
+	#   當簽章——而每一級恰好加一個 step，那組計數**必然**逐級不同，於是它永遠是
+	#   綠的。夾住縮放之後真正有風險的是形狀自己（儲槽 4／5 級都會落在五邊形的
+	#   下限、回收者 4 級買的射速輪廓根本沒讀），兩者這一批都改了幾何，
+	#   但**要斷言得到得先把那十三段輪廓抽成純函式**——那不是這一批的範圍。
