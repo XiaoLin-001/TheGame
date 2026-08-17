@@ -65,6 +65,9 @@ static func step(s: RefCounted) -> void:
 
 	var cells := Combat.enemy_cells(s.enemies, s.path)
 	var engaged := Combat.engaged(s.nodes, cells)
+	# ★ 汲取（B3.2b）：3 格內有汲潮的塔，交戰耗能 ×1.5。算在這裡是因為
+	#   `_solve_power()` 要用它，而它只吃幾何（和 `engaged()` 同一個輸入）。
+	var drain := Combat.drain_mult(s.nodes, s.enemies, cells)
 
 	# 邊只建一次：兩個資源網與回寫共用同一份，索引順序才對得起來。
 	var edges := _edges(s)
@@ -72,7 +75,7 @@ static func step(s: RefCounted) -> void:
 	#   三次各建一遍等於把 CSR、孿生邊、生成森林都算三遍。
 	var topo := FlowNetwork.prepare(s.nodes, edges)
 	var ore_res := _solve_ore(s, edges, topo)
-	var power_res := _solve_power(s, edges, ore_res, engaged, topo)
+	var power_res := _solve_power(s, edges, ore_res, engaged, topo, drain)
 	# 合金最後：熔爐的產出要乘上它**礦砂與能量兩個滿足率中較低的那一個**（§3.1）。
 	var alloy_res := _solve_alloy(s, edges, ore_res, power_res, topo)
 	var sat: Dictionary = power_res["satisfaction"]
@@ -80,8 +83,10 @@ static func step(s: RefCounted) -> void:
 	# 光環算一次就好，推進與開火共用：兩者相隔一個 tick 的移動量，
 	# 破甲比例不會因此改變，多算一次只是多跑一趟 塔×敵人。
 	var aura := Combat.auras(s.nodes, cells, sat)
+	# ★ 庇護（B3.2b）：殼衛給**相鄰同伴**的護甲。和 `aura` 同索引、同樣算一次。
+	var guard := Combat.guard_armor(s.enemies, cells)
 	_advance_and_damage(s, aura)
-	_fire(s, engaged, sat, aura)
+	_fire(s, engaged, sat, aura, guard)
 	_end_of_wave(s)
 	_write_rates(s, edges, ore_res, power_res, alloy_res, engaged)
 
@@ -199,12 +204,18 @@ static func _advance_and_damage(s: RefCounted, aura: Array = []) -> void:
 		# 難度層 2+ 讓敵人啃得更快（`data/Difficulty.gd`）。乘在**傷害**上而不是
 		# 半徑或速度上：那兩個會改「誰挨得到打」，而規則卡上寫的是「破壞建築 ×N」。
 		var dmg := float(def.get("dmg", 0.0)) * TICK * float(s.mods["enemy_damage_mult"])
+		# ★ 蝕線（B3.2b）：對**導管**與對**節點**兩個係數分開（鏽潮 ×3／×0.5）。
+		#   ⚠ 動的是**傷害**不是**半徑**：`BLAST` 是幾何，而橋免疫（跨越點 ±1 格）
+		#     正是照半徑 1 推導出來的——改半徑會把「橋上導管不受攻擊」挖空，
+		#     而那條是鎖定設計（§7.5 記了為什麼第一版的第三隻被否決）。
+		var dmg_wire := dmg * float(def.get("wire_mult", 1.0))
+		var dmg_node := dmg * float(def.get("node_mult", 1.0))
 
 		for off: Vector2i in BLAST_CELLS:
 			var at := cell + off
 			var n: Dictionary = node_at_cell.get(at, {})
 			if not n.is_empty():
-				n["hp"] = float(n["hp"]) - dmg
+				n["hp"] = float(n["hp"]) - dmg_node
 			# 一條導管可能有好幾格都在同一隻敵人的半徑內——**只能挨一次**
 			# （舊寫法的 `conduit_hit()` 命中就 return，語意在此以戳記保留）。
 			for ci: int in cond_at_cell.get(at, []):
@@ -212,7 +223,7 @@ static func _advance_and_damage(s: RefCounted, aura: Array = []) -> void:
 					continue
 				hit_by[ci] = i
 				var c: Dictionary = s.conduits[ci]
-				c["hp"] = float(c["hp"]) - dmg
+				c["hp"] = float(c["hp"]) - dmg_wire
 
 		var slow := 0.0 if i >= aura.size() else (aura[i] as Vector2).x
 		# ★ 迅捷（B3.2、§3.5 屬性表）：**免疫減速**。這條屬性從 M0 就寫在文件上，
@@ -235,7 +246,9 @@ static func _advance_and_damage(s: RefCounted, aura: Array = []) -> void:
 ## 60Hz 下大約每 20 幀才閃一次，玩家看到的是一座沉默的塔。
 const SHOT_TTL := 3
 
-static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Array) -> void:
+static func _fire(
+	s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Array, guard: Array = []
+) -> void:
 	for i in range(s.shots.size() - 1, -1, -1):
 		var sh: Dictionary = s.shots[i]
 		sh["ttl"] = int(sh["ttl"]) - 1
@@ -296,7 +309,8 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 			var raw := (float(def.get("dmg", 0.0)) * float(count)
 				* float(s.mods["damage_mult"]) * Build.effect_scale(type, lv))
 			var dealt := Combat.hit_damage(
-				raw, String(def.get("dmg_type", "physical")), edef, aura[i].y
+				raw, String(def.get("dmg_type", "physical")), edef, aura[i].y,
+				0.0 if i >= guard.size() else float(guard[i])
 			)
 			damage[i] += dealt
 			# ★ 屏障擋格（B2.1d，使用者指定「類似盾牌隔檔」）。**純渲染**：
@@ -508,7 +522,7 @@ static func _solve_alloy(
 
 static func _solve_power(
 	s: RefCounted, edges: Array, ore_res: Dictionary, engaged: Dictionary,
-	topo: Dictionary = {}
+	topo: Dictionary = {}, drain: Dictionary = {}
 ) -> Dictionary:
 	var sat: Dictionary = ore_res.get("satisfaction", {})
 	var nodes: Array = []
@@ -530,8 +544,12 @@ static func _solve_power(
 			# ★ 升級同時抬**耗能**（§4.3）：只抬傷害的話升級是嚴格更好的，
 			#   而那就不是一個決定了。一座 3 級稜鏡要 35 能量/秒，
 			#   一條 cap 10 的線送不進去——集中會把瓶頸推回導管上。
+			# ★ 汲取（B3.2b）：3 格內有汲潮 → ×1.5。乘的是**交戰**耗能不是待機
+			#   （待機早就是 0，乘上去是空操作——科技「能量效率」踩過同一個坑）。
+			#   它讓「準備期算得出來的峰值」在戰鬥期不再成立，答案是儲槽與優先權。
 			demand += (float(def.get("engage_power", 0.0))
-				* float(s.mods["engage_mult"]) * TICK * lvl)
+				* float(s.mods["engage_mult"]) * TICK * lvl
+				* float(drain.get(int(n["id"]), 1.0)))
 		var sn := _sim_node(n, supply, demand)
 		if type == "silo":
 			# 儲槽是能量專用緩衝（§7.3）。charge 是**絕對量**，不乘 TICK；

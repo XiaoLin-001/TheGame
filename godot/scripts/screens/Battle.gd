@@ -295,6 +295,10 @@ var _engaged: Dictionary = {}
 ## 和 `_engaged` 一樣是**繪圖層自己算的**：模擬層每 tick 都在算同一份，
 ## 但它只把結果用在傷害上、沒有留下來，而畫面要畫的是「誰被抓住了」。
 var _auras: Array = []
+## ★ 庇護（B3.2b）：每隻敵人身上**別人給它的**護甲，與 `s.enemies` 同索引。
+## 和 `_auras` 一樣每幀在 `_draw()` 開頭算一次——光環要在**被罩住的那一隻**
+## 身上看得見，不是只在發光環的那一隻身上（潮鳴的青色描邊就是這個做法）。
+var _guard: Array = []
 ## ★ 音訊（B1.5）。上一幀的幾個數字，用來推導「這一幀發生了什麼」。
 ## **音效一律從畫面層推導，模擬層維持零副作用**（`CLAUDE.md` 技術慣例）：
 ## 在 `scripts/sim/` 裡塞一行 `AudioBus.play()` 就等於讓每日挑戰的重播會出聲。
@@ -557,13 +561,27 @@ func _glyph_selftest() -> void:
 	# ★ 敵人也排一列（B3.2）。**六隻在同一張圖上才判得出「一眼分得開嗎」**——
 	#   而 M3 的三隻只在無盡第 9／12／15 波之後才出場，沒有這個鉤子就要打二十分鐘
 	#   才拍得到一張合照。斷言只證明「畫得出東西」，分不分得開仍然是人眼判的。
+	#   ★ B3.2b：這一列**自己就長出來了**（它讀 `Enemies.DEFS.keys()`）——
+	#     加一隻敵人是加一列資料，合照不必記得補。那正是 `data/` 該有的形狀。
 	if gallery:
 		var types: Array = Enemies.DEFS.keys()
 		for i in types.size():
 			var id: int = s.add_enemy(String(types[i]))
+			# ⚠ 從 5 起跳不是 4：淺灘的跨越點在路徑索引 10／22／30，而 `4 + i*3`
+			#   正好把第 3 隻與第 7 隻擺在橋上——橋的架高結構會把那一隻的輪廓
+			#   蓋掉一半。合照的用途就是看輪廓，被自己的地圖擋住等於沒拍到
+			#   （B3.2b 實拍抓到：鏽潮的鋸齒判不出來）。
 			for e: Dictionary in s.enemies:
 				if int(e["id"]) == id:
-					e["progress"] = float(4 + i * 3)
+					e["progress"] = float(5 + i * 3)
+			# ★ 庇護（B3.2b）只在**被罩住的那一隻**身上看得見，而這一列相隔三格、
+			#   誰也罩不到誰。給殼衛塞一個鄰居——否則這張合照證得了「殼衛長什麼樣」，
+			#   證不了「它做了什麼」，而後者才是那條規則。
+			if float(Enemies.of(String(types[i])).get("guard_armor", 0.0)) > 0.0:
+				var buddy: int = s.add_enemy("drifter")
+				for e: Dictionary in s.enemies:
+					if int(e["id"]) == buddy:
+						e["progress"] = float(5 + i * 3) + 1.0
 	# ★ 合照裡順便排出**升級級數的階梯**（B3.5，★ B3.9 改寫）：
 	#   **同一種塔的 0..5 級排成第二列**。
 	#
@@ -2053,6 +2071,7 @@ func _draw() -> void:
 	var cells := Combat.enemy_cells(s.enemies, s.path)
 	_engaged = Combat.engaged(s.nodes, cells)
 	_auras = Combat.auras(s.nodes, cells, s.rates["satisfaction"])
+	_guard = Combat.guard_armor(s.enemies, cells)
 	_threat = _threat_cells(cells)
 	_draw_path()
 	_draw_ore_cells()
@@ -3242,17 +3261,28 @@ func _draw_enemies() -> void:
 		#   一列 11 隻分得開的敵人變成一條連續的香腸，把「看不出差異」修成了
 		#   「看不出有幾隻」。速度線索因此全部收進**本體輪廓**（流線拉長），
 		#   不佔用敵人之間的空隙。
-		var pts := _enemy_shape(e, p, r, pulse, armored, fast)
+		# ★ 蝕線（B3.2b）：鋸齒輪廓。判準讀的是**機制欄位本身**（`wire_mult`），
+		#   不是型別名——§1.7 那條「輪廓由既有的機制欄位推導」的字面意思，
+		#   日後第二隻咬線的敵人不必記得補這一行。
+		var bite: bool = float(def.get("wire_mult", 1.0)) > 1.0
+		var pts := _enemy_shape(e, p, r, pulse, armored, fast, bite)
 		draw_colored_polygon(pts, Palette.TIDE_MAGENTA)
 		# ★ 甲板（B1.6.3）：**同形描邊，不是外圈弧**。血量弧已經是 `tide.deep`
 		#   的圓弧、畫在 `r+4`，再加一圈外弧就是同一個位置上的兩個訊息——
 		#   而 §4.3b 那條規則說「換顏色不夠，要換形狀」。這個專案在這裡踩過
 		#   兩次（B0.6 儲槽充能弧撞血條、B1.6 受擊環撞交戰環）。描邊在輪廓
 		#   **內側**，和任何弧都不會疊。
-		if armored:
+		# ★ 庇護（B3.2b）：**被罩住的那一隻自己長出甲板**。用的是既有的
+		#   「硬＝內側 `tide.deep` 描邊」那個編碼，不是新顏色——因為它現在
+		#   真的有護甲（+6）。一隻被罩住的漂蟲看起來像有甲，那句話是真的。
+		#   畫在 `armored` 之前：兩者都成立時（殼衛罩殼衛）畫同一圈，不疊兩層。
+		var guarded: bool = i < _guard.size() and float(_guard[i]) > 0.0
+		if armored or guarded:
 			var plate := pts.duplicate()
 			plate.append(pts[0])
-			draw_polyline(plate, Palette.TIDE_DEEP, 3.0)
+			# 借來的甲畫細一點（2.0 vs 3.0）：它會隨著發光環的那一隻走遠而消失，
+			# 而「自己的甲」不會——粗細差就是那句話。
+			draw_polyline(plate, Palette.TIDE_DEEP, 3.0 if armored else 2.0)
 		# ★ 亮核心（B1.6.3）：**快**在 16px 上唯一活得下來的線索。
 		#   輪廓的壓扁在 fit 倍率幾乎讀不到（實看 A/B 抓到），明度差讀得到。
 		#   畫在**中心**而不是外圈：外圈已經有甲板描邊與血量弧兩個訊息了。
@@ -3285,6 +3315,19 @@ func _draw_enemies() -> void:
 		#   機制欄位推導」，而再生是這一批唯一沒有現成視覺的規則——迅捷靠速度
 		#   （亮核心）、群體靠半徑（小一號），只有它得自己長一個。
 		#   用 `tide.bright` 不是新顏色（§1.7 的混沌亮階），和青色的減速圈分得開。
+		# ★ 汲取（B3.2b）：**中心一圈琥珀空心環 ＋ 三根向內收的短線**。
+		#   琥珀專屬能量（§1.1 配色紀律 2），而它是全案第一隻碰能量的敵人
+		#   ——那條紀律說的是「琥珀只用在能量上」，不是「只有建築能用琥珀」。
+		#   畫在中心：外圈已經住著甲板描邊、減速圈與血量弧三個訊息。
+		#   走 `draw_arc` 而不是多邊形：這一隻速度 1.0 過不了 `SWIFT_SPEED`，
+		#   亮核心那一格是空的，而環與實心核心在 16px 上分得開。
+		if float(def.get("drain_mult", 1.0)) > 1.0:
+			var sip := maxf(2.0, r * pulse * 0.5)
+			draw_arc(p, sip, 0.0, TAU, 16, Palette.ENERGY_AMBER, 1.6)
+			for k in 3:
+				var a := TAU * float(k) / 3.0 + float(s.tick_count) * 0.04
+				draw_line(p + Vector2(sip * 1.55, 0).rotated(a),
+					p + Vector2(sip * 0.9, 0).rotated(a), Palette.ENERGY_AMBER, 1.6)
 		if float(def.get("regen", 0.0)) > 0.0:
 			var knit := pts.duplicate()
 			knit.append(pts[0])
@@ -3439,10 +3482,17 @@ func _draw_bursts() -> void:
 ##
 ## 三者仍然全部屬於**混沌**側（§0）：不規則、脈動、不對齊網格。硬稜角指的是
 ## 頂點少、抖動小，不是變成正六邊形——正多邊形是秩序側的語彙。
+## ★ B3.2b `bite`：**鋸齒輪廓**——交錯的頂點往內收 28%（鏽潮）。
+## 它不畫任何新東西，只改既有那一圈頂點的半徑，所以不佔用敵人之間的空隙
+## （B1.6.3 那一課：任何畫在本體外的東西都會壓到後面那一隻）。
+## 讀起來是「咬」，而它咬的正是導管。
 func _enemy_shape(
-	e: Dictionary, p: Vector2, r: float, pulse: float, armored: bool, fast: bool
+	e: Dictionary, p: Vector2, r: float, pulse: float, armored: bool, fast: bool,
+	bite: bool = false
 ) -> PackedVector2Array:
 	var sides := 6 if armored else 9
+	if bite:
+		sides = 10          # 偶數，交錯才收得整齊（奇數會有兩個相鄰的凹點）
 	var amp := 0.07 if armored else 0.15
 	var pts := PackedVector2Array()
 	# `k` 而不是 `i`：呼叫端已經用掉 `i`（敵人索引），而 GDScript 的 for
@@ -3452,6 +3502,8 @@ func _enemy_shape(
 		# 每隻各自的不規則度，由 id 決定（同一隻永遠長同一個樣子）。
 		# 值域收在 ±amp：再寬就會有頂點塌進去，變成尖角旗子而不是水滴。
 		var wobble := 1.0 + amp * sin(float(e["id"]) * 3.7 + a * 2.0)
+		if bite and k % 2 == 1:
+			wobble *= 0.72
 		var v := Vector2(cos(a), sin(a)) * r * pulse * wobble
 		if fast:
 			# ★ 流線＝**垂直於行進方向壓扁**，不是沿行進方向拉長（B1.6.3 實看修正）。

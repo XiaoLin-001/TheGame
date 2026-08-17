@@ -44,6 +44,12 @@ func _initialize() -> void:
 	_priority_decides_who_starves(t)
 	_breaker_splash(t)
 	_m3_enemy_rules(t)
+	# ★ M3 第二批（B3.2b）。三條規則各對應玩家的一個動詞，各配一個反向對照。
+	_rustsurge_eats_lines(t)
+	_bridges_still_safe_from_rust(t)
+	_bulwark_shields_its_neighbours(t)
+	_drainer_breaks_the_peak_budget(t)
+	_every_enemy_looks_different(t)
 	quit(t.report())
 
 
@@ -945,3 +951,202 @@ func _regen_needs_a_dps_floor(t: T) -> void:
 	for e: Dictionary in big.enemies:
 		if int(e["id"]) == bid:
 			t.near(float(e["max_hp"]), float(def["hp"]) * 4.0, "★ 再生的上限跟著血量倍率長")
+
+
+# ── ★ M3 第二批敵人的三條新規則（B3.2b、§7.5）────────────────────────
+#
+# 三條規則各對應玩家的**一個動詞**：走線／塔的組成／儲槽與優先權。
+# 每一條都配一個**反向對照**——只驗「新的那一隻有這個效果」，
+# 證不出效果來自那條規則而不是來自它的血量或速度（B3.2 的同一條紀律）。
+
+## ★ 蝕線：對**導管** ×3、對**節點** ×0.5。
+##
+## ⚠ 這條規則刻意**不動半徑**。`Tide.BLAST` 是幾何，而橋免疫（跨越點 ±1 格）
+## 正是照半徑 1 推導出來的——改半徑會把「橋上導管不受攻擊」挖空（§7.5 記了
+## 為什麼第一版的第三隻在規格階段就被否決）。這裡順便把那條不變量釘住。
+func _rustsurge_eats_lines(t: T) -> void:
+	var lost := {}
+	for type: String in ["drifter", "rustsurge"]:
+		var s := _session()
+		# ⚠ 淺灘的路徑走 y=4。第一版把建築擺在 y=8／11，敵人一格都碰不到，
+		#   而症狀是「對照組沒挨打」——不是新規則錯，是測試佈局錯。
+		#   兩座中繼夾著敵人那一格：節點 (15,5) 與整條導管都在它的九格內。
+		BuildController.place(s, "relay", Vector2i(15, 5))
+		BuildController.place(s, "relay", Vector2i(17, 5))
+		BuildController.lay_conduit(s, Vector2i(15, 5), Vector2i(17, 5))
+		_spawn_at(s, type, 16.0)
+		var wire0 := float((s.conduits[0] as Dictionary)["hp"])
+		var node0 := float(s.node_at(Vector2i(15, 5))["hp"])
+		for _i in 10:
+			BattleController.step(s)
+		lost[type] = Vector2(
+			wire0 - float((s.conduits[0] as Dictionary)["hp"]),
+			node0 - float(s.node_at(Vector2i(15, 5))["hp"])
+		)
+	var d: Vector2 = lost["drifter"]
+	var r: Vector2 = lost["rustsurge"]
+	t.ok(d.x > 0.0 and d.y > 0.0, "對照組：漂蟲兩者都啃得到（不然下面兩條無意義）")
+	t.near(d.x, d.y, "★ 反向對照：漂蟲對導管與節點一視同仁（前六隻都是這樣）", 0.01)
+	# 每秒傷害 ＝ dmg × 係數。用比值不用絕對值：日後調 `dmg` 這條斷言仍然對。
+	var base := float(Enemies.of("rustsurge")["dmg"]) / float(Enemies.of("drifter")["dmg"])
+	t.near(r.x / d.x, base * 3.0, "★★ 蝕線：對導管 ×3", 0.02)
+	t.near(r.y / d.y, base * 0.5, "★★ 蝕線：對節點 ×0.5", 0.02)
+	t.ok(r.x > r.y * 5.0, "★ 它是一隻咬線的東西，不是一隻比較會啃建築的東西")
+
+
+## ★ 蝕線不得動搖橋免疫。**這條是設計紅線的斷言化**：
+## 「橋是架高的 → 橋上導管不受攻擊 → 玩家可規劃的安全動線」（§3.5）。
+## 一隻對導管 ×3 的敵人如果連橋上那段都咬得動，橋就從「答案」變回「限制」。
+func _bridges_still_safe_from_rust(t: T) -> void:
+	for type: String in ["drifter", "rustsurge"]:
+		var s := _session()
+		var crossings: Dictionary = s.sets["crossings"]
+		t.ok(not crossings.is_empty(), "淺灘圖有橋（不然這條測試什麼都沒驗）")
+		var bridge: Vector2i = Vector2i.ZERO
+		for c: Variant in crossings:
+			bridge = c
+			break
+		# 一條**只走橋**的導管：兩端各在路徑兩側一格，中間壓在橋上。
+		t.eq(BuildController.place(s, "relay", bridge + Vector2i(0, -1)), Build.OK,
+			"%s：橋北端的中繼蓋得起來" % type)
+		t.eq(BuildController.place(s, "relay", bridge + Vector2i(0, 1)), Build.OK,
+			"%s：橋南端的中繼蓋得起來" % type)
+		var ok := BuildController.lay_conduit(
+			s, bridge + Vector2i(0, -1), bridge + Vector2i(0, 1)
+		)
+		t.eq(ok, Build.OK, "%s：橋上那條導管蓋得起來" % type)
+		var wi: int = s.conduits.size() - 1
+		var hp0 := float((s.conduits[wi] as Dictionary)["hp"])
+		# 敵人正好站在橋那一格上——沒有比這更近的了。
+		var at := -1.0
+		for i in s.path.size():
+			if s.path[i] == bridge:
+				at = float(i)
+		t.ok(at >= 0.0, "橋在路徑上（免疫的定義就是從這裡來的）")
+		_spawn_at(s, type, at)
+		for _i in 10:
+			BattleController.step(s)
+		t.near(float((s.conduits[wi] as Dictionary)["hp"]), hp0,
+			"★★ %s 站在橋上啃 1 秒，橋上導管一滴血都沒掉" % type, 0.001)
+
+
+## ★ 庇護：相鄰同伴護甲 +6，而**它不加給自己**。
+## 剋制它的是潮鳴的破甲——那個欄位從 M0 就在表上，而在此之前全場只有甲殼
+## 一隻吃得到（和「迅捷」在 B3.2 之前的處境一模一樣）。
+func _bulwark_shields_its_neighbours(t: T) -> void:
+	var raw := 20.0
+	var drifter := Enemies.of("drifter")
+	var bulwark := Enemies.of("bulwark")
+	# 純函式那一層：兩隻並肩 vs 隔開。
+	var side_by_side := Combat.guard_armor(
+		[{"type": "bulwark"}, {"type": "drifter"}],
+		[Vector2i(10, 10), Vector2i(11, 10)]
+	)
+	t.near(side_by_side[1], 6.0, "★★ 站在殼衛旁邊的漂蟲拿到 +6 護甲")
+	t.near(side_by_side[0], 0.0, "★★ 殼衛**不罩自己**（不然它只是一個走路的護甲數字）")
+	var far := Combat.guard_armor(
+		[{"type": "bulwark"}, {"type": "drifter"}],
+		[Vector2i(10, 10), Vector2i(13, 10)]
+	)
+	t.near(far[1], 0.0, "★ 反向對照：隔三格就罩不到（範圍是相鄰 1 格）")
+	var pair := Combat.guard_armor(
+		[{"type": "bulwark"}, {"type": "bulwark"}],
+		[Vector2i(10, 10), Vector2i(11, 10)]
+	)
+	t.near(pair[0], 6.0, "★ 兩隻殼衛並肩＝互相罩（4 自己的 ＋ 6 借來的 ＝ 10）")
+
+	# 傷害那一層：+6 真的吃到物理傷害上。
+	t.near(Combat.hit_damage(raw, "physical", drifter, 0.0, 0.0), raw,
+		"對照：沒被罩的漂蟲照原樣吃滿")
+	t.near(Combat.hit_damage(raw, "physical", drifter, 0.0, 6.0), raw - 6.0,
+		"★★ 被罩住的漂蟲吃到的傷害少 6（護甲是減法）")
+	# ★ 破甲是解答。0.25 破甲 → 6 點只剩 4.5。
+	t.near(Combat.hit_damage(raw, "physical", drifter, 0.25, 6.0), raw - 4.5,
+		"★★ 潮鳴的破甲砍得動借來的甲——這是它的剋制手段")
+	# 自己的甲與借來的甲**一起**被破甲砍，不是分開算。
+	t.near(Combat.hit_damage(raw, "physical", bulwark, 0.5, 6.0), raw - 5.0,
+		"★ 自己的 4 ＋ 借來的 6 先相加、再一起被破甲砍")
+	# 屏障那一路不受影響：護甲吃物理，屏障吃能量，剋制表不得被壓平。
+	t.near(Combat.hit_damage(raw, "energy", drifter, 0.0, 6.0), raw,
+		"★ 庇護不碰能量傷害（護甲是減法、屏障是百分比，兩條路各走各的）")
+
+
+## ★ 汲取：3 格內的塔交戰耗能 ×1.5。
+##
+## 它擋掉的是「峰值電力算得準」——玩家在準備期就能把整條防線的峰值加總出來，
+## 而那個數字到此為止在戰鬥期永遠成立。答案是儲槽與優先權滑桿。
+func _drainer_breaks_the_peak_budget(t: T) -> void:
+	var nodes: Array = [
+		{"id": 1, "type": "anchor", "cell": Vector2i(10, 10)},
+		{"id": 2, "type": "anchor", "cell": Vector2i(20, 10)},
+		{"id": 3, "type": "extractor", "cell": Vector2i(11, 10)},
+	]
+	var m := Combat.drain_mult(nodes, [{"type": "drainer"}], [Vector2i(12, 10)])
+	t.near(float(m.get(1, 1.0)), 1.5, "★★ 兩格外的塔被汲到（範圍 3 格）")
+	t.ok(not m.has(2), "★ 反向對照：八格外的塔沒事——**而且不在字典裡**")
+	t.ok(not m.has(3), "★ 只汲塔。採集器沒有交戰耗能，乘上去是空操作")
+	# 多隻不疊乘，取最強（`auras()` 的同一條——疊加會讓它變成堆量）。
+	var two := Combat.drain_mult(
+		nodes, [{"type": "drainer"}, {"type": "drainer"}],
+		[Vector2i(12, 10), Vector2i(11, 11)]
+	)
+	t.near(float(two.get(1, 1.0)), 1.5, "★★ 兩隻汲潮不疊乘（1.5 不是 2.25）")
+	t.ok(Combat.drain_mult(nodes, [{"type": "drifter"}], [Vector2i(11, 10)]).is_empty(),
+		"★ 反向對照：不會汲的敵人一格都不進字典")
+
+	# 局面那一層：同一座塔、同一個位置，只換旁邊那隻敵人的種類。
+	var need := {}
+	for type: String in ["drifter", "drainer"]:
+		var s := _session()
+		_power_plant(s)
+		BuildController.place(s, "anchor", Vector2i(16, 5))
+		BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(16, 5))
+		_spawn_at(s, type, 16.0)
+		BattleController.step(s)
+		# ⚠ `power_demand` 是一個 **float**，不是分項字典。第一版寫成
+		#   `(... as Dictionary).get("tower")` → 執行期 cast 錯 → **整支函式中止**，
+		#   而下面三條斷言一條都沒跑，測試卻照樣全綠（RG-164 的形狀第五次）。
+		need[type] = float(s.rates["power_demand"])
+	t.ok(float(need["drifter"]) > 0.0, "對照組：那座錨真的在交戰（不然下面兩條無意義）")
+	# `power_demand` 是**整張網**的需求（含採集器與發電機的待機），所以驗的是
+	# **差額**：多出來的必須恰好是那座錨交戰耗能的 0.5 倍，一滴不多。
+	# 直接除總量的話，這條斷言會隨著測試佈局多接一台機器而漂掉。
+	var engage := float(NodeDefs.of("anchor")["engage_power"])
+	t.near(float(need["drainer"]) - float(need["drifter"]), engage * 0.5,
+		"★★ 汲潮站在旁邊 → 多出來的需求恰好是那座錨交戰耗能的一半", 0.02)
+	t.ok(float(need["drainer"]) > float(need["drifter"]),
+		"★ 峰值電力在戰鬥期不再是準備期算得出來的那個數字")
+
+
+## ★★ 每一隻敵人在畫面上都認得出來（B3.2b）。
+##
+## 這條守的是本案最貴的一課（RG-145／B2.4 的隱形塔）：**斷言從來不看畫面**。
+## 1290 條全綠而三隻塔是隱形的，而使用者是用眼睛發現的。
+##
+## 做法是把 `_draw_enemies()` **實際讀的那幾個欄位**組成一個簽章，斷言九隻互不相同。
+## 它證不出「好不好認」（那是人眼判的），但證得出「兩隻在程式眼裡一模一樣」
+## ——而那是隱形的必要條件。日後加第十隻忘了給它視覺通道，這一條會紅。
+func _every_enemy_looks_different(t: T) -> void:
+	# `SWIFT_SPEED` 住在畫面層（`Battle.gd`），而「快不快」這個視覺分支讀的就是它
+	# ——抄一份數字進來的話，改門檻時這條斷言會安靜地變成量別的東西。
+	var Battle := load("res://scripts/screens/Battle.gd")
+	var swift_gate: float = Battle.SWIFT_SPEED
+	var seen: Dictionary = {}
+	for type: String in Enemies.DEFS:
+		var d := Enemies.of(type)
+		var sig := "r%.1f|armor%s|fast%s|swift%s|regen%s|bite%s|drain%s" % [
+			float(d.get("radius", 9.0)),
+			float(d.get("armor", 0.0)) > 0.0,
+			float(d.get("speed", 1.0)) > swift_gate,
+			bool(d.get("swift", false)),
+			float(d.get("regen", 0.0)) > 0.0,
+			float(d.get("wire_mult", 1.0)) > 1.0,
+			float(d.get("drain_mult", 1.0)) > 1.0,
+		]
+		t.ok(not seen.has(sig), "★★ %s 和「%s」在畫面上分得開" % [
+			String(d["name"]), String(seen.get(sig, "（沒有人和它撞）"))
+		])
+		seen[sig] = String(d["name"])
+	t.eq(seen.size(), Enemies.DEFS.size(), "★★ %d 隻敵人 = %d 個互不相同的外觀" % [
+		Enemies.DEFS.size(), seen.size()
+	])

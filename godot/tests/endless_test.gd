@@ -339,6 +339,18 @@ func _waves(t: T) -> void:
 	t.ok(Enemies.endless_pool(3).has("carapace"), "第 3 波起有甲殼")
 	t.ok(not Enemies.endless_pool(5).has("ember"), "第 5 波還沒有熾泳")
 	t.ok(Enemies.endless_pool(6).has("ember"), "第 6 波起有熾泳")
+	# ★ B3.2b 的三隻接在 18／21／24（沿用每三波一階）。**新的一隻要有幾波的
+	#   時間單獨被認識**，混編才學得到東西——這就是那條節奏的斷言。
+	for gate: Array in [[18, "rustsurge"], [21, "bulwark"], [24, "drainer"]]:
+		var w := int(gate[0])
+		var type := String(gate[1])
+		t.ok(not Enemies.endless_pool(w - 1).has(type), "第 %d 波還沒有%s" % [w - 1, Enemies.of(type)["name"]])
+		t.ok(Enemies.endless_pool(w).has(type), "★ 第 %d 波起有%s" % [w, Enemies.of(type)["name"]])
+	# ★★ **每一隻敵人都到得了無盡**。以 type 為鍵的表要有覆蓋斷言：
+	#   加了一隻卻忘記排進閘門，症狀是「它從來不出現」——沒有任何斷言會紅。
+	var pool_final: Array[String] = Enemies.endless_pool(99)
+	for type: String in Enemies.DEFS:
+		t.ok(pool_final.has(type), "★★ %s 進得了無盡的出場池" % Enemies.of(type)["name"])
 
 	# 出場表：同 (seed, wave) 必得同一張；不同波必不同流。
 	t.eq(

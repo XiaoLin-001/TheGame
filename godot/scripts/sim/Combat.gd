@@ -14,6 +14,7 @@ extends RefCounted
 
 const Tide := preload("res://scripts/sim/Tide.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
+const Enemies := preload("res://data/Enemies.gd")
 const Build := preload("res://scripts/sim/Build.gd")
 
 const Clock := preload("res://scripts/sim/Clock.gd")
@@ -144,16 +145,74 @@ static func auras(nodes: Array, cells: Array, satisfaction: Dictionary) -> Array
 	return out
 
 
+# ── ★ 敵人自己的兩個光環（B3.2b）──────────────────────────────────────
+#
+# 到 B3.2 為止**光環只有塔會發**。這兩支是反過來的那一半，而且刻意和
+# `auras()` 同構：同索引的陣列、多個不疊加取最強、純函式。
+# 不同構的話，日後「光環」這個詞在這個檔案裡會是兩件事。
+
+## 庇護（殼衛）：每隻敵人身上**別人給它的**護甲加成，與 `cells` 同索引。
+##
+## ⚠ **不加給自己**——「站在自己光環裡」要是免費的，這一隻就變成一個
+## 走路的護甲數字，而不是一個「先打誰」的問題。殼衛自己的 4 點寫在資料表上，
+## 兩隻殼衛並肩走才是 10 點，那是玩家看得到成因的疊法。
+static func guard_armor(enemies: Array, cells: Array) -> Array[float]:
+	var out: Array[float] = []
+	out.resize(cells.size())
+	out.fill(0.0)
+	for g in enemies.size():
+		var bonus := float(Enemies.of(String((enemies[g] as Dictionary)["type"]))
+			.get("guard_armor", 0.0))
+		if bonus <= 0.0 or g >= cells.size():
+			continue
+		for i in cells.size():
+			if i == g:
+				continue
+			# 相鄰 1 格（Chebyshev），和 walk-by 的半徑同一個尺——玩家已經學過那個範圍。
+			var d: Vector2i = (cells[i] as Vector2i) - (cells[g] as Vector2i)
+			if maxi(absi(d.x), absi(d.y)) <= 1:
+				out[i] = maxf(out[i], bonus)
+	return out
+
+
+## 汲取（汲潮）：每座**塔**的交戰耗能倍率，鍵是節點 id。
+##
+## 只算得出倍率，不動任何狀態——扣款在 `BattleController` 那一層（§7.4 的
+## 交戰耗能那一行）。回傳只含被汲到的那幾座：**沒有被汲到就不該出現在字典裡**，
+## 否則呼叫端會分不出「倍率 1.0」和「這座塔不存在」。
+static func drain_mult(nodes: Array, enemies: Array, cells: Array) -> Dictionary:
+	var out: Dictionary = {}
+	for g in enemies.size():
+		var def := Enemies.of(String((enemies[g] as Dictionary)["type"]))
+		var mult := float(def.get("drain_mult", 1.0))
+		if mult <= 1.0 or g >= cells.size():
+			continue
+		var rng := float(def.get("drain_range", 0.0))
+		for n: Dictionary in nodes:
+			if not bool(NodeDefs.of(String(n["type"])).get("tower", false)):
+				continue
+			if not in_range(n["cell"], cells[g], rng):
+				continue
+			# 多隻不疊乘，取最強——`auras()` 的同一條（疊加會讓它變成堆量）。
+			out[int(n["id"])] = maxf(float(out.get(int(n["id"]), 1.0)), mult)
+	return out
+
+
 # ── 傷害與回收 ────────────────────────────────────────────────────────
 
 ## 護甲是**減法**（吃物理）、屏障是**百分比**（吃能量）——§3.5 的剋制表。
 ## 潮鳴的破甲只減護甲、不碰屏障：屏障的剋制方式是物理傷害，不是破甲。
+## ★ B3.2b：`armor_bonus` 是**別人給它的**護甲（殼衛的庇護）。它和敵人自己的
+## 護甲**先相加、再一起被破甲砍**——分開砍的話，破甲對「被罩住的那一隻」
+## 只砍得到一半，而玩家看到的是同一條青色描邊。
 static func hit_damage(
-	raw: float, dmg_type: String, enemy: Dictionary, armor_break: float
+	raw: float, dmg_type: String, enemy: Dictionary, armor_break: float,
+	armor_bonus: float = 0.0
 ) -> float:
 	if dmg_type == "energy":
 		return maxf(0.0, raw * (1.0 - clampf(float(enemy.get("barrier", 0.0)), 0.0, 1.0)))
-	var armor := float(enemy.get("armor", 0.0)) * (1.0 - clampf(armor_break, 0.0, 1.0))
+	var armor := ((float(enemy.get("armor", 0.0)) + maxf(armor_bonus, 0.0))
+		* (1.0 - clampf(armor_break, 0.0, 1.0)))
 	return maxf(0.0, raw - armor)
 
 
