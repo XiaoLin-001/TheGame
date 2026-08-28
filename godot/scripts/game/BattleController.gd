@@ -64,13 +64,18 @@ static func step(s: RefCounted) -> void:
 	_phase(s)
 
 	var cells := Combat.enemy_cells(s.enemies, s.path)
-	var engaged := Combat.engaged(s.nodes, cells)
+	# ★ 遮蔽（B3.2c）：3 格內有遮潮的塔射程 −2。**要在 `engaged()` 之前算**
+	#   ——交戰判定就是射程判定，晚一步算等於這一 tick 的電費照舊的射程收。
+	var veil := Combat.veil_cut(s.nodes, s.enemies, cells)
+	var engaged := Combat.engaged(s.nodes, cells, veil)
 	# ★ 汲取（B3.2b）：3 格內有汲潮的塔，交戰耗能 ×1.5。算在這裡是因為
 	#   `_solve_power()` 要用它，而它只吃幾何（和 `engaged()` 同一個輸入）。
 	var drain := Combat.drain_mult(s.nodes, s.enemies, cells)
 
 	# 邊只建一次：兩個資源網與回寫共用同一份，索引順序才對得起來。
-	var edges := _edges(s)
+	# ★ 淤積（B3.2c）：濁潮壓著的導管，本 tick cap 減半。**減的是 cap 不是流量**
+	#   ——cap 是那條線的寬度（§7.2），所以畫面上那條線會真的變色（滿載）。
+	var edges := _edges(s, Combat.silt_caps(s.conduits, s.enemies, cells))
 	# ★ 拓樸也只建一次（B2.1e）：三張網的圖逐位元相同，只有供需不同。
 	#   三次各建一遍等於把 CSR、孿生邊、生成森林都算三遍。
 	var topo := FlowNetwork.prepare(s.nodes, edges)
@@ -82,11 +87,11 @@ static func step(s: RefCounted) -> void:
 
 	# 光環算一次就好，推進與開火共用：兩者相隔一個 tick 的移動量，
 	# 破甲比例不會因此改變，多算一次只是多跑一趟 塔×敵人。
-	var aura := Combat.auras(s.nodes, cells, sat)
+	var aura := Combat.auras(s.nodes, cells, sat, veil)
 	# ★ 庇護（B3.2b）：殼衛給**相鄰同伴**的護甲。和 `aura` 同索引、同樣算一次。
 	var guard := Combat.guard_armor(s.enemies, cells)
 	_advance_and_damage(s, aura)
-	_fire(s, engaged, sat, aura, guard)
+	_fire(s, engaged, sat, aura, guard, veil)
 	_end_of_wave(s)
 	_write_rates(s, edges, ore_res, power_res, alloy_res, engaged)
 
@@ -247,7 +252,8 @@ static func _advance_and_damage(s: RefCounted, aura: Array = []) -> void:
 const SHOT_TTL := 3
 
 static func _fire(
-	s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Array, guard: Array = []
+	s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Array, guard: Array = [],
+	veil: Dictionary = {}
 ) -> void:
 	for i in range(s.shots.size() - 1, -1, -1):
 		var sh: Dictionary = s.shots[i]
@@ -281,7 +287,7 @@ static func _fire(
 		if count <= 0:
 			continue
 
-		var r := Build.node_range(type, lv)
+		var r := Combat.tower_range(type, lv, int(n["id"]), veil)
 		var targets: Array[int] = []
 		# 濺射的**圓心**（純渲染）。`-1` ＝ 這一發不濺射。
 		var splash_at := Vector2i(-1, -1)
@@ -359,8 +365,36 @@ static func _fire(
 			continue
 		# ★ 碎片爆（B1.6）：混沌消散。種子用敵人 id → 同一隻永遠炸成同一個樣子。
 		_burst(s, Vector2(cells[i]), "chaos", int((s.enemies[i] as Dictionary)["id"]))
-		_on_kill(s, float(Enemies.of(String(s.enemies[i]["type"])).get("value", 0.0)), cells[i])
+		_on_kill(s, float(Enemies.of(String(s.enemies[i]["type"])).get("value", 0.0)), cells[i], veil)
+		# ★ 分裂（B3.2c）：死亡時裂成 `split` 隻裂片，**留在它死掉的那個進度上**。
+		#   於是「在哪裡殺它」變成一個問題：在防線末端殺，裂片就從防線**中段**
+		#   長出來，而且跑得比母體快。
+		#
+		#   ⚠ 三件事刻意如此：
+		#   ① 裂片自己沒有 `split` → 不會無限遞迴（那會當場凍住遊戲）
+		#   ② 裂片的價值是 0 → 分裂不是印鈔機（全域擊殺回收 25% 拿不到東西）
+		#   ③ 在**這個**迴圈裡 append 是安全的：`range()` 的界限已經算好了，
+		#      新加的不會在這一 tick 被走訪，而它們的 `cells` 下一 tick 才需要。
+		_split(s, s.enemies[i], float((s.enemies[i] as Dictionary)["progress"]))
 		s.enemies.remove_at(i)
+
+
+## ★ 分裂（B3.2c）：母體死在哪裡，裂片就從哪裡繼續走。
+##
+## **進度原封不動**（不往回退、不往前跳）：玩家看到的是「它裂開了」，
+## 而不是「有東西在別的地方出現」。裂片的血量走 `add_enemy()` 的同一條路
+## ——無盡波次曲線與難度層的倍率照樣乘，不然第 30 波的裂片等於不存在。
+static func _split(s: RefCounted, dead: Dictionary, at: float) -> void:
+	var def := Enemies.of(String(dead["type"]))
+	var n := int(def.get("split", 0))
+	var into := String(def.get("split_into", ""))
+	if n <= 0 or into == "":
+		return
+	for _k in n:
+		var id: int = s.add_enemy(into)
+		for e: Dictionary in s.enemies:
+			if int(e["id"]) == id:
+				e["progress"] = at
 
 
 ## ★ 碎片爆（B1.6，`20_ART_DIRECTION.md` §161 反模式：「爆炸不用 200 顆粒子。
@@ -389,7 +423,7 @@ static func _shield(s: RefCounted, at: Vector2i, frac: float) -> void:
 
 
 ## 一次擊殺的兩種回收，**並存**（§7.4）。
-static func _on_kill(s: RefCounted, value: float, at: Vector2i) -> void:
+static func _on_kill(s: RefCounted, value: float, at: Vector2i, veil: Dictionary = {}) -> void:
 	s.kills += 1
 	# ① 全域擊殺回收：任何塔擊殺 → 價值 25% 的礦砂，**直接入帳**。
 	#    它是擊殺處撿到的殘骸，不是採出來要運回核心的礦（§3.3）。
@@ -405,7 +439,7 @@ static func _on_kill(s: RefCounted, value: float, at: Vector2i) -> void:
 			continue
 		var rtype := String(n["type"])
 		var rlv := int(n.get("level", 0))
-		if not Combat.in_range(n["cell"], at, Build.node_range(rtype, rlv)):
+		if not Combat.in_range(n["cell"], at, Combat.tower_range(rtype, rlv, int(n["id"]), veil)):
 			continue
 		# 回收率是回收者的**主效果**，所以它跟著 `power` 那一級長（B3.8）。
 		# ⚠ 夾在 1.0（B3.10）：`slow` 與 `armor_break` 都夾在**使用的那一行**
@@ -622,7 +656,7 @@ static func _sim_node(n: Dictionary, supply: float, demand: float) -> Dictionary
 ## 拉出來的線卻只能從塔往外送電。示範佈局裡有三座塔就這樣**永遠是 0 電**，
 ## 而畫面上那條線看起來一切正常。看不見、控制不了、又會靜靜毀掉佈局的東西
 ## 不是規則，是缺陷。
-static func _edges(s: RefCounted) -> Array:
+static func _edges(s: RefCounted, silt: Dictionary = {}) -> Array:
 	# ★ 格索引（B2.1e）。`SessionState.node_at()` 是線性掃描，而這裡每條導管要查
 	#   兩次 → `O(導管 × 節點)`。31×19 的無盡佈局（604 節點／1095 導管）光這一支
 	#   就吃掉 25.8 ms，比整個解算器還貴。
@@ -637,7 +671,11 @@ static func _edges(s: RefCounted) -> Array:
 		var b: Dictionary = by_cell.get(c["b"], {})
 		if a.is_empty() or b.is_empty():
 			continue
-		var cap := Build.conduit_cap(int(c["level"]), float(s.mods["cap_bonus"])) * TICK
+		# ★ 淤積（B3.2c）：濁潮壓著的那條線本 tick 變窄。乘在 **cap** 上而不是
+		#   算完之後砍流量——cap 是那條線的寬度（§7.2），而導管的顏色與粗細
+		#   讀的正是「流量 ÷ cap」，所以減 cap 玩家當場看得到那條線滿載變色。
+		var cap := (Build.conduit_cap(int(c["level"]), float(s.mods["cap_bonus"])) * TICK
+			* float(silt.get(int(c["id"]), 1.0)))
 		# `dir` 只給回寫用：讓 `_write_rates()` 算得出**淨流向**（渲染層的流動珠
 		# 要靠它決定珠子往哪邊跑）。解算器本身不看這個欄位。
 		edges.append({

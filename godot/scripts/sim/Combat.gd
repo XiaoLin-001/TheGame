@@ -65,7 +65,7 @@ static func in_range_indices(cell: Vector2i, cells: Array, r: float) -> Array[in
 ## ★ 交戰狀態（§7.4）：**射程內有敵人就算交戰**，本 tick 要付交戰耗能。
 ## 回傳 `{tower id: bool}`——只回答「有沒有」。目標是誰要等敵人走完才算，
 ## 那是 `_fire()` 的事（見 `game/BattleController.gd`）。
-static func engaged(nodes: Array, cells: Array) -> Dictionary:
+static func engaged(nodes: Array, cells: Array, veil: Dictionary = {}) -> Dictionary:
 	var out: Dictionary = {}
 	for n: Dictionary in nodes:
 		var def := NodeDefs.of(String(n["type"]))
@@ -75,7 +75,8 @@ static func engaged(nodes: Array, cells: Array) -> Dictionary:
 		# 升級加的就是射程，而交戰判定是「這一刻付不付交戰電費」——
 		# 讀原值的話，一座升過射程的塔會打到它自己不用付電費的敵人。
 		out[int(n["id"])] = not in_range_indices(
-			n["cell"], cells, Build.node_range(String(n["type"]), int(n.get("level", 0)))
+			n["cell"], cells,
+			tower_range(String(n["type"]), int(n.get("level", 0)), int(n["id"]), veil)
 		).is_empty()
 	return out
 
@@ -118,7 +119,9 @@ static func pierce_indices(cell: Vector2i, cells: Array, r: float) -> Array[int]
 ##
 ## 強度按該座潮鳴自己的能量滿足率縮放（§7.4）——電不夠，控場也跟著弱。
 ## **多座不疊加，取最強的那一座**：疊加會讓控場塔變成堆量遊戲。
-static func auras(nodes: Array, cells: Array, satisfaction: Dictionary) -> Array[Vector2]:
+static func auras(
+	nodes: Array, cells: Array, satisfaction: Dictionary, veil: Dictionary = {}
+) -> Array[Vector2]:
 	var out: Array[Vector2] = []
 	out.resize(cells.size())
 	out.fill(Vector2.ZERO)
@@ -133,7 +136,11 @@ static func auras(nodes: Array, cells: Array, satisfaction: Dictionary) -> Array
 		var type := String(n["type"])
 		var lvl := int(n.get("level", 0))
 		var g := Build.effect_scale(type, lvl) * k
-		for i: int in in_range_indices(n["cell"], cells, Build.node_range(type, lvl)):
+		# ★ B3.2c：光環的範圍也吃遮蔽——潮鳴的「射程」和錨的射程是同一個欄位，
+		#   只砍會開火的那些等於讓遮潮挑對手。
+		for i: int in in_range_indices(
+			n["cell"], cells, tower_range(type, lvl, int(n["id"]), veil)
+		):
 			out[i] = Vector2(
 				# ⚠ 減速夾在 `SLOW_MAX`：**敵人永不停步**是鎖定設計（walk-by），
 				#   而 1.0 的減速就是停下來，超過 1.0 是倒著走。現行最強的組合
@@ -196,6 +203,70 @@ static func drain_mult(nodes: Array, enemies: Array, cells: Array) -> Dictionary
 			# 多隻不疊乘，取最強——`auras()` 的同一條（疊加會讓它變成堆量）。
 			out[int(n["id"])] = maxf(float(out.get(int(n["id"]), 1.0)), mult)
 	return out
+
+
+## 淤積（濁潮）：每條導管本 tick 的 **cap 倍率**，鍵是導管 id。
+##
+## 判準是「敵人所在的那一格，是不是這條導管佔用的格之一」——**不是相鄰**。
+## walk-by 的破壞半徑是 1 格，而這條規則是「壓在上面」：兩者故意不同尺，
+## 因為玩家要看得出「它踩到我的線了」而不是「它在附近」。
+##
+## ⚠ **橋上那幾格不豁免。** 橋免疫的是**攻擊**（§3.5：橋是架高的），
+## 而淤積不是攻擊——它不扣血、走過就恢復。讓橋連這個也免疫，
+## 等於把「走橋」變成一個沒有代價的萬用答案，而那正是鏽潮那條規則的價值所在。
+static func silt_caps(conduits: Array, enemies: Array, cells: Array) -> Dictionary:
+	var out: Dictionary = {}
+	var on: Dictionary = {}
+	for g in enemies.size():
+		var mult := float(Enemies.of(String((enemies[g] as Dictionary)["type"]))
+			.get("silt_cap", 1.0))
+		if mult < 1.0 and g < cells.size():
+			on[cells[g]] = minf(float(on.get(cells[g], 1.0)), mult)
+	if on.is_empty():
+		return out
+	for c: Dictionary in conduits:
+		for cell: Vector2i in (c["cells"] as Array):
+			if on.has(cell):
+				# 多隻踩同一條線不疊乘，取最狠的那一隻（`auras()` 的同一條）。
+				out[int(c["id"])] = minf(float(out.get(int(c["id"]), 1.0)), float(on[cell]))
+	return out
+
+
+## 遮蔽（遮潮）：每座**塔**被削掉多少射程（格），鍵是節點 id。
+##
+## 與 `drain_mult()` 同構：只回傳被削到的那幾座，多隻不疊加取最強。
+static func veil_cut(nodes: Array, enemies: Array, cells: Array) -> Dictionary:
+	var out: Dictionary = {}
+	for g in enemies.size():
+		var def := Enemies.of(String((enemies[g] as Dictionary)["type"]))
+		var cut := float(def.get("veil_cut", 0.0))
+		if cut <= 0.0 or g >= cells.size():
+			continue
+		var rng := float(def.get("veil_range", 0.0))
+		for n: Dictionary in nodes:
+			if not bool(NodeDefs.of(String(n["type"])).get("tower", false)):
+				continue
+			if not in_range(n["cell"], cells[g], rng):
+				continue
+			out[int(n["id"])] = maxf(float(out.get(int(n["id"]), 0.0)), cut)
+	return out
+
+
+## ★★ 一座塔**此刻真正的射程**（B3.2c）。射程有六個讀取端——交戰判定、開火選靶、
+## 潮鳴光環、回收者的死亡半徑、選取時畫的圈、檢視面板的數字——而**六個都得讀
+## 同一個數**。少改一個的症狀分兩種，兩種都很糟：畫面上的圈和打得到的範圍不一樣
+## （玩家照著一個假的圈擺位），或者塔付了交戰電費卻打不到（帳單和效果對不起來）。
+##
+## ⚠ **下限 `VEIL_FLOOR` 不是 0**：射程 0 的塔在 `engaged()` 眼裡不算交戰
+## （它只看幾何）→ 不必付交戰耗能 → 遮蔽會**反過來替玩家省電**。
+## 一條讓玩家更輕鬆的「debuff」不是一條規則，是一個漏洞。
+const VEIL_FLOOR := 2.0
+
+static func tower_range(type: String, level: int, id: int, veil: Dictionary = {}) -> float:
+	var base := Build.node_range(type, level)
+	if base <= 0.0:
+		return base                      # 生產節點沒有射程，別讓下限憑空長一個出來
+	return maxf(VEIL_FLOOR, base - float(veil.get(id, 0.0)))
 
 
 # ── 傷害與回收 ────────────────────────────────────────────────────────

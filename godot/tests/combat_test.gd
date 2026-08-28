@@ -50,6 +50,10 @@ func _initialize() -> void:
 	_bulwark_shields_its_neighbours(t)
 	_drainer_breaks_the_peak_budget(t)
 	_every_enemy_looks_different(t)
+	# ★ M3 第三批（B3.2c）。
+	_riftling_splits_where_it_dies(t)
+	_shroud_cuts_range_but_never_to_zero(t)
+	_silt_narrows_the_line_it_stands_on(t)
 	quit(t.report())
 
 
@@ -1134,7 +1138,7 @@ func _every_enemy_looks_different(t: T) -> void:
 	var seen: Dictionary = {}
 	for type: String in Enemies.DEFS:
 		var d := Enemies.of(type)
-		var sig := "r%.1f|armor%s|fast%s|swift%s|regen%s|bite%s|drain%s" % [
+		var sig := "r%.1f|armor%s|fast%s|swift%s|regen%s|bite%s|drain%s|split%s|veil%s|silt%s" % [
 			float(d.get("radius", 9.0)),
 			float(d.get("armor", 0.0)) > 0.0,
 			float(d.get("speed", 1.0)) > swift_gate,
@@ -1142,6 +1146,9 @@ func _every_enemy_looks_different(t: T) -> void:
 			float(d.get("regen", 0.0)) > 0.0,
 			float(d.get("wire_mult", 1.0)) > 1.0,
 			float(d.get("drain_mult", 1.0)) > 1.0,
+			int(d.get("split", 0)) > 0,
+			float(d.get("veil_cut", 0.0)) > 0.0,
+			float(d.get("silt_cap", 1.0)) < 1.0,
 		]
 		t.ok(not seen.has(sig), "★★ %s 和「%s」在畫面上分得開" % [
 			String(d["name"]), String(seen.get(sig, "（沒有人和它撞）"))
@@ -1150,3 +1157,158 @@ func _every_enemy_looks_different(t: T) -> void:
 	t.eq(seen.size(), Enemies.DEFS.size(), "★★ %d 隻敵人 = %d 個互不相同的外觀" % [
 		Enemies.DEFS.size(), seen.size()
 	])
+
+
+# ── ★ M3 第三批敵人的三條新規則（B3.2c、§7.5）────────────────────────
+
+## ★ 分裂：死亡時裂成 2 隻裂片，**留在它死掉的那個進度上**。
+## 於是「在哪裡殺它」變成一個問題——在防線末端殺，裂片就從防線中段長出來。
+func _riftling_splits_where_it_dies(t: T) -> void:
+	var s := _session()
+	_spawn_at(s, "riftling", 20.0)
+	(s.enemies[0] as Dictionary)["hp"] = 1.0
+	# 用一座打得動的塔殺它（走完整條路徑：傷害 → 死亡 → 分裂）。
+	_power_plant(s)
+	# ⚠ (16,11)→(20,5) 不是水平／垂直／45°，`lay_conduit` 會拒絕 → 塔沒電 → 不開火。
+	#   症狀是「分裂沒發生」，而壞的是測試佈局不是規則。走 45°：(16,11)→(20,7)。
+	BuildController.place(s, "anchor", Vector2i(20, 7))
+	t.eq(BuildController.lay_conduit(s, Vector2i(16, 11), Vector2i(20, 7)), Build.OK,
+		"分裂測試的供電線蓋得起來（45° 才合法）")
+	# ⚠ 母體在被打死之前會**先走**（`_advance_and_damage` 排在 `_fire` 之前），
+	#   所以「它死掉的那一格」不是出場的 20.0。記下最後一個活著的 tick 的進度，
+	#   死亡進度＝那個 ＋ 一格 tick 的位移——寫死 20.0 的話量到的是「它有沒有走」。
+	var last := 20.0
+	for _i in 20:
+		last = float((s.enemies[0] as Dictionary)["progress"])
+		BattleController.step(s)
+		if s.enemies.size() != 1 or String((s.enemies[0] as Dictionary)["type"]) != "riftling":
+			break
+	var died_at := last + float(Enemies.of("riftling")["speed"]) * BattleController.TICK
+	t.eq(s.enemies.size(), int(Enemies.of("riftling")["split"]),
+		"★★ 母體死掉 → 場上剩下 2 隻")
+	var kinds: Dictionary = {}
+	for e: Dictionary in s.enemies:
+		kinds[String(e["type"])] = true
+		t.near(float(e["progress"]), died_at,
+			"★★ 裂片留在母體死掉的那一格（不往回退也不往前跳）", 0.001)
+	t.ok(kinds.has("riftshard") and not kinds.has("riftling"),
+		"★ 裂出來的是裂片，母體真的不在了")
+	# ★ 裂片自己不分裂——不然是無限遞迴，而症狀是遊戲當場凍住。
+	t.eq(int(Enemies.of("riftshard").get("split", 0)), 0,
+		"★★ 裂片沒有 `split`（裂片再分裂＝無限遞迴）")
+	# ★ 價值 0：分裂不是印鈔機。
+	t.eq(int(Enemies.of("riftshard")["value"]), 0,
+		"★★ 裂片的價值是 0——不然一隻 30 礦砂的敵人死掉會生出兩張額外的收據")
+	t.near(Combat.salvage_ore(float(Enemies.of("riftshard")["value"])), 0.0,
+		"★ 連 25% 全域擊殺回收都拿不到")
+	# 反向對照：不會分裂的敵人死掉就是死掉。
+	var plain := _session()
+	_spawn_at(plain, "drifter", 20.0)
+	(plain.enemies[0] as Dictionary)["hp"] = 1.0
+	_power_plant(plain)
+	BuildController.place(plain, "anchor", Vector2i(20, 7))
+	BuildController.lay_conduit(plain, Vector2i(16, 11), Vector2i(20, 7))
+	for _i in 20:
+		BattleController.step(plain)
+	t.eq(plain.enemies.size(), 0, "★ 反向對照：漂蟲死了就是 0 隻")
+
+
+## ★ 遮蔽：3 格內的塔射程 −2，**下限 2 格**。
+##
+## 下限不是 0：射程 0 的塔在 `engaged()` 眼裡不算交戰（它只看幾何）→ 不必付
+## 交戰耗能 → 這條規則會反過來替玩家省電。一條讓玩家更輕鬆的 debuff 不是規則。
+func _shroud_cuts_range_but_never_to_zero(t: T) -> void:
+	var nodes: Array = [
+		{"id": 1, "type": "longcall", "cell": Vector2i(10, 10)},   # 射程 12
+		{"id": 2, "type": "frostreef", "cell": Vector2i(11, 10)},  # 射程 3 → 撞下限
+		{"id": 3, "type": "anchor", "cell": Vector2i(30, 10)},     # 太遠，遮不到
+		{"id": 4, "type": "extractor", "cell": Vector2i(10, 11)},  # 不是塔
+	]
+	var v := Combat.veil_cut(nodes, [{"type": "shroud"}], [Vector2i(12, 10)])
+	t.near(float(v.get(1, 0.0)), 2.0, "★★ 2 格外的塔被遮到（範圍 3 格）")
+	t.ok(not v.has(3), "★ 反向對照：18 格外的塔沒事——**而且不在字典裡**")
+	t.ok(not v.has(4), "★ 只遮塔（生產節點沒有射程）")
+	t.near(Combat.tower_range("longcall", 0, 1, v), 10.0, "★★ 長哨 12 → 10")
+	t.near(Combat.tower_range("frostreef", 0, 2, v), Combat.VEIL_FLOOR,
+		"★★ 霜礁 3 → 下限 2，不是 1")
+	t.ok(Combat.VEIL_FLOOR > 0.0,
+		"★★ 下限必須 > 0：射程 0 的塔不算交戰 → 不用付電費 → debuff 反而幫玩家")
+	# ★ 升過射程的那一級真的抵得掉——這是它的剋制手段。
+	var lifted := Combat.tower_range("anchor", Build.NODE_MAX_LEVEL, 1, v)
+	t.ok(lifted > Combat.tower_range("anchor", 0, 1, v),
+		"★★ 升過射程的錨在同一片遮蔽底下打得比較遠（升級是答案）")
+	t.near(Combat.tower_range("anchor", 0, 999, {}), Build.node_range("anchor", 0),
+		"★ 沒被遮到的塔讀到的就是原值")
+	# 多隻不疊加，取最強（`auras()` 的同一條）。
+	var two := Combat.veil_cut(
+		nodes, [{"type": "shroud"}, {"type": "shroud"}], [Vector2i(12, 10), Vector2i(11, 11)]
+	)
+	t.near(float(two.get(1, 0.0)), 2.0, "★★ 兩隻遮潮不疊加（−2 不是 −4）")
+
+	# 局面那一層：交戰判定真的跟著縮。同一座塔、同一隻敵人的位置，只換種類。
+	var engaged_with := {}
+	for type: String in ["drifter", "shroud"]:
+		var s := _session()
+		_power_plant(s)
+		# 錨射程 4：敵人在 (16,4)，塔放 (13,7) → 距離 4.24 > 4… 放 (14,6) → 2.83 ≤ 4
+		BuildController.place(s, "anchor", Vector2i(14, 6))
+		_spawn_at(s, type, 16.0)
+		BattleController.step(s)
+		engaged_with[type] = bool(
+			(s.rates["engaged"] as int) > 0
+		)
+	t.ok(bool(engaged_with["drifter"]), "對照組：錨對 2.8 格外的漂蟲算交戰")
+	t.ok(not bool(engaged_with["shroud"]),
+		"★★ 同一座錨對同一格的遮潮**不算交戰**（4 − 2 = 2 < 2.83）")
+
+
+## ★ 淤積：它壓著的那條導管本 tick cap 減半。**減的是 cap 不是流量**。
+func _silt_narrows_the_line_it_stands_on(t: T) -> void:
+	var conduits: Array = [
+		{"id": 7, "cells": [Vector2i(15, 5), Vector2i(16, 5), Vector2i(17, 5)]},
+		{"id": 8, "cells": [Vector2i(30, 12), Vector2i(30, 13)]},
+	]
+	var caps := Combat.silt_caps(conduits, [{"type": "silt"}], [Vector2i(16, 5)])
+	t.near(float(caps.get(7, 1.0)), 0.5, "★★ 它壓著的那條線 cap 減半")
+	t.ok(not caps.has(8), "★ 反向對照：沒被壓到的線不在字典裡")
+	# ★ 判準是「壓在上面」不是「相鄰」——和 walk-by 的 1 格半徑刻意不同尺。
+	var beside := Combat.silt_caps(conduits, [{"type": "silt"}], [Vector2i(16, 4)])
+	t.ok(not beside.has(7),
+		"★★ 站在**旁邊**一格不算——這條規則是『它踩到我的線了』，不是『它在附近』")
+	t.ok(Combat.silt_caps(conduits, [{"type": "drifter"}], [Vector2i(16, 5)]).is_empty(),
+		"★ 反向對照：不會淤積的敵人踩上去什麼事都沒有")
+	# 多隻踩同一條不疊乘。
+	var two := Combat.silt_caps(
+		conduits, [{"type": "silt"}, {"type": "silt"}], [Vector2i(16, 5), Vector2i(17, 5)]
+	)
+	t.near(float(two.get(7, 1.0)), 0.5, "★★ 兩隻踩同一條線不疊乘（0.5 不是 0.25）")
+
+	# ★★ **淤積只在橋上發生**，而那不是巧合：路徑格禁蓋節點、導管只能經由跨越點
+	#   通過路徑（§3.2 鎖定設計）——**橋是敵人所在的格與導管佔用的格唯一的交集**。
+	#   於是這條規則的真正意思是「走橋躲得過鏽潮的啃，躲不過濁潮的塞」，
+	#   而答案是第二座橋／第二條幹線。這一條斷言就是那句話。
+	var moved := {}
+	for type: String in ["drifter", "silt"]:
+		var s := _session()
+		var bridge: Vector2i = Vector2i.ZERO
+		for c: Variant in (s.sets["crossings"] as Dictionary):
+			bridge = c
+			break
+		BuildController.place(s, "relay", bridge + Vector2i(0, -1))
+		BuildController.place(s, "relay", bridge + Vector2i(0, 1))
+		t.eq(BuildController.lay_conduit(
+			s, bridge + Vector2i(0, -1), bridge + Vector2i(0, 1)
+		), Build.OK, "%s：過橋的那條導管蓋得起來" % type)
+		var at := 0.0
+		for i in s.path.size():
+			if s.path[i] == bridge:
+				at = float(i)
+		_spawn_at(s, type, at)
+		BattleController.step(s)
+		var e: Array = BattleController._edges(
+			s, Combat.silt_caps(s.conduits, s.enemies, Combat.enemy_cells(s.enemies, s.path))
+		)
+		moved[type] = float((e[0] as Dictionary)["cap"])
+	t.ok(float(moved["drifter"]) > 0.0, "對照組：那條線本來有寬度")
+	t.near(float(moved["silt"]) / float(moved["drifter"]), 0.5,
+		"★★ 濁潮站上去 → 那條線本 tick 的 cap 剩一半", 0.001)

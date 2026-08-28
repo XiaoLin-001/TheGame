@@ -299,6 +299,10 @@ var _auras: Array = []
 ## 和 `_auras` 一樣每幀在 `_draw()` 開頭算一次——光環要在**被罩住的那一隻**
 ## 身上看得見，不是只在發光環的那一隻身上（潮鳴的青色描邊就是這個做法）。
 var _guard: Array = []
+## ★ 遮蔽（B3.2c）：每座塔被削掉多少射程，鍵是節點 id。
+## **畫面一定要讀它**——射程圈與檢視面板的數字如果還是原值，玩家會照著一個
+## 假的圈擺位，而那比「塔變弱了」嚴重得多（RG-171 的同一族：UI 不得說謊）。
+var _veil: Dictionary = {}
 ## ★ 音訊（B1.5）。上一幀的幾個數字，用來推導「這一幀發生了什麼」。
 ## **音效一律從畫面層推導，模擬層維持零副作用**（`CLAUDE.md` 技術慣例）：
 ## 在 `scripts/sim/` 裡塞一行 `AudioBus.play()` 就等於讓每日挑戰的重播會出聲。
@@ -2072,6 +2076,7 @@ func _draw() -> void:
 	_engaged = Combat.engaged(s.nodes, cells)
 	_auras = Combat.auras(s.nodes, cells, s.rates["satisfaction"])
 	_guard = Combat.guard_armor(s.enemies, cells)
+	_veil = Combat.veil_cut(s.nodes, s.enemies, cells)
 	_threat = _threat_cells(cells)
 	_draw_path()
 	_draw_ore_cells()
@@ -3265,8 +3270,18 @@ func _draw_enemies() -> void:
 		#   不是型別名——§1.7 那條「輪廓由既有的機制欄位推導」的字面意思，
 		#   日後第二隻咬線的敵人不必記得補這一行。
 		var bite: bool = float(def.get("wire_mult", 1.0)) > 1.0
-		var pts := _enemy_shape(e, p, r, pulse, armored, fast, bite)
+		# ★ B3.2c：三個判準一律讀**機制欄位本身**，不讀型別名（§1.7）。
+		var veil: bool = float(def.get("veil_cut", 0.0)) > 0.0
+		var silt: bool = float(def.get("silt_cap", 1.0)) < 1.0
+		var pts := _enemy_shape(e, p, r, pulse, armored, fast, bite, veil, silt)
 		draw_colored_polygon(pts, Palette.TIDE_MAGENTA)
+		# ★ 分裂（B3.2c）：**輪廓中間一道真的裂縫**——用背景色切過去，
+		#   和稜鏡的裂法同一招（不是在上面畫一條線）。它預告了「打死它會變兩隻」，
+		#   而那是玩家唯一來得及做決定的時刻（決定在哪裡殺它）。
+		if int(def.get("split", 0)) > 0:
+			var d := _enemy_dir(e)
+			var perp := Vector2(-d.y, d.x) * r * pulse * 1.1
+			draw_line(p - perp, p + perp, Palette.BG_DEEP, 2.4)
 		# ★ 甲板（B1.6.3）：**同形描邊，不是外圈弧**。血量弧已經是 `tide.deep`
 		#   的圓弧、畫在 `r+4`，再加一圈外弧就是同一個位置上的兩個訊息——
 		#   而 §4.3b 那條規則說「換顏色不夠，要換形狀」。這個專案在這裡踩過
@@ -3486,13 +3501,19 @@ func _draw_bursts() -> void:
 ## 它不畫任何新東西，只改既有那一圈頂點的半徑，所以不佔用敵人之間的空隙
 ## （B1.6.3 那一課：任何畫在本體外的東西都會壓到後面那一隻）。
 ## 讀起來是「咬」，而它咬的正是導管。
+## ★ B3.2c 兩個：`veil` ＝**三角**（遮潮，全場唯一的三角形，在 16px 上和一排
+## 圓團／六邊形一眼分得開）；`silt` ＝**下緣壓平**（濁潮，沉積的重量感）。
+## 兩個都只動既有那一圈頂點，不畫本體外的東西——B1.6.3 的那一課：
+## 任何畫在身後／身外的東西都會壓到後面那一隻。
 func _enemy_shape(
 	e: Dictionary, p: Vector2, r: float, pulse: float, armored: bool, fast: bool,
-	bite: bool = false
+	bite: bool = false, veil: bool = false, silt: bool = false
 ) -> PackedVector2Array:
 	var sides := 6 if armored else 9
 	if bite:
 		sides = 10          # 偶數，交錯才收得整齊（奇數會有兩個相鄰的凹點）
+	if veil:
+		sides = 3           # 遮蔽＝一片擋在前面的東西，不是一團生物
 	var amp := 0.07 if armored else 0.15
 	var pts := PackedVector2Array()
 	# `k` 而不是 `i`：呼叫端已經用掉 `i`（敵人索引），而 GDScript 的 for
@@ -3505,6 +3526,8 @@ func _enemy_shape(
 		if bite and k % 2 == 1:
 			wobble *= 0.72
 		var v := Vector2(cos(a), sin(a)) * r * pulse * wobble
+		if silt and v.y > 0.0:
+			v.y *= 0.55     # 下緣壓平＝沉積。它壓著的是地上的線，重心要在下面
 		if fast:
 			# ★ 流線＝**垂直於行進方向壓扁**，不是沿行進方向拉長（B1.6.3 實看修正）。
 			#
@@ -3584,7 +3607,11 @@ func _draw_selection() -> void:
 
 	# ★ B3.8：圈要畫**升過的射程**。讀表上的原值會讓玩家看到一個和實際打得到
 	#   的範圍不一樣的圈——而擺位正是他用這個圈在做的決定。
-	var rng := Build.node_range(String(n["type"]), int(n.get("level", 0)))
+	# ★ B3.2c：圈要畫**被遮蔽之後**的射程。這一行和 `Combat.engaged()` 讀同一支
+	#   `tower_range()`——兩邊各讀各的，就是「畫面上的圈和打得到的範圍不一樣」。
+	var rng := Combat.tower_range(
+		String(n["type"]), int(n.get("level", 0)), int(n["id"]), _veil
+	)
 	if rng > 0.0:
 		# 半透明填色 ＋ 實線邊：只有邊的話，兩座塔的射程圈交疊時看不出誰罩到哪。
 		draw_circle(c, rng * Shapes.GRID, Palette.alpha(Palette.ORDER_CYAN, 0.07))
@@ -4412,7 +4439,7 @@ func _refresh_inspect() -> void:
 	# ★ B3.8：升的是哪一項各問各的（`10_GDD.md` §4.3）。這裡**不能用 `scale`**
 	#   ——那是耗能倍率；一座第 2 級加射速的錨，傷害還停在 1 級的值。
 	var eff := Build.effect_scale(type, lvl)
-	var rng := Build.node_range(type, lvl)
+	var rng := Combat.tower_range(type, lvl, int(n["id"]), _veil)
 	if rng > 0.0:
 		lines.append("射程　%.0f 格" % rng)
 	if float(def.get("dmg", 0.0)) > 0.0:

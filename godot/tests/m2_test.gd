@@ -172,7 +172,21 @@ func _everything_is_reachable(t: T) -> void:
 	for w in range(1, 40):
 		for e: Variant in Enemies.endless_schedule(12345, w):
 			spawned[String((e as Dictionary)["type"])] = true
+	# ★ B3.2c：**第三條出場路徑＝分裂**。裂片不在任何出場表上（放進去，玩家會看到
+	#   一隻沒有母體的裂片憑空出現），但它確實會出場——由母體生出來。
+	#   ⚠ 這一條不是把守衛放寬：它要求**那個母體自己得先真的出場**，
+	#   否則「只由分裂產生」就成了一筆死資料的後門。
 	for type: String in Enemies.DEFS.keys():
+		if Enemies.spawned_by_split(type):
+			var parent_spawns := false
+			for parent: String in Enemies.DEFS.keys():
+				if (String(Enemies.of(parent).get("split_into", "")) == type
+					and spawned.has(parent)):
+					parent_spawns = true
+			t.ok(parent_spawns,
+				"★★ 敵人「%s」由分裂出場，而它的母體自己真的會出場"
+					% String(Enemies.of(type)["name"]))
+			continue
 		t.ok(spawned.has(type), "★ 敵人「%s」真的會出場" % String(Enemies.of(type)["name"]))
 
 	# 每一隻角色都有取得途徑（`Roster.unlock_hint()` 說得出來）。

@@ -341,7 +341,10 @@ func _waves(t: T) -> void:
 	t.ok(Enemies.endless_pool(6).has("ember"), "第 6 波起有熾泳")
 	# ★ B3.2b 的三隻接在 18／21／24（沿用每三波一階）。**新的一隻要有幾波的
 	#   時間單獨被認識**，混編才學得到東西——這就是那條節奏的斷言。
-	for gate: Array in [[18, "rustsurge"], [21, "bulwark"], [24, "drainer"]]:
+	for gate: Array in [
+		[18, "rustsurge"], [21, "bulwark"], [24, "drainer"],
+		[27, "riftling"], [30, "shroud"], [33, "silt"],
+	]:
 		var w := int(gate[0])
 		var type := String(gate[1])
 		t.ok(not Enemies.endless_pool(w - 1).has(type), "第 %d 波還沒有%s" % [w - 1, Enemies.of(type)["name"]])
@@ -350,7 +353,20 @@ func _waves(t: T) -> void:
 	#   加了一隻卻忘記排進閘門，症狀是「它從來不出現」——沒有任何斷言會紅。
 	var pool_final: Array[String] = Enemies.endless_pool(99)
 	for type: String in Enemies.DEFS:
+		# ★ B3.2c：**裂片是唯一的例外**——它是分裂生出來的，不是排程排出來的。
+		#   把它放進池裡，玩家會看到一隻沒有母體的裂片憑空出現，
+		#   而「這東西是從哪來的」正是那條規則唯一要講清楚的事。
+		if Enemies.spawned_by_split(type):
+			t.ok(not pool_final.has(type),
+				"★★ %s 不進出場池（它只由分裂產生）" % Enemies.of(type)["name"])
+			continue
 		t.ok(pool_final.has(type), "★★ %s 進得了無盡的出場池" % Enemies.of(type)["name"])
+	# ★ 而且**真的有母體會生它**——不然上面那條例外就是在替一筆死資料開後門。
+	var parents := 0
+	for type: String in Enemies.DEFS:
+		if Enemies.spawned_by_split(String(Enemies.of(type).get("split_into", ""))):
+			parents += 1
+	t.ok(parents > 0, "★★ 每一隻「只由分裂產生」的敵人都有母體（找到 %d 個）" % parents)
 
 	# 出場表：同 (seed, wave) 必得同一張；不同波必不同流。
 	t.eq(
