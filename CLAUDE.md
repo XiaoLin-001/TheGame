@@ -109,6 +109,10 @@ TL_STRESS=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 　　　結論詞 0 條、評價詞 0 條、辯護詞 0 條（後三條 B3.9.5 加）。
 cd godot && python ../qa/copy_extract.py && python ../qa/copy_tells.py
 
+# ★ 靜態地雷掃描（B3.11）。**不需要 Godot**：Color 字面量／泛型 lerp／sim 層系統 RNG／
+# match 分支同名 var／括號平衡／空白縮排。0 條才算過；它抓不到型別錯誤——那要 Godot。
+python qa/gd_lint.py
+
 # 截圖驗證（自動靜音、約 3 秒後存圖並退出）
 # TL_SHOT 存在時模擬凍結在 TL_DEMO_TICKS 那一格 → 同參數在任何機器上拍出同一張圖
 TL_SHOT="C:/tmp/shot.png" TL_PANEL=battle TL_SEED=42 <godot> --path godot --rendering-driver opengl3
@@ -246,6 +250,7 @@ TheGame/
 │   ├── 50_QA_PLAN.md          QA（五層梯、bug 登記、回歸清單）
 │   └── agents/                外掛 skill 的設定（見「Agent skills」）
 ├── qa/copy_*.py               文案稽核（掃玩家字串 ＋ 比對 §3.5 的四條禁令）
+├── qa/gd_lint.py              靜態地雷掃描（不需要 Godot）
 ├── assetgen/gen_audio.py      音源產生器（純 Python 標準庫；**音源的原始碼**）
 ├── tools/godot/               （gitignore）Godot console exe
 └── godot/
@@ -254,7 +259,7 @@ TheGame/
     │                          Loadout（局外成長進局的唯一入口）——純函式、零 RNG
     ├── scripts/game/          BattleController / BuildController / SessionState
     ├── scripts/screens/       各畫面
-    ├── scripts/render/        Palette / Shapes / Motion（美術 token 實作）
+    ├── scripts/render/        Palette / Shapes / Motion / Glyphs（美術 token 實作；Glyphs＝節點幾何＋體積語言）
     ├── scripts/ui/            UiKit
     ├── scripts/meta/          TycoonSim（純函式的**狀態機**）
     ├── data/                  節點、角色、敵人、地圖、戰役、科技、等級軸、成就、**難度層**資料表

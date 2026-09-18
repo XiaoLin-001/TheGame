@@ -12,9 +12,12 @@ const NodeDefs := preload("res://data/NodeDefs.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const BattleScreen := preload("res://scripts/screens/Battle.gd")
 const TechScreen := preload("res://scripts/screens/Tech.gd")
+const Glyphs := preload("res://scripts/render/Glyphs.gd")
 
 ## 卡片寬度。五張 ＋ 四道間距要放進 1280 的設計基準。
 const CARD := Vector2(228, 300)
+## 關卡縮圖的寬（px）＝卡片內寬。高由地圖的長寬比決定（`Glyphs.MapView`）。
+const THUMB_W := CARD.x - 24.0
 ## 一列擺幾張。四欄 ＝ 4×228 ＋ 3×12 ＝ 948px，在 1280 的視窗裡留得住左右邊距。
 const COLUMNS := 4
 
@@ -224,6 +227,10 @@ func _card(index: int) -> Control:
 		"★★★".substr(0, stars) + "☆☆☆".substr(0, 3 - stars), 20,
 		Palette.ENERGY_AMBER if stars > 0 else Palette.TEXT_DISABLED, false
 	))
+	# ★ 關卡縮圖（B3.11）：路徑、暈、橋、礦點、核心，和主畫面同一套編碼。
+	#   「橋 2 座」那一行字說得出數量，說不出**在哪裡**——而擺位的決定全看在哪裡。
+	#   縮圖也是每一關的臉：十關的卡片在這之前只差標題與數字。
+	col.add_child(Glyphs.MapView.new(m, THUMB_W))
 
 	var lesson := UiKit.label(String(lv["lesson"]), 13, Palette.TEXT_SECONDARY, false)
 	lesson.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

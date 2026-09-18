@@ -25,12 +25,17 @@ const CampaignData := preload("res://data/Campaign.gd")
 const RosterData := preload("res://data/Roster.gd")
 const Difficulty := preload("res://data/Difficulty.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
+const Glyphs := preload("res://scripts/render/Glyphs.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
 
 ## ★ 「快」的門檻（B1.6.3、`20_ART_DIRECTION.md` §1.7）。超過就給拖尾與流線輪廓。
 ## 取在 1.2：現行三種是 1.6／1.0／0.6，門檻落在漂蟲（基準 1.0）之上一截，
 ## 所以 M3 補敵人時「比基準明顯快」才拿得到這個視覺，不是隨便快一點就有。
 const SWIFT_SPEED := 1.2
+
+## ★ 開打漣漪的壽命（秒，B3.11）。號令音 `wave_start` 有 1.7 秒，漣漪比它短——
+## 它只負責「潮從**這裡**進來」那一眼，說完就讓位給敵人本體。
+const RIPPLE_SEC := 1.2
 
 ## ★ 底欄的 y（B2.4.2 常數化）。它原本是三處各寫一次的 `668`，而 A-1 那個缺陷
 ## 正好是「建造欄長到蓋住底欄」——兩個會互相碰撞的東西，座標必須是同一個常數。
@@ -310,6 +315,10 @@ var _stress_worst: float = 0.0
 ## 本幀「正在被啃」的格（敵人相鄰 1 格內）。**純渲染推導，不新增任何狀態**
 ## ——同一份判定模擬層每 tick 都在做（`Tide.in_blast`），這裡只是把它畫出來。
 var _threat: Dictionary = {}
+## 本幀每隻敵人所在的格（與 `s.enemies` 同索引）與「這一 tick 被打中的格」。
+## 兩者都是**純渲染推導**（B3.11，受擊一閃用），不新增任何模擬狀態。
+var _enemy_cells: Array = []
+var _hit_cells: Dictionary = {}
 ## ★ 本幀「畫不出圖形」的節點類型（B2.4.6）。`_draw_nodes()` 的 match 每漏一種
 ## 就往這裡記一筆，`TL_CLICKTEST` 拿它當斷言。**這不是防禦性程式碼，是一支感測器**
 ## ——漏掉一種的後果是那座塔在地圖上完全隱形（蓋得下去、會開火、會吃電、會被
@@ -2054,12 +2063,17 @@ func _draw() -> void:
 	_engaged = Combat.engaged(s.nodes, cells)
 	_auras = Combat.auras(s.nodes, cells, s.rates["satisfaction"])
 	_threat = _threat_cells(cells)
+	# ★ B3.11：敵人的格與「這一 tick 被打中的格」留給 `_draw_enemies()` 讀
+	#   （受擊一閃是純渲染推導：剛生出來那幾發的落點）。
+	_enemy_cells = cells
+	_hit_cells = _hit_cells_of()
 	_draw_path()
 	_draw_ore_cells()
 	_draw_fields()
 	_draw_conduits()
 	_draw_nodes()
 	_draw_enemies()
+	_draw_ripple()
 	_draw_shots()
 	_draw_bursts()
 	_draw_shields()
@@ -2829,252 +2843,84 @@ func _draw_beads(
 
 
 func _draw_nodes() -> void:
+	# ★ B3.11：**兩趟**。落影全部先畫、塔身全部後畫——一座塔的影子偏出格線那兩個
+	#   像素只准壓在背景與導管上，不准壓在鄰居已經畫好的血條與徽章上
+	#   （`Shapes.SHADOW_OFF` 的原註；`body_extent()` 守的正是那一格）。
+	#   幾何每幀建一次（`Glyphs.build_for()`），兩趟共用同一份。
+	var rows: Array = []
 	for n: Dictionary in s.nodes:
-		var p := _center(n["cell"])
-		var full := NodeDefs.hp(String(n["type"]))
-		var lv := int(n.get("level", 0))
+		var at := _center(n["cell"])
+		var parts: Array = Glyphs.build_for(n, at, s.tick_count)
+		if parts.is_empty():
+			# 對不到的型別＝隱形的塔。記下來讓 `_glyph_selftest` 變紅（B2.4.6）。
+			_no_glyph[String(n["type"])] = true
+			continue
+		rows.append([n, at, Glyphs.scale_for(n), parts])
+	for row: Array in rows:
+		_scaled(row[1], float(row[2]), true)
+		Glyphs.paint_shadows(self, row[3])
+		_scaled(row[1], float(row[2]), false)
+	for row: Array in rows:
+		var nd: Dictionary = row[0]
+		var p: Vector2 = row[1]
+		var full := NodeDefs.hp(String(nd["type"]))
+		var lv := int(nd.get("level", 0))
 		# ★ B3.10：血條也夾在半格內——它畫在塔身下緣，跟著沒有上限的體積通道長
-		#   就會落進下面那一格（塔身本身已改由 `Shapes.fit_scale()` 夾住）。
-		var sc := minf(Shapes.level_scale(lv), Shapes.GRID * 0.5 / 15.0)
-		if float(n["hp"]) < full:
+		#   就會落進下面那一格（塔身本身由 `Shapes.fit_scale()` 夾住）。
+		var bar_sc := minf(Shapes.level_scale(lv), Shapes.GRID * 0.5 / 15.0)
+		if float(nd["hp"]) < full:
 			# **血條不是圓環**：儲槽的充能也是琥珀色圓弧，兩個圓弧疊在同一顆
-			# 12px 的節點上肉眼分不出來（本批截圖當場抓到）。形狀不同才分得開。
-			# ★ B3.9：`15 × sc` 而不是 15——塔身跟著級數長，血條不跟就會被壓在底下。
-			var frac := clampf(float(n["hp"]) / full, 0.0, 1.0)
+			# 12px 的節點上肉眼分不出來。形狀不同才分得開。
+			var frac := clampf(float(nd["hp"]) / full, 0.0, 1.0)
 			var bar := Vector2(24.0, 3.0)
-			var at := p + Vector2(-bar.x * 0.5, 15.0 * sc)
-			draw_rect(Rect2(at, bar), Palette.alpha(Palette.BG_DEEP, 0.8))
-			draw_rect(Rect2(at, Vector2(bar.x * frac, bar.y)), Palette.WARN_ORANGE)
-		_draw_node_body(n, p)
-		_draw_threat(n["cell"], p)
-		_draw_engaged(n, p)
-		# ★ B3.9.3：零件長在塔身周圍（半徑 17px）而不是頭上那一條帶子，所以
-		#   缺料徽章（y −16 起）不必再讓位——它是**地圖上唯一指出瓶頸的元素**。
-		_draw_badge(n, p)
+			var bar_at := p + Vector2(-bar.x * 0.5, 15.0 * bar_sc)
+			draw_rect(Rect2(bar_at, bar), Palette.alpha(Palette.BG_DEEP, 0.8))
+			draw_rect(Rect2(bar_at, Vector2(bar.x * frac, bar.y)), Palette.WARN_ORANGE)
+		_scaled(p, float(row[2]), true)
+		Glyphs.paint_bodies(self, row[3], p)
+		_scaled(p, float(row[2]), false)
+		_draw_threat(nd["cell"], p)
+		_draw_engaged(nd, p)
+		# ★ B3.9.3：零件長在塔身周圍而不是頭上那一條帶子，所以缺料徽章（y −16 起）
+		#   不必再讓位——它是**地圖上唯一指出瓶頸的元素**。
+		_draw_badge(nd, p)
+
+
+## ★ 「以某一格為中心放大 `sc` 倍」的畫布變換，開／關（B3.9.2a）。
+##
+## ⚠ **`draw_set_transform()` 是取代，不是疊加**（使用者回報「升級完之後鼠標跟
+##   遊戲指定的格子會有 offset，升級的東西會不見」）。B3.9 這裡直接蓋掉了
+##   `_draw()` 開頭那一層地圖變換（原點＋縮放），於是①升過級的塔畫到別的地方去，
+##   ②還原成**單位矩陣**使那一幀後面畫的每一樣東西都少掉原點與縮放。
+##   算式收在 `Shapes.level_xform()`（`hud_test` 釘著），這裡只負責開與關——
+##   而**關一定要關回地圖那一層**，不是關回單位矩陣。
+##   `sc == 1.0`（0 級、預覽）時兩邊都是空操作。
+func _scaled(p: Vector2, sc: float, on: bool) -> void:
+	if sc == 1.0:
+		return
+	if on:
+		draw_set_transform_matrix(Shapes.level_xform(_map_origin(), _zoom, p, sc))
+	else:
+		draw_set_transform(_map_origin(), 0.0, Vector2(_zoom, _zoom))
 
 
 ## ★ 一座節點**畫成什麼樣子**——只看型別，不看它蓋起來沒有（B3.4）。
 ##
-## 抽出來的理由是**擺放預覽要畫同一個東西**。原本預覽只有一個綠框，
-## 而使用者的話是「預覽這個角色的模型，而不是純粹是正方形」——
-## §1.6 花了整節在講「形狀要說得出這隻角色是什麼」，而玩家做擺位決定的
-## 那一刻**看不到那個形狀**，等於那一整節的工作在最需要它的時候缺席。
+## 擺放預覽走的是它：十四種節點各有自己的幾何，抄一份的下場是日後加第十五種時
+## 只有一邊記得加——而漏掉的那一邊**症狀是隱形而不是報錯**（`_no_glyph` 就是
+## 為此而生）。B3.11 起幾何本身在 `Glyphs.build()`（純函式，名冊與標題畫面也用
+## 同一份），這裡只剩「建、縮放、上色」三步。
 ##
-## 抽成函式而不是在預覽那邊再畫一次：十四種節點各有自己的幾何，
-## 抄一份的下場是日後加第十五種時只有一邊記得加——而漏掉的那一邊
-## **症狀是隱形而不是報錯**（`match` 沒對到就靜靜地什麼都不做，B2.4 中過三次）。
-##
-## `n` 只需要 `type`；`hp`／`charge` 缺了就當作滿血、空槽（預覽正是這個狀態）。
+## `n` 只需要 `type`；`hp`／`charge`／`level` 缺了就當作滿血、空槽、0 級。
 func _draw_node_body(n: Dictionary, p: Vector2) -> void:
-	var full := NodeDefs.hp(String(n["type"]))
-	# ★ B3.9：**升過的塔整體變大**（`10_GDD.md` §4.3，使用者指定「每一級都要有
-	#   外觀上的改變」）。掛在 `draw_set_transform` 上而不是改十三種形狀的每一個
-	#   座標——那是 65 個要維護的數字，而漏掉一種的症狀是隱形。
-	#
-	# ⚠ **`draw_set_transform()` 是取代，不是疊加**（B3.9.2a，使用者回報
-	#   「升級完之後鼠標跟遊戲指定的格子會有 offset，升級的東西會不見」）。
-	#   B3.9 這裡直接蓋掉了 `_draw()` 開頭那一層地圖變換（原點＋縮放），於是
-	#   ①升過級的塔畫到別的地方去（＝不見了），②還原時還原成**單位矩陣**，
-	#   那一幀後面畫的每一樣東西——其他節點、敵人、選取框、hover 框——
-	#   全都少掉原點與縮放（＝游標和格子對不上）。
-	#   算式收在 `Shapes.level_xform()` 裡，因為畫面上的症狀是最後才看得見的一層。
-	#   預覽傳進來的字典沒有 `level` → sc = 1.0 → 這兩行是空操作。
-	var type := String(n["type"])
-	var lv := int(n.get("level", 0))
-	# ★ **級數驅動的是幾何本身**（`10_GDD.md` §4.3，B3.9.4，使用者指定：「我需要的
-	#   是外型的變化…而不是外圍的變化，是形狀真正的變化」）。
-	#
-	#   B3.9.3 把零件（托架／砲管／細環）掛在塔身**外面**，那正是被退回的那一版。
-	#   現在每一種節點的**輪廓參數**直接讀那一級買到的是什麼：
-	#     出力 → 更厚重（層數／齒數／邊數／配重）
-	#     射速 → 更多管口（砲口／橫桿／吊索）
-	#     射程 → 更高更長（軸向拉長／輻條）
-	#     濺射 → 更尖（尖角更多更深）
-	#
-	#   **0 級一律走原本那一份形狀，一個像素都不變**：既有的十三種輪廓是 B2.4.8
-	#   照遊玩測試調出來的。升級要做的是「這一座和旁邊那一座不一樣」，
-	#   不是「這遊戲換了美術」。
-	var n_pow := Build.step_count(type, lv, Build.STEP_POWER)
-	var n_rof := Build.step_count(type, lv, Build.STEP_ROF)
-	var n_rng := Build.step_count(type, lv, Build.STEP_RANGE)
-	var n_spl := Build.step_count(type, lv, Build.STEP_SPLASH)
-	# ★ B3.10：縮放**只往下夾**——體積通道（×1.05/級）乘上已經自己長大的幾何之後，
-	#   滿級時 13 種裡有 11 種畫到半格（16px）之外，壓在隔壁那一格的血條與缺料
-	#   徽章上。夾在 `Shapes.fit_scale()`，量的是 `Shapes.body_extent()`
-	#   ——那一支和下面這個 `match` 是同一份幾何的兩個讀法，改輪廓要一起改。
-	var sc := Shapes.fit_scale(Shapes.body_extent(type, lv, n_pow, n_rof, n_rng, n_spl), lv)
-	if sc != 1.0:
-		draw_set_transform_matrix(Shapes.level_xform(_map_origin(), _zoom, p, sc))
-	match type:
-		"core":
-			# ★ **最大的幾何體**，order.bright 描邊（§1.6）。核心升不得，所以它是
-			#   唯一一個不吃級數的分支。48 ＝ 1.5 格（§7.1 A-4）。
-			var half := Vector2(24, 24)
-			# ★ §1.6：**受擊時整體閃 `warn.orange`**——核心掉血是這一局唯一不可逆
-			#   的事，它不該和一個中繼被啃長得一樣。
-			# `.get()` 而不是 `n["hp"]`：預覽傳進來的是一個只有 `type` 的字典，
-			# 直接索引缺鍵會丟執行期錯誤，而那會**中止這一支函式**（RG-164 的形狀）。
-			var hurt: bool = float(n.get("hp", full)) < full
-			var body: Color = Palette.WARN_ORANGE if hurt else Palette.ORDER_BRIGHT
-			var alarm := Motion.pulse01(s.tick_count, Motion.BASE * 4.0, 0.5) if hurt else 1.0
-			draw_rect(Rect2(p - half, half * 2.0), Palette.BG_RAISED)
-			draw_rect(Rect2(p - half, half * 2.0), Palette.alpha(body, alarm), false, 3.0)
-			# 極慢的呼吸＝這張圖的心跳。**不是警示**（警示是橙色而且更急）。
-			var beat := Motion.pulse01(s.tick_count, Motion.AMBIENT * 2.0, 0.55)
-			draw_rect(
-				Rect2(p - Vector2(8, 8), Vector2(16, 16)),
-				Palette.alpha(body, beat if not hurt else alarm)
-			)
-		"extractor":
-			# 圓 → **齒輪**（每級一齒）。採集器沒有 `steps`，五級全是出力。
-			# ★ B3.10：讀 `n_pow` 不讀 `lv`——`steps` 對每一種節點都是合法的，
-			#   哪天給採集器排一條有 `range` 的階梯，讀 `lv` 的齒輪就會宣稱那一級
-			#   買到的是出力。這五種生產節點原本是這條規矩之外的例外。
-			if lv == 0:
-				draw_circle(p, 11.0, Palette.ORDER_CYAN)
-				draw_arc(p, 11.0, 0.0, TAU, 24, Palette.ORDER_BRIGHT, 1.5)
-			else:
-				draw_colored_polygon(Shapes.gear(p, 11.5, 4 + n_pow, 3.0), Palette.ORDER_CYAN)
-				draw_circle(p, 4.0, Palette.ORDER_BRIGHT)
-		"generator":
-			# 方 → **切角 → 八邊**（每級削 1.7px）。琥珀專屬於能量（§1.1 配色紀律 2）。
-			draw_colored_polygon(
-				Shapes.chamfer_square(p, 11.0, 1.7 * float(n_pow)), Palette.ENERGY_AMBER
-			)
-		"smelter":
-			# 六邊 → **六芒**（每級把交錯的角往內收）。內圈琥珀＝它待機也在吃電。
-			var hexp: PackedVector2Array = (
-				Shapes.ngon(p, 12.0, 6) if lv == 0
-				else Shapes.star(p, 12.0 + 0.6 * float(n_pow), 12.0 - 1.4 * float(n_pow), 6)
-			)
-			draw_colored_polygon(hexp, Palette.ALLOY_STEEL)
-			draw_circle(p, 5.0, Palette.ENERGY_AMBER)
-		"relay":
-			# 菱 → **越來越尖的四芒**。
-			var dia: PackedVector2Array = (
-				Shapes.ngon(p, 8.0, 4) if lv == 0
-				else Shapes.star(p, 8.0 + float(n_pow), 8.0 - 1.2 * float(n_pow), 4)
-			)
-			draw_colored_polygon(dia, Palette.ORDER_DIM)
-		"silo":
-			# 圓槽 → **打成多邊形的槽**（每級少一個面，越來越像一個加固過的桶）。
-			# ★ B3.10：原本是「每級少兩個面」並夾在 5，於是 4 級與 5 級是同一個
-			#   十二邊…五邊形——**兩級同形**。以前靠體積通道撐開，而縮放現在會被
-			#   夾住，同形就真的是同形了（使用者指定「每一級都要有外觀上的改變」）。
-			var frac := float(n.get("charge", 0.0)) / maxf(1.0, float(NodeDefs.of("silo")["capacity"]))
-			if lv == 0:
-				draw_arc(p, 12.0, 0.0, TAU, 32, Palette.ORDER_DIM, 2.0)
-			else:
-				var tank := Shapes.ngon(p, 12.5, maxi(5, 12 - n_pow), -PI * 0.5)
-				tank.append(tank[0])
-				draw_polyline(tank, Palette.ORDER_DIM, 2.4)
-			if frac > 0.0:
-				draw_arc(p, 12.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 32, Palette.ENERGY_AMBER, 4.0)
-		"anchor":
-			# ★ 上寬下窄的梯形＝**打進地裡的樁**（B2.4.8，遊玩測試 P3-1）。
-			#   出力 → 多疊一層（階梯狀的樁基）；射速 → 頂端多兩管；射程 → 整支拉高。
-			var top := -9.0 - 2.2 * float(n_rng)
-			var tiers := 1 + n_pow
-			for k in tiers:
-				var t0 := lerpf(top, 10.0, float(k) / float(tiers))
-				# 每一層之間留 1.4px 的縫——**堆疊要看得出是幾層**，貼在一起就只是一塊。
-				var t1 := lerpf(top, 10.0, float(k + 1) / float(tiers)) - (1.4 if k < tiers - 1 else 0.0)
-				var wa := lerpf(11.0, 6.0, float(k) / float(tiers)) - 0.9 * float(k)
-				var wb := lerpf(11.0, 6.0, float(k + 1) / float(tiers)) - 0.9 * float(k)
-				draw_colored_polygon(PackedVector2Array([
-					p + Vector2(-wa, t0), p + Vector2(wa, t0),
-					p + Vector2(wb, t1), p + Vector2(-wb, t1),
-				]), Palette.ORDER_CYAN)
-			for k in n_rof * 2:
-				var mx := -7.5 + 15.0 * float(k) / float(maxi(n_rof * 2 - 1, 1))
-				draw_rect(
-					Rect2(p + Vector2(mx - 1.6, top - 6.0), Vector2(3.2, 7.0)), Palette.ORDER_CYAN
-				)
-		"prism":
-			# 三角＝稜鏡。出力 → 多一個切面；射程 → 拉高；射速 → 從中間裂成兩瓣。
-			var poly := Shapes.ngon(p, 11.0, 3 + n_pow, -PI * 0.5)
-			var hk := (12.0 + 2.2 * float(n_rng)) / 11.0
-			var tall := PackedVector2Array()
-			for v: Vector2 in poly:
-				tall.append(Vector2(v.x, p.y + (v.y - p.y) * hk))
-			draw_colored_polygon(tall, Palette.ALLOY_STEEL)
-			for k in n_rof:
-				# 裂縫用背景色切出去——**輪廓真的斷開**，不是在上面畫一條線。
-				draw_line(
-					p + Vector2(-3.0 + 6.0 * float(k), -13.0 * hk),
-					p + Vector2(-3.0 + 6.0 * float(k), 8.0 * hk), Palette.BG_PANEL, 2.0
-				)
-		"knell":
-			# 同心圓＝場。出力 → 圈變成越來越尖的多邊形；射程 → 多一圈往外長。
-			var rings := 2 + n_rng
-			var sides := 24 if n_pow == 0 else maxi(5, 11 - 2 * n_pow)
-			for k in rings:
-				var r := lerpf(5.0, 13.0, float(k) / float(maxi(rings - 1, 1)))
-				var ring := Shapes.ngon(p, r, sides, -PI * 0.5)
-				ring.append(ring[0])
-				draw_polyline(ring, Palette.ORDER_CYAN, 2.0)
-		"reclaimer":
-			# 空心方 ＋ 內圓。出力 → 外框多一邊；射程 → 內圓（回收範圍）長大。
-			# ★ B3.10：內圓也吃 `n_rof`——回收者的第 4 級買的是射速，而輪廓原本
-			#   只讀出力與射程，於是 3 級和 4 級是同一個圖（以前靠體積通道撐開）。
-			if lv == 0:
-				draw_rect(Rect2(p - Vector2(10, 10), Vector2(20, 20)), Palette.ORDER_CYAN, false, 2.0)
-			else:
-				var shell := Shapes.ngon(p, 13.5, 4 + n_pow, PI * 0.25 if n_pow == 0 else 0.0)
-				shell.append(shell[0])
-				draw_polyline(shell, Palette.ORDER_CYAN, 2.0)
-			draw_circle(p, 6.0 + 1.3 * float(n_rng) + 0.9 * float(n_rof), Palette.ORDER_BRIGHT)
-		"breaker":
-			# ★ 四角爆散星＝濺射（B2.4.8，遊玩測試 P3-2）。
-			#   濺射 → 多一個尖；出力 → 尖挖得更深；射程 → 整體更大。
-			draw_colored_polygon(Shapes.star(
-				p, 13.0 + 1.2 * float(n_rng), maxf(5.0 - 0.8 * float(n_pow), 2.4), 4 + n_spl
-			), Palette.ALLOY_STEEL)
-		"longcall":
-			# 細長的桅杆，橫桿在**頂端**＝一座瞭望塔（B2.4.6）。
-			#   射程 → 更高；射速 → 多一根橫桿；出力 → 桿身更粗。
-			var hh := 13.0 + 2.6 * float(n_rng)
-			var mw := 3.0 + 0.9 * float(n_pow)
-			draw_rect(Rect2(p - Vector2(mw, hh), Vector2(mw * 2.0, hh + 13.0)), Palette.ORDER_CYAN)
-			for k in 1 + n_rof:
-				var bw := 8.0 - 1.4 * float(k)
-				draw_rect(
-					Rect2(p + Vector2(-bw, -hh + 5.0 * float(k)), Vector2(bw * 2.0, 4.0)),
-					Palette.ORDER_CYAN
-				)
-		"frostreef":
-			# 六芒星（穿心線）＝發散，和潮鳴的同心圓同一族但認得出是兩隻。
-			#   射程 → 多一條輻條、伸得更長；出力 → 更粗 ＋ 中心軸。
-			var spokes := 3 + n_rng
-			for k in spokes:
-				var arm := Vector2(12.0 + 0.9 * float(n_rng), 0).rotated(PI * float(k) / float(spokes))
-				draw_line(p - arm, p + arm, Palette.ALLOY_STEEL, 2.5 + 0.7 * float(n_pow))
-			if n_pow > 0:
-				draw_circle(p, 2.6 + 0.9 * float(n_pow), Palette.ALLOY_STEEL)
-		"ballast":
-			# 倒三角 ＋ 頂桿＝一塊吊著的配重（B2.4.6）。
-			#   出力 → 多疊一塊配重；射程 → 吊桿更長；射速 → 多一條吊索。
-			var bw2 := 13.0 + 1.6 * float(n_rng)
-			draw_rect(Rect2(p + Vector2(-bw2, -12.0), Vector2(bw2 * 2.0, 4.0)), Palette.ALLOY_STEEL)
-			for k in n_rof:
-				var hx := -6.0 + 12.0 * float(k) / float(maxi(n_rof - 1, 1))
-				draw_line(p + Vector2(hx, -12.0), p + Vector2(hx, -5.0), Palette.ALLOY_STEEL, 1.8)
-			for k in 1 + n_pow:
-				var t := -5.0 + 3.4 * float(k)
-				var hw := 11.0 - 2.8 * float(k)
-				draw_colored_polygon(PackedVector2Array([
-					p + Vector2(-hw, t), p + Vector2(hw, t), p + Vector2(0, t + 17.0 - 3.4 * float(k)),
-				]), Palette.ALLOY_STEEL)
-		_:
-			# ★ **沒有這條 default 的時候，漏掉一種的症狀是「隱形」而不是「報錯」**
-			#   ——GDScript 的 `match` 沒對到就靜靜地什麼都不做。B2.4 加三隻招募塔
-			#   時三隻全中，而使用者是**用眼睛**發現的（「長哨沒有模型顯示」）。
-			_no_glyph[type] = true
-	# ⚠ 一定要還原，而且是還原成**地圖那一層變換**不是單位矩陣：變換是 canvas item
-	#   的狀態，還原錯的話這一幀後面畫的每一個東西都跟著錯（B3.9.2a 就是這樣，
-	#   而症狀是「游標和格子對不上」——沒有人會把那句話讀成一個繪圖 bug）。
-	if sc != 1.0:
-		draw_set_transform(_map_origin(), 0.0, Vector2(_zoom, _zoom))
+	var parts: Array = Glyphs.build_for(n, p, s.tick_count)
+	if parts.is_empty():
+		_no_glyph[String(n["type"])] = true
+		return
+	var sc := Glyphs.scale_for(n)
+	_scaled(p, sc, true)
+	Glyphs.paint(self, parts, p)
+	_scaled(p, sc, false)
 
 
 ## ★ 交戰指示：**琥珀＝能量**（配色紀律 2）。有環＝這座塔本 tick 正在吃電。
@@ -3129,6 +2975,10 @@ func _draw_energy_bar() -> void:
 	#   的元件」在每一關都是同一個長度，長度即資訊那句話才跨關成立。
 	var w := FRAME.size.x
 	var at := Vector2(FRAME.position.x, FRAME.position.y - 12.0)
+	# ★ B3.11：一圈深色的底框——琥珀條和頂欄的字都亮，中間要有一條暗線分開。
+	draw_rect(
+		Rect2(at - Vector2(1.0, 1.0), Vector2(w + 2.0, 10.0)), Palette.alpha(Palette.BG_DEEP, 0.75)
+	)
 	draw_rect(Rect2(at, Vector2(w, 8.0)), Palette.BG_RAISED)
 	draw_rect(Rect2(at, Vector2(w * supply / span, 8.0)), Palette.ENERGY_AMBER)
 	if demand > supply:
@@ -3146,37 +2996,73 @@ func _draw_energy_bar() -> void:
 
 
 ## 開火線。留 `SHOT_TTL` 個 tick 並隨之淡出——瞬間閃一下的線等於沒畫。
-## ★ 四種開火形態（B1.6.3，`20_ART_DIRECTION.md` §1.7）。
+## ★ 四種開火形態（B1.6.3，`20_ART_DIRECTION.md` §1.7）：彈丸＝物理、光束＝能量、
+## 濺射環、回收珠。**形態由 `NodeDefs` 既有的機制欄位推導，不新增美術欄位。**
+## 琥珀專屬於能量這個**資源**（§1.1 配色紀律），所以能量傷害用形狀（光束）不用
+## 顏色講；回收者那顆琥珀珠是唯一的例外，而它是對的：那顆珠真的是能量，正在流回電網。
 ##
-## 起因是使用者實玩回報「塔的攻擊可以有更多不同的特效嗎」——查證屬實：
-## 五座塔畫的是**同一條 `order.bright` 直線**，濺射半徑玩家完全看不到。
-##
-## **形態由 `NodeDefs` 既有的機制欄位推導，不新增美術欄位**：所以做不出一座
-## 「會濺射但看起來不濺射」的塔，M3 擴到 24 隻角色時也自動正確。
-##
-## **物理 vs 能量用形狀分，不用顏色分**：琥珀專屬於能量這個**資源**（§1.1
-## 配色紀律），拿它去畫「能量傷害」會污染全案最重要的資訊通道——玩家看到
-## 琥珀必須永遠是「跟耗能有關」。所以彈丸＝物理、光束＝能量。回收者那顆
-## 琥珀珠是唯一的例外，而它是對的：那顆珠真的是能量，正在流回電網。
+## ★ B3.11 補上開火的**兩端**：砲口一閃（`_shot_muzzle`）與命中一濺（`_shot_impact`）。
+##   原本一發彈丸是「憑空出現、憑空消失」——出手與落點都沒有回饋，玩家看得到線，
+##   看不到「打到了」。兩者都是 0.2 秒、十來個像素的東西，`reduce` 時不畫（§4.4）。
 func _draw_shots() -> void:
 	var frac := _accum / BattleController.TICK
 	for sh: Dictionary in s.shots:
 		# 沒有 `by` 的一律當錨（`TL_CLICKTEST` 手塞的那一發）。
 		var def := NodeDefs.of(String(sh.get("by", "anchor")))
 		var a := _center(sh["from"])
-		var b := _center(sh["to"])
+		# ★ 落點吸附到那一格裡的敵人**本體**（B3.11 近照抓到）：`shots` 只記格子，
+		#   而敵人在格與格之間插值——4× 下火花離敵人大半格，看起來像打空。
+		var b := _target_pos(sh["to"])
 		var t := Motion.progress(BattleController.SHOT_TTL, int(sh["ttl"]), frac)
 		var fade := 1.0 - t
-		if bool(def.get("pierce", false)):
+		var beam: bool = bool(def.get("pierce", false))
+		_shot_muzzle(a, t, beam)
+		if beam:
 			_shot_beam(a, b, fade)
 			continue
 		_shot_bolt(a, b, t, fade)
+		_shot_impact(b, t)
 		# 濺射環只掛在這一發濺射的**第一筆**記錄上（`BattleController`），
 		# 所以這裡畫幾次就是幾發，不會被打中的隻數放大。
 		if sh.has("splash_at"):
-			_shot_splash(_center(sh["splash_at"]), t, fade, float(def.get("splash", 0.0)))
+			_shot_splash(_target_pos(sh["splash_at"]), t, fade, float(def.get("splash", 0.0)))
 		if float(def.get("reclaim", 0.0)) > 0.0:
 			_shot_reclaim(a, b, t)
+
+
+## 一發的落點：那一格裡的第一隻敵人的**插值位置**；格裡沒有敵人（已經被打死、
+## 或走出去了）就退回格心——碎片爆本來就在格心，兩者接得上。
+func _target_pos(cell: Vector2i) -> Vector2:
+	var i := _enemy_cells.find(cell)
+	if i >= 0 and i < s.enemies.size():
+		return _enemy_pos(s.enemies[i])
+	return _center(cell)
+
+
+## 砲口閃光：出手那一瞬在塔上開一顆亮青的菱形，半個 `SHOT_TTL` 內收掉。
+## 菱形是秩序側的語彙（四個角、對齊軸），和敵人那邊的圓形閃光分得開。
+## 光束（稜鏡）多一圈柔光——它的出手是「整條亮起」，源頭要更亮一點才讀得出方向。
+func _shot_muzzle(a: Vector2, t: float, beam: bool) -> void:
+	if Motion.reduce or t >= 0.5:
+		return
+	var k := 1.0 - t / 0.5
+	if beam:
+		draw_circle(a, 4.0 + 4.0 * k, Palette.alpha(Palette.ORDER_BRIGHT, 0.35 * k))
+	draw_colored_polygon(
+		Shapes.ngon(a, 3.0 + 5.0 * k, 4, 0.0), Palette.alpha(Palette.ORDER_BRIGHT, 0.85 * k)
+	)
+
+
+## 命中火花：彈丸抵達的那一刻在落點炸開一顆四角星，擴張並淡出。
+## 起點在 `t = 0.6`——`ease_out_cubic(0.6) ≈ 0.94`，彈頭已經貼到目標。
+func _shot_impact(b: Vector2, t: float) -> void:
+	if Motion.reduce or t < 0.6:
+		return
+	var k := (1.0 - t) / 0.4
+	var r := 3.0 + 6.0 * (1.0 - k)
+	draw_colored_polygon(
+		Shapes.star(b, r, r * 0.4, 4, PI * 0.25), Palette.alpha(Palette.ORDER_BRIGHT, 0.9 * k)
+	)
 
 
 ## 能量貫穿（稜鏡）：**整條線一次亮到底**，寬度 3→1 衰減。
@@ -3234,42 +3120,33 @@ func _draw_enemies() -> void:
 		var pulse := Motion.pulse(s.tick_count, Motion.AMBIENT, 0.12, float(e["id"]))
 		var armored: bool = float(def.get("armor", 0.0)) > 0.0
 		# ⚠ 這個 `fast` 是**看起來快**（速度過門檻），和資料上的 `swift` 旗標
-		#   （免疫減速，B3.2）是兩件事。第一版兩個都叫 swift，於是
-		#   `elif swift:` 裡面又套一個 `def.get("swift")`——讀的人得先猜哪個是哪個。
+		#   （免疫減速，B3.2）是兩件事。
 		var fast: bool = float(def.get("speed", 1.0)) > SWIFT_SPEED
 		# ★ 這裡曾經有兩個殘影當拖尾（B1.6.3 第一版），**實看 A/B 之後砍掉**：
-		#   第 5 波的間距是 0.6 格，任何畫在身後的東西都會壓到後面那一隻——
-		#   一列 11 隻分得開的敵人變成一條連續的香腸，把「看不出差異」修成了
-		#   「看不出有幾隻」。速度線索因此全部收進**本體輪廓**（流線拉長），
-		#   不佔用敵人之間的空隙。
+		#   第 5 波的間距是 0.6 格，任何畫在身後的東西都會壓到後面那一隻。
+		#   速度線索全部收進**本體輪廓**，不佔用敵人之間的空隙。
 		var pts := _enemy_shape(e, p, r, pulse, armored, fast)
-		draw_colored_polygon(pts, Palette.TIDE_MAGENTA)
+		# ★ 受擊一閃（B3.11）：這一 tick 有彈落在它那一格，本體往亮階推 0.2 秒。
+		#   純渲染推導（`_hit_cells`），仍在品紅色相內、不動用橙（§1.7）。
+		var hit: bool = i < _enemy_cells.size() and _hit_cells.has(_enemy_cells[i])
+		draw_colored_polygon(pts, Palette.tide_hit() if hit else Palette.TIDE_MAGENTA)
+		var rim := pts.duplicate()
+		rim.append(pts[0])
+		# ★ 輪廓（B3.11）：1px 的深邊。混沌側也要有邊界——16px 的品紅團壓在紫色的
+		#   路徑帶上會糊進帶子裡。甲殼的 3px 甲板蓋在它上面，1 對 3 仍分得開。
+		draw_polyline(rim, Palette.alpha(Palette.TIDE_DEEP, 0.9), 1.0)
 		# ★ 甲板（B1.6.3）：**同形描邊，不是外圈弧**。血量弧已經是 `tide.deep`
-		#   的圓弧、畫在 `r+4`，再加一圈外弧就是同一個位置上的兩個訊息——
-		#   而 §4.3b 那條規則說「換顏色不夠，要換形狀」。這個專案在這裡踩過
-		#   兩次（B0.6 儲槽充能弧撞血條、B1.6 受擊環撞交戰環）。描邊在輪廓
-		#   **內側**，和任何弧都不會疊。
+		#   的圓弧、畫在 `r+4`，再加一圈外弧就是同一個位置上的兩個訊息（§4.3b）。
 		if armored:
-			var plate := pts.duplicate()
-			plate.append(pts[0])
-			draw_polyline(plate, Palette.TIDE_DEEP, 3.0)
+			draw_polyline(rim, Palette.TIDE_DEEP, 3.0)
 		# ★ 亮核心（B1.6.3）：**快**在 16px 上唯一活得下來的線索。
-		#   輪廓的壓扁在 fit 倍率幾乎讀不到（實看 A/B 抓到），明度差讀得到。
-		#   畫在**中心**而不是外圈：外圈已經有甲板描邊與血量弧兩個訊息了。
 		elif fast:
 			# ★ **免疫減速的那一隻畫菱形，只是跑得快的畫圓**（B3.2）。
-			#   熾泳與潛涌都過得了 `SWIFT_SPEED` 門檻，共用一個亮核心的話，
-			#   一條真的規則（抓不抓得住）在畫面上是看不見的。
-			#   形狀與大小同時不同（§7.5 的半徑 6 vs 8）——RG-145 的同一條。
 			# 下限 1px：`pulse` 在減少動態效果時可能壓到 0，而四個點疊在一起的
 			# 多邊形會讓 Godot 的三角化失敗（實跑當場噴 `Invalid polygon data`）。
 			var core := maxf(1.0, r * pulse * 0.45)
 			if bool(def.get("swift", false)):
-				# ★ 用 `draw_polyline` 不是 `draw_colored_polygon`：後者要三角化，
-				#   而一個被 `pulse` 壓扁到近乎退化的四邊形會讓它噴
-				#   `Invalid polygon data`（合照鉤子當場抓到，一幀好幾條）。
-				#   閉合折線沒有這個問題，而在 16px 上「空心菱形 vs 實心圓」
-				#   的差別比實心與實心大。
+				# 用 `draw_polyline` 不是 `draw_colored_polygon`：閉合折線不用三角化。
 				draw_polyline(PackedVector2Array([
 					p + Vector2(0, -core * 1.3), p + Vector2(core, 0),
 					p + Vector2(0, core * 1.3), p + Vector2(-core, 0),
@@ -3277,27 +3154,52 @@ func _draw_enemies() -> void:
 				]), Palette.TIDE_BRIGHT, 2.0)
 			else:
 				draw_circle(p, core, Palette.TIDE_BRIGHT)
-		# ★ 被潮鳴抓住的敵人：輪廓描一圈 `order.cyan`（B1.8）。
-		#   **標在敵人身上而不是塔上**——減速 −40%／破甲 −25% 作用在它身上，
-		#   標在這裡因果才讀得出來；標在塔上只說得出「它開著」。
-		#   閉合折線，和血量弧（`tide.deep` 圓弧）一個是線一個是弧，分得開（§4.3b）。
-		# ★ 再生（B3.2）：**輪廓內一圈會呼吸的亮線**。§1.7 的規則是「輪廓由既有的
-		#   機制欄位推導」，而再生是這一批唯一沒有現成視覺的規則——迅捷靠速度
-		#   （亮核心）、群體靠半徑（小一號），只有它得自己長一個。
-		#   用 `tide.bright` 不是新顏色（§1.7 的混沌亮階），和青色的減速圈分得開。
+		# ★ 再生（B3.2）：**輪廓內一圈會呼吸的亮線**。用 `tide.bright` 不是新顏色
+		#   （§1.7 的混沌亮階），和青色的減速圈分得開。
 		if float(def.get("regen", 0.0)) > 0.0:
-			var knit := pts.duplicate()
-			knit.append(pts[0])
 			var beat := Motion.pulse(s.tick_count, Motion.AMBIENT, 0.5, float(e["id"]))
-			draw_polyline(knit, Palette.alpha(Palette.TIDE_BRIGHT, 0.25 + 0.45 * beat), 2.0)
+			draw_polyline(rim, Palette.alpha(Palette.TIDE_BRIGHT, 0.25 + 0.45 * beat), 2.0)
+		# ★ 被潮鳴抓住的敵人：輪廓描一圈 `order.cyan`（B1.8）。**標在敵人身上而不是
+		#   塔上**——減速作用在它身上，標在這裡因果才讀得出來。
 		var slow := 0.0 if i >= _auras.size() else (_auras[i] as Vector2).x
 		if slow > 0.01:
-			var ring := pts.duplicate()
-			ring.append(pts[0])
-			draw_polyline(ring, Palette.alpha(Palette.ORDER_CYAN, 0.35 + 1.4 * slow), 2.0)
+			draw_polyline(rim, Palette.alpha(Palette.ORDER_CYAN, 0.35 + 1.4 * slow), 2.0)
 		var frac := float(e["hp"]) / maxf(1.0, float(def.get("hp", 1.0)))
 		if frac < 1.0:
 			draw_arc(p, r + 4.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 20, Palette.TIDE_DEEP, 2.0)
+
+
+## 這一 tick 被打中的格（B3.11，純渲染推導）：剛生出來（`ttl` 還滿或剛減一格）
+## 的那幾發的落點。敵人站在這幾格上就閃一下——0.2 秒，和碎片爆一樣是渲染層的事，
+## 不進 `state_hash()`。
+func _hit_cells_of() -> Dictionary:
+	var out: Dictionary = {}
+	for sh: Dictionary in s.shots:
+		if int(sh["ttl"]) >= BattleController.SHOT_TTL - 1:
+			out[sh["to"]] = true
+	return out
+
+
+## ★ 開打的漣漪（B3.11）。號令有聲音（`wave_start`）但畫面上沒有對應物：
+## 潮從入口湧進來那一刻，在路徑起點放兩圈擴張的品紅環——它答的是「潮從**哪裡**
+## 進來」，新玩家的第一個問題（§1.6 來襲箭羽的同一題，這是它的動態版）。
+## 零 RNG、由 `phase_time` 驅動；`reduce` 時不畫（§4.4）。只在 wave 的前 1.2 秒存在。
+func _draw_ripple() -> void:
+	if Motion.reduce or s.phase != "wave" or s.path.is_empty():
+		return
+	var age: float = float(s.phase_time) + _accum
+	if age > RIPPLE_SEC:
+		return
+	var at := _center(s.path[0])
+	for lag: float in [0.0, 0.25]:
+		var k := clampf((age - lag) / (RIPPLE_SEC - lag), 0.0, 1.0)
+		if k <= 0.0:
+			continue
+		var e := Motion.ease_out_cubic(k)
+		draw_arc(
+			at, 6.0 + 46.0 * e, 0.0, TAU, 32,
+			Palette.alpha(Palette.TIDE_MAGENTA, (1.0 - k) * 0.7), 3.0 - 1.5 * k
+		)
 
 
 ## ★ 「正在被啃」的格（B1.6，§4.3「一定要動」清單）。
@@ -3432,37 +3334,39 @@ func _draw_bursts() -> void:
 ## 三種輪廓**全部由既有的機制欄位推導**，不新增美術資料：
 ##   預設        9 邊柔性水滴、wobble ±15%          ← 漂蟲
 ##   `armor > 0` 6 邊硬稜角、wobble ±7%             ← 甲殼（物理打不動它）
-##   `speed 快`  沿行進方向拉長的尖銳水滴 ＋ 拖尾   ← 熾泳
-##
+##   `speed 快`  垂直於行進方向壓扁                  ← 熾泳
 ## 這樣做的第一個理由不是省事，是**設計上不可能說謊**：沒有辦法做出一隻
-## 「有護甲但看起來不硬」的敵人。M3 擴到 18 種敵人時也自動正確（§5 內容矩陣）。
+## 「有護甲但看起來不硬」的敵人。三者仍然全部屬於**混沌**側（§0）。
 ##
-## 三者仍然全部屬於**混沌**側（§0）：不規則、脈動、不對齊網格。硬稜角指的是
-## 頂點少、抖動小，不是變成正六邊形——正多邊形是秩序側的語彙。
+## ★ B3.11：**波動會走。** 原本的 wobble 只由 id 決定（每隻一個固定的形狀），
+##   脈動只做整體脹縮——那是一顆會呼吸的石頭。讓相位隨 tick 前進之後，輪廓像一層
+##   在動的膜，§0 的「隨機微抖」終於有了實作。**零 RNG**：tick 與 id 的函式，
+##   `TL_SHOT` 凍結在同一 tick 就拍出同一張圖；`reduce` 時相位凍住（§4.4）。
+##   兩個頻率疊加（同 `band_jitter` 的理由：單一正弦看得出週期）。
 func _enemy_shape(
 	e: Dictionary, p: Vector2, r: float, pulse: float, armored: bool, fast: bool
 ) -> PackedVector2Array:
 	var sides := 6 if armored else 9
 	var amp := 0.07 if armored else 0.15
+	var seed_k := float(e["id"])
+	var flow: float = (
+		0.0 if Motion.reduce
+		else (float(s.tick_count) + _accum / Motion.TICK) * Motion.TICK * 2.6
+	)
 	var pts := PackedVector2Array()
 	# `k` 而不是 `i`：呼叫端已經用掉 `i`（敵人索引），而 GDScript 的 for
 	# 迭代變數共享同一個作用域——同名會是 parse error，不是遮蔽。
 	for k in sides:
 		var a := TAU * float(k) / float(sides)
-		# 每隻各自的不規則度，由 id 決定（同一隻永遠長同一個樣子）。
-		# 值域收在 ±amp：再寬就會有頂點塌進去，變成尖角旗子而不是水滴。
-		var wobble := 1.0 + amp * sin(float(e["id"]) * 3.7 + a * 2.0)
+		# 值域收在約 ±1.45 amp：再寬就會有頂點塌進去，變成尖角旗子而不是水滴。
+		var wobble := (
+			1.0 + amp * sin(seed_k * 3.7 + a * 2.0 + flow)
+			+ amp * 0.45 * sin(a * 3.0 - flow * 1.7 + seed_k)
+		)
 		var v := Vector2(cos(a), sin(a)) * r * pulse * wobble
 		if fast:
-			# ★ 流線＝**垂直於行進方向壓扁**，不是沿行進方向拉長（B1.6.3 實看修正）。
-			#
-			#   前兩版都往「拉長」的方向做（先加拖尾、再加長本體），A/B 對照
-			#   當場否決：第 5 波的間距是 0.6 格，**任何沿行進軸變長的東西都會
-			#   碰到鄰居**——一列 11 隻分得開的敵人糊成一條連續的香腸，把
-			#   「看不出差異」修成了「看不出有幾隻」。
-			#
-			#   壓扁則相反：footprint 只會變小，結構上不可能製造新的重疊，
-			#   而「薄」在一排圓團與六邊形之間仍然是一眼分得出來的輪廓。
+			# ★ 流線＝**垂直於行進方向壓扁**，不是沿行進方向拉長（B1.6.3 實看修正）：
+			#   第 5 波的間距是 0.6 格，任何沿行進軸變長的東西都會碰到鄰居。
 			var d := _enemy_dir(e)
 			var perp := Vector2(-d.y, d.x)
 			v -= perp * v.dot(perp) * 0.45

@@ -77,6 +77,40 @@ static func alpha(c: Color, a: float) -> Color:
 	return Color(c.r, c.g, c.b, a)
 
 
+# ── ★ 體積語言的派生色（B3.11，`20_ART_DIRECTION.md` §1.6b）───────────────
+#
+# 節點從「一塊平塗的色」變成「一個站在格子上的幾何體」，靠的是三筆：
+#   受光面（token 本色）／背光面（同色相壓暗）／輪廓（更暗）＋ 一道落影。
+# **不是漸層、不是材質貼圖**（§2 反模式清單）——是三個平塗的面，光從左上來。
+#
+# 派生的比例只在這裡定一次。分散到各畫面的話，「背光面壓多暗」會在第四個地方
+# 抄成另一個數字，而那看起來完全正常（`MOD_LOCKED` 的同一課）。
+
+## 背光面：token 本色壓暗這麼多。**受光面就是 token 本色**，所以那條配色紀律
+## （琥珀專屬能量、青專屬秩序）不會被派生色污染——玩家讀到的主色沒變。
+const SHADE := 0.24
+## 輪廓：比背光面再暗。1px 的深線讓青色的節點在青色的導管上有邊界可讀。
+const CONTOUR := 0.58
+## 落影的不透明度。偏移量在 `Shapes.SHADOW_OFF`。
+const SHADOW_A := 0.55
+
+static func shade(c: Color) -> Color:
+	return Color(c.r, c.g, c.b, c.a).darkened(SHADE)
+
+
+static func contour(c: Color) -> Color:
+	return Color(c.r, c.g, c.b, c.a).darkened(CONTOUR)
+
+
+static func shadow() -> Color:
+	return alpha(BG_DEEP, SHADOW_A)
+
+
+## 敵人受擊那一瞬的本體色：品紅往亮階推。仍在品紅色相內，不動用橙（§1.7）。
+static func tide_hit() -> Color:
+	return TIDE_MAGENTA.lerp(TIDE_BRIGHT, 0.7)
+
+
 # ── `modulate` 用的乘數 ─────────────────────────────────────────────
 # 這兩個不是顏色，是**整塊節點的不透明度乘數**（`CanvasItem.modulate`）。
 # 但 `CLAUDE.md` 的規則沒有例外條款：`Color(...)` 字面量出現在 Palette 以外

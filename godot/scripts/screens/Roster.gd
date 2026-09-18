@@ -15,8 +15,12 @@ extends Control
 const RosterData := preload("res://data/Roster.gd")
 const Difficulty := preload("res://data/Difficulty.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
+const Glyphs := preload("res://scripts/render/Glyphs.gd")
 
 const CARD := Vector2(230, 168)
+## 卡片上那隻角色的模型有多大（px）。一格 32 放大 1.5 倍——名冊是看角色的地方，
+## 這裡的模型可以比地圖上大，但**是同一份幾何**（`Glyphs.View`）。
+const GLYPH_PX := 48.0
 
 
 ## 回上一層。由呼叫端指派。
@@ -158,11 +162,19 @@ func _card(type: String, owned: bool) -> Control:
 	var col := UiKit.vbox(4)
 	box.add_child(col)
 
+	# ★ 角色模型放在名字旁邊（B3.11）。名冊是「我有哪些角色、它們有什麼不同」的地方，
+	#   而「不同」有一半寫在形狀上（§1.6 整節）——在這之前卡片上只有字。
+	#   走 `Glyphs.View`，和地圖上蓋出來的那一隻是同一份幾何。
+	var head := UiKit.hbox(8)
+	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(Glyphs.View.new(type, GLYPH_PX))
 	var title := UiKit.label(
 		NodeDefs.label(type), 22,
 		Palette.ENERGY_AMBER if owned else Palette.TEXT_DISABLED, false
 	)
-	col.add_child(title)
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	head.add_child(title)
+	col.add_child(head)
 	_card_titles.append(title)
 
 	# ★ **交戰耗能排第一行**（§7.4：那一欄是全案的心臟）。選塔的問題是

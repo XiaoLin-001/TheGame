@@ -96,6 +96,51 @@ static func chamfer_square(c: Vector2, r: float, cut: float) -> PackedVector2Arr
 	])
 
 
+## ★ 把一個多邊形裁到半平面的一側（B3.11，Sutherland–Hodgman 對單一半平面）。
+##
+## 留下的是 `n.dot(v - o) >= 0` 那一側——`n` 指向要留的那一邊。**體積語言的
+## 受光面就是這一刀**：把塔身沿著「光線的垂直面」切開，左上那一半畫本色。
+##
+## ⚠ 對凹多邊形（齒輪、星形）只有在 `o` 落在它的**核**（從那一點看得到整個
+##   輪廓）裡才保證切出來是簡單多邊形——所有節點的幾何都以格心為核，
+##   所以呼叫端一律傳格心，不傳質心。切出來少於三點回傳空陣列。
+static func clip_half(pts: PackedVector2Array, o: Vector2, n: Vector2) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var count := pts.size()
+	if count < 3:
+		return out
+	for i in count:
+		var a: Vector2 = pts[i]
+		var b: Vector2 = pts[(i + 1) % count]
+		var da := n.dot(a - o)
+		var db := n.dot(b - o)
+		if da >= 0.0:
+			out.append(a)
+		if (da >= 0.0) != (db >= 0.0):
+			out.append(a + (b - a) * (da / (da - db)))
+	if out.size() < 3:
+		return PackedVector2Array()
+	return out
+
+
+## 落影的偏移（地圖 px）。光從左上來，影子落在右下。
+##
+## ★ **落影不算輪廓**：它是底層的一筆，在所有塔身之前畫完（`Battle._draw_nodes()`
+##   分兩趟），所以它伸出格線那兩個像素只會壓在背景與導管上，壓不到鄰居的
+##   血條與徽章——那正是 `body_extent()` 要守的東西。
+const SHADOW_OFF := Vector2(1.5, 2.0)
+
+## 受光的方向（指向光源，單位向量）。左上偏上：塔的「頂」比「左側」亮得多。
+const LIGHT_DIR := Vector2(-0.55, -0.835)
+
+
+## 軸對齊矩形的四個角，順時鐘。`Rect2` 進、多邊形出。
+static func rect(pos: Vector2, size: Vector2) -> PackedVector2Array:
+	return PackedVector2Array([
+		pos, pos + Vector2(size.x, 0.0), pos + size, pos + Vector2(0.0, size.y),
+	])
+
+
 ## ★ 「以某一格為中心放大 `sc` 倍」的畫布變換（B3.9.2a）。
 ##
 ## ⚠ **`draw_set_transform()` 是取代，不是疊加。** 地圖那一層變換
@@ -111,9 +156,11 @@ static func level_xform(origin: Vector2, zoom: float, p: Vector2, sc: float) -> 
 
 
 ## 一座節點畫得最遠的那一點離格心多遠（px，未套 `level_scale`）。
-## 參數就是 `Battle._draw_node_body()` 那個 `match` 讀的同一組級數計數。
+## 參數就是 `Glyphs.build()` 那個 `match` 讀的同一組級數計數。
 ##
-## ⚠ **這一支和那個 `match` 是同一份幾何的兩個讀法**，改輪廓要一起改。放在這裡
+## ⚠ **這一支和 `Glyphs.build()` 是同一份幾何的兩個讀法**，改輪廓要一起改。
+##   B3.11 起 `hud_test` 逐型別逐級拿 `Glyphs.extent()` 對這張表——幾何長出
+##   表外會紅，所以「一起改」不再只是一句叮嚀。放在這裡
 ## 而不是畫面層的理由是它得**斷言得到**——越界的症狀（塔的輪廓伸進隔壁那一格，
 ## 壓在鄰居的血條與缺料徽章上）在合照上看不出來，因為合照把塔排在相隔兩格。
 ## 對不到的型別回傳 `GRID`（＝必然被夾），漏一種的後果是「變小」不是「越界」。

@@ -51,21 +51,29 @@ static func theme() -> Theme:
 ##   focus ＝ 鍵盤走到哪了（P3「操作不得只靠 hover」的另一半）。
 static func _style_buttons(theme: Theme) -> void:
 	for entry: Array in [
-		# [態, 底色, 邊框色, 邊框寬]
-		["normal", Palette.BG_RAISED, Palette.BORDER_SUBTLE, 1],
-		["hover", Palette.BG_RAISED.lerp(Palette.ORDER_DIM, 0.35), Palette.BORDER_STRONG, 1],
-		["pressed", Palette.BG_PANEL, Palette.ORDER_CYAN, 1],
-		# 停用不是「暗一點的可按鈕」：**底色退回面板色、邊框近乎消失**，
+		# [態, 底色, 邊框色, 邊框寬, 浮起]
+		["normal", Palette.BG_RAISED, Palette.BORDER_STRONG, 1, true],
+		["hover", Palette.BG_RAISED.lerp(Palette.ORDER_DIM, 0.35), Palette.ORDER_CYAN, 1, true],
+		# 按下＝**貼回地面**：底色退一階、落影消失。「我按到了」是用高度講的。
+		["pressed", Palette.BG_PANEL, Palette.ORDER_BRIGHT, 1, false],
+		# 停用不是「暗一點的可按鈕」：**底色退回面板色、邊框近乎消失、不浮起**，
 		# 讓它在一排鈕裡看起來是凹下去的，而不是一顆比較暗的凸起。
-		["disabled", Palette.alpha(Palette.BG_PANEL, 0.6), Palette.BORDER_SUBTLE, 1],
+		["disabled", Palette.alpha(Palette.BG_PANEL, 0.6), Palette.BORDER_SUBTLE, 1, false],
 		# 聚焦框用 `stroke.emphasis`（§1.4 的 3）——它要在 hover 之上還看得出來。
-		["focus", Palette.BG_RAISED.lerp(Palette.ORDER_DIM, 0.35), Palette.ORDER_BRIGHT, 3],
+		["focus", Palette.BG_RAISED.lerp(Palette.ORDER_DIM, 0.35), Palette.ORDER_BRIGHT, 3, true],
 	]:
 		var sb := StyleBoxFlat.new()
 		sb.bg_color = entry[1]
 		sb.border_color = entry[2]
 		sb.set_border_width_all(int(entry[3]))
 		sb.set_corner_radius_all(2)      # radius.ui（§1.4「僅此一種」）
+		# ★ 浮起（B3.11，§1.6b 體積語言）：可按的東西**站在面板上**，和地圖上的
+		#   節點同一道落影（光從左上來）。`shadow_*` 畫在框外、不改最小尺寸，
+		#   所以 B2.9 量過的那些版面（底欄與提示列的碰撞）一個像素都不動。
+		if bool(entry[4]):
+			sb.shadow_color = Palette.shadow()
+			sb.shadow_size = 3
+			sb.shadow_offset = Vector2(0.0, 2.0)
 		# 間距階（§1.3）：**橫直都是 8**。
 		#
 		# ★ 第一版給了橫向 12，於是局內底欄那七顆鈕加起來寬了 56px，
@@ -136,6 +144,11 @@ static func panel(opacity: float = 0.96) -> PanelContainer:
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(2)   # radius.ui（20_ART_DIRECTION.md §1.4）
 	style.set_content_margin_all(10)
+	# ★ 浮層浮在地圖上（B3.11，§1.6b）：一道往下的落影說出「這一塊在上面」，
+	#   而不是靠更粗的框。畫在框外，不改尺寸——B3.9.1 量位置用的常數不受影響。
+	style.shadow_color = Palette.alpha(Palette.BG_DEEP, 0.6)
+	style.shadow_size = 6
+	style.shadow_offset = Vector2(0.0, 3.0)
 	box.add_theme_stylebox_override("panel", style)
 	# 浮層是資訊不是障礙物：一律不吃滑鼠（RG-39）。
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE

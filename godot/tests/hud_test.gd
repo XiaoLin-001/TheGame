@@ -16,6 +16,7 @@ extends SceneTree
 const T := preload("res://tests/_assert.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const Shapes := preload("res://scripts/render/Shapes.gd")
+const Glyphs := preload("res://scripts/render/Glyphs.gd")
 const Build := preload("res://scripts/sim/Build.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const Maps := preload("res://data/Maps.gd")
@@ -40,6 +41,8 @@ func _initialize() -> void:
 	_conduit_net_direction(t)
 	_level_xform_keeps_the_tower_in_its_cell(t)
 	_every_level_stays_inside_its_cell(t)
+	_glyphs_match_the_extent_table(t)
+	_clip_half_math(t)
 	quit(t.report())
 
 
@@ -475,3 +478,54 @@ func _every_level_stays_inside_its_cell(t: T) -> void:
 	#   綠的。夾住縮放之後真正有風險的是形狀自己（儲槽 4／5 級都會落在五邊形的
 	#   下限、回收者 4 級買的射速輪廓根本沒讀），兩者這一批都改了幾何，
 	#   但**要斷言得到得先把那十三段輪廓抽成純函式**——那不是這一批的範圍。
+
+
+## ★ 十三種節點 ＋ 核心的幾何都建得出來，而且**留在 `Shapes.body_extent()` 那張表裡**
+## （B3.11）。B3.10 的收尾寫著「要真的守住形狀，得先把那十三段輪廓抽成純函式」——
+## 抽了（`Glyphs.build()`），所以那句「改輪廓要一起改」現在是一條會紅的斷言：
+## 幾何長出表外（棋盤距離，線與弧算半個線寬）就倒。
+##
+## 對不到的型別回傳空陣列——那是 `_no_glyph` 感測器的前提，這裡也釘一條。
+func _glyphs_match_the_extent_table(t: T) -> void:
+	for type: String in NodeDefs.DEFS:
+		for lv in Build.NODE_MAX_LEVEL + 1:
+			var np := Build.step_count(type, lv, Build.STEP_POWER)
+			var nf := Build.step_count(type, lv, Build.STEP_ROF)
+			var nr := Build.step_count(type, lv, Build.STEP_RANGE)
+			var ns := Build.step_count(type, lv, Build.STEP_SPLASH)
+			# 儲槽帶半槽、核心帶傷——讓儀表弧與警示色那幾筆也一起建出來。
+			var parts: Array = Glyphs.build(type, lv, np, nf, nr, ns, Vector2.ZERO, true, 0.5, 7)
+			t.ok(not parts.is_empty(), "★★ %s %d 級畫得出東西" % [type, lv])
+			var table := Shapes.body_extent(type, lv, np, nf, nr, ns)
+			if table <= 0.0:
+				continue                 # 核心的規格是 1.5 格，不在這張表上
+			var ext := Glyphs.extent(parts, Vector2.ZERO)
+			t.ok(ext <= table + 0.6,
+				"★★ %s %d 級的幾何不超出 body_extent 的表（%.1f ≤ %.1f）" % [type, lv, ext, table])
+	t.ok(Glyphs.build("nope", 0, 0, 0, 0, 0, Vector2.ZERO, false, 0.0, 0).is_empty(),
+		"★ 對不到的型別回傳空陣列（`_no_glyph` 靠它）")
+	# 節點字典只有 `type` 也建得出來（擺放預覽與名冊卡片傳的正是這種）。
+	t.ok(not Glyphs.build_for({"type": "anchor"}, Vector2.ZERO, 0).is_empty(),
+		"★ 只有 type 的字典也建得出來（預覽）")
+	t.near(Glyphs.scale_for({"type": "anchor"}), 1.0, "★ 0 級的縮放是 1（一個像素都不變）", 0.0001)
+
+
+## `Shapes.clip_half()`：受光面那一刀的數學。
+func _clip_half_math(t: T) -> void:
+	var sq := Shapes.chamfer_square(Vector2.ZERO, 10.0, 0.0)
+	var upper := Shapes.clip_half(sq, Vector2.ZERO, Vector2(0.0, -1.0))
+	t.ok(upper.size() >= 4, "★ 正方形切一半還是多邊形（%d 點）" % upper.size())
+	var all_up := true
+	for v: Vector2 in upper:
+		if v.y > 0.001:
+			all_up = false
+	t.ok(all_up, "★ 留下的那一半全在法線那一側")
+	t.ok(Shapes.clip_half(sq, Vector2(0.0, -20.0), Vector2(0.0, -1.0)).is_empty(),
+		"★ 整個都在另一側 → 空")
+	# `chamfer_square()` 恆回 8 點（切角 0 時兩兩重合），所以「原樣」是 8 不是 4。
+	t.eq(Shapes.clip_half(sq, Vector2(0.0, 20.0), Vector2(0.0, -1.0)).size(), sq.size(),
+		"★ 整個都在留的那一側 → 原樣")
+	# 凹多邊形（齒輪）以格心為軸切，仍然只切出一塊。
+	var gear := Shapes.gear(Vector2.ZERO, 11.5, 6, 3.0)
+	var half := Shapes.clip_half(gear, Vector2.ZERO, Shapes.LIGHT_DIR)
+	t.ok(half.size() >= 3 and half.size() <= gear.size() + 2, "★ 齒輪切一半：一塊、點數合理")
