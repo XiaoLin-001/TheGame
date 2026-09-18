@@ -22,6 +22,8 @@ const MapsData := preload("res://data/Maps.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const Glyphs := preload("res://scripts/render/Glyphs.gd")
+const Foes := preload("res://scripts/render/Foes.gd")
+const Tide := preload("res://scripts/sim/Tide.gd")
 
 # ── ★ 標題背景（B3.11）──────────────────────────────────────────────────
 #
@@ -565,11 +567,9 @@ func _draw_backdrop() -> void:
 		var def := Enemies.of(String(entry[0]))
 		var speed := float(def.get("speed", 1.0))
 		var prog := fposmod(float(entry[1]) + (0.0 if Motion.reduce else _bg_t) * speed, total)
-		var i0 := clampi(int(floor(prog)), 0, path.size() - 1)
-		var i1 := mini(i0 + 1, path.size() - 1)
-		var pos := _bg_center(path[i0]).lerp(_bg_center(path[i1]), prog - float(i0))
-		var dir2 := Vector2.RIGHT if i0 == i1 else Vector2(path[i1] - path[i0]).normalized()
-		_bg_blob(ci, idx, pos, dir2, def, tick)
+		# `prog` 是「格心到格心」的連續座標，＝ `Tide.pos_of()` 的 progress − 0.5。
+		var pos := Tide.pos_of(path, prog + 0.5) * Shapes.GRID + Vector2(Shapes.GRID, Shapes.GRID) * 0.5
+		Foes.paint(ci, Foes.build(def, idx, pos, Tide.heading_of(path, prog + 0.5), _bg_t, false))
 
 
 ## 橋：`Battle._draw_crossing()` 的同一套（落影往側邊偏、雙線橋面、45° 引道）。
@@ -625,34 +625,3 @@ func _bg_wire(ci: Control, a: Vector2i, b: Vector2i, kind: int) -> void:
 		ci.draw_circle(q, 2.4, Palette.BG_DEEP)
 		ci.draw_circle(q, 1.6, col)
 		x += 20.0
-
-
-## 一隻敵人（`Battle._enemy_shape()` 的同一套規則：由機制欄位推導，會走的波動）。
-func _bg_blob(ci: Control, id: int, p: Vector2, dir: Vector2, def: Dictionary, tick: int) -> void:
-	var r := float(def.get("radius", 9.0))
-	var armored: bool = float(def.get("armor", 0.0)) > 0.0
-	var fast: bool = float(def.get("speed", 1.0)) > 1.2
-	var sides := 6 if armored else 9
-	var amp := 0.07 if armored else 0.15
-	var pulse := Motion.pulse(tick, Motion.AMBIENT, 0.12, float(id))
-	var flow: float = 0.0 if Motion.reduce else _bg_t * 2.6
-	var pts := PackedVector2Array()
-	for k in sides:
-		var a := TAU * float(k) / float(sides)
-		var wobble := (
-			1.0 + amp * sin(float(id) * 3.7 + a * 2.0 + flow)
-			+ amp * 0.45 * sin(a * 3.0 - flow * 1.7 + float(id))
-		)
-		var v := Vector2(cos(a), sin(a)) * r * pulse * wobble
-		if fast:
-			var perp := Vector2(-dir.y, dir.x)
-			v -= perp * v.dot(perp) * 0.45
-		pts.append(p + v)
-	ci.draw_colored_polygon(pts, Palette.TIDE_MAGENTA)
-	var rim := pts.duplicate()
-	rim.append(pts[0])
-	ci.draw_polyline(rim, Palette.alpha(Palette.TIDE_DEEP, 0.9), 1.0)
-	if armored:
-		ci.draw_polyline(rim, Palette.TIDE_DEEP, 3.0)
-	elif fast:
-		ci.draw_circle(p, maxf(1.0, r * pulse * 0.45), Palette.TIDE_BRIGHT)

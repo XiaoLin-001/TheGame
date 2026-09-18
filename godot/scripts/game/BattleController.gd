@@ -272,6 +272,8 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 		var targets: Array[int] = []
 		# 濺射的**圓心**（純渲染）。`-1` ＝ 這一發不濺射。
 		var splash_at := Vector2i(-1, -1)
+		var splash_id := -1
+		var splash_prog := 0.0
 		if def.get("pierce", false):
 			targets = Combat.pierce_indices(n["cell"], cells, r)
 		else:
@@ -285,6 +287,8 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 				if splash > 0.0:
 					targets = Combat.in_range_indices(cells[t], cells, splash)
 					splash_at = cells[t]
+					splash_id = int((s.enemies[t] as Dictionary)["id"])
+					splash_prog = float((s.enemies[t] as Dictionary)["progress"])
 				else:
 					targets = [t]
 		for i: int in targets:
@@ -311,13 +315,22 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 			# 這一發是誰開的，才畫得出四種開火形態（`20_ART_DIRECTION.md` §1.7）。
 			# 形態本身由 `NodeDefs` 既有的 `dmg_type`／`pierce`／`splash`／`reclaim`
 			# 推導，不新增美術欄位。
+			# ★ B3.12：連同**敵人 id 與被打中時的 progress**（純渲染，和 `by` 一樣）。
+			#   畫面層用 id 找到那一隻**此刻**的本體——`to` 只是格，而彈丸活 3 個 tick、
+			#   敵人這期間會走出那一格，退回格心的話彈頭與火花就落在它身後
+			#   （使用者回報「攻擊特效有時候會跑掉，不往敵人身上打」）。
+			#   那一隻死了就退到 `prog`（碎片爆也在那裡），兩者接得上。
 			var rec := {
 				"from": n["cell"], "to": cells[i], "ttl": SHOT_TTL, "by": String(n["type"]),
+				"target": int((s.enemies[i] as Dictionary)["id"]),
+				"prog": float((s.enemies[i] as Dictionary)["progress"]),
 			}
 			# ★ 濺射環**只掛在第一發上**。碎浪是「一發濺射打中 N 隻」，不是 N 發：
 			#   每隻各畫一圈會疊出 N 個同心圓，既吵又把機制講錯（實看抓到，B1.6.3）。
 			if splash_at.x >= 0:
 				rec["splash_at"] = splash_at
+				rec["splash_target"] = splash_id
+				rec["splash_prog"] = splash_prog
 				splash_at = Vector2i(-1, -1)
 			# ⚠ **這一行必須在 `if` 外面。** B1.6.3 誤縮排到 `if` 裡面，於是
 			#   只有濺射（碎浪）會留下 `shots` 記錄——其餘四座塔的開火形態
@@ -344,7 +357,12 @@ static func _fire(s: RefCounted, engaged: Dictionary, sat: Dictionary, aura: Arr
 		if float((s.enemies[i] as Dictionary)["hp"]) > 0.0:
 			continue
 		# ★ 碎片爆（B1.6）：混沌消散。種子用敵人 id → 同一隻永遠炸成同一個樣子。
-		_burst(s, Vector2(cells[i]), "chaos", int((s.enemies[i] as Dictionary)["id"]))
+		# ★ B3.12：炸在它**畫面上**的位置（`Tide.pos_of()`：置中於格、格間連續），
+		#   不是格心——否則本體在兩格之間消失、碎片在半格外炸開。
+		_burst(
+			s, Tide.pos_of(s.path, float((s.enemies[i] as Dictionary)["progress"])),
+			"chaos", int((s.enemies[i] as Dictionary)["id"])
+		)
 		_on_kill(s, float(Enemies.of(String(s.enemies[i]["type"])).get("value", 0.0)), cells[i])
 		s.enemies.remove_at(i)
 

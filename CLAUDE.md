@@ -259,7 +259,7 @@ TheGame/
     │                          Loadout（局外成長進局的唯一入口）——純函式、零 RNG
     ├── scripts/game/          BattleController / BuildController / SessionState
     ├── scripts/screens/       各畫面
-    ├── scripts/render/        Palette / Shapes / Motion / Glyphs（美術 token 實作；Glyphs＝節點幾何＋體積語言）
+    ├── scripts/render/        Palette / Shapes / Motion / Glyphs / Foes（美術 token 實作；Glyphs＝節點幾何＋體積語言、Foes＝敵人幾何，由欄位推導）
     ├── scripts/ui/            UiKit
     ├── scripts/meta/          TycoonSim（純函式的**狀態機**）
     ├── data/                  節點、角色、敵人、地圖、戰役、科技、等級軸、成就、**難度層**資料表

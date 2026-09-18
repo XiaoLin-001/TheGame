@@ -72,7 +72,7 @@ TheGame/
     │   ├── sim/          ★     FlowNetwork.gd / Combat.gd / WaveGen.gd / MapGen.gd / Score.gd
     │   ├── game/               BattleController.gd / BuildController.gd / SessionState.gd
     │   ├── screens/            Title / MainMenu / Battle / Result / TechTree / Roster / Tycoon / Settings
-    │   ├── render/             Palette.gd / Shapes.gd / Motion.gd / Glyphs.gd（美術 token 實作；Glyphs＝節點幾何的純函式＋體積語言）
+    │   ├── render/             Palette.gd / Shapes.gd / Motion.gd / Glyphs.gd / Foes.gd（美術 token 實作；Glyphs＝節點幾何的純函式＋體積語言）
     │   ├── ui/                 UiKit.gd（共用 UI helpers，static）
     │   └── meta/               TechTree.gd / RosterData.gd / TycoonSim.gd
     ├── data/                   角色、敵人、關卡、訂單的資料表（.json 或 .tres）
@@ -414,6 +414,7 @@ B1.7 把 R-17 的判定推遲到「大圖才是真的會撞到它的地方」。
 
 **效能策略**：
 - 模擬層與渲染層解耦：模擬固定 10 Hz，渲染 60 Hz **以插值呈現**（導管粗細、敵人位置在 tick 之間補間）。
+  ★ **敵人那一半到 B3.12 才真的做了**（RG-175）：這一行寫了兩年而 `_enemy_pos()` 從來沒讀過 `_accum`。現在是用本 tick 的有效速度**外推**（`Tide.advance()` 是同一條線性式，到下一 tick 正好接上），而且畫面位置**置中於 `cell_of()` 那一格**（`Tide.pos_of()`）——文件上的承諾要有斷言，`hud_test` 釘離格心 ≤ 半格。
 - 導管渲染批次化：同色同寬的線合併為單一 `draw_multiline`。
 - 敵人不使用獨立 `Node2D`：以資料陣列 + 單一 `_draw()` 批繪，避免數百節點的場景樹開銷。
 - 每個里程碑結束跑一次壓力情境並記錄數據到 `50_QA_PLAN.md`。

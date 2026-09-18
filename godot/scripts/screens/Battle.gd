@@ -26,12 +26,8 @@ const RosterData := preload("res://data/Roster.gd")
 const Difficulty := preload("res://data/Difficulty.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const Glyphs := preload("res://scripts/render/Glyphs.gd")
+const Foes := preload("res://scripts/render/Foes.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
-
-## ★ 「快」的門檻（B1.6.3、`20_ART_DIRECTION.md` §1.7）。超過就給拖尾與流線輪廓。
-## 取在 1.2：現行三種是 1.6／1.0／0.6，門檻落在漂蟲（基準 1.0）之上一截，
-## 所以 M3 補敵人時「比基準明顯快」才拿得到這個視覺，不是隨便快一點就有。
-const SWIFT_SPEED := 1.2
 
 ## ★ 開打漣漪的壽命（秒，B3.11）。號令音 `wave_start` 有 1.7 秒，漣漪比它短——
 ## 它只負責「潮從**這裡**進來」那一眼，說完就讓位給敵人本體。
@@ -315,10 +311,12 @@ var _stress_worst: float = 0.0
 ## 本幀「正在被啃」的格（敵人相鄰 1 格內）。**純渲染推導，不新增任何狀態**
 ## ——同一份判定模擬層每 tick 都在做（`Tide.in_blast`），這裡只是把它畫出來。
 var _threat: Dictionary = {}
-## 本幀每隻敵人所在的格（與 `s.enemies` 同索引）與「這一 tick 被打中的格」。
-## 兩者都是**純渲染推導**（B3.11，受擊一閃用），不新增任何模擬狀態。
+## 本幀每隻敵人所在的格（與 `s.enemies` 同索引）、id → 索引、「這一 tick 被打中的
+## 敵人 id」。三者都是**純渲染推導**（B3.11／B3.12，彈丸落點與受擊一閃用），
+## 不新增任何模擬狀態。
 var _enemy_cells: Array = []
-var _hit_cells: Dictionary = {}
+var _enemy_index: Dictionary = {}
+var _hit_ids: Dictionary = {}
 ## ★ 本幀「畫不出圖形」的節點類型（B2.4.6）。`_draw_nodes()` 的 match 每漏一種
 ## 就往這裡記一筆，`TL_CLICKTEST` 拿它當斷言。**這不是防禦性程式碼，是一支感測器**
 ## ——漏掉一種的後果是那座塔在地圖上完全隱形（蓋得下去、會開火、會吃電、會被
@@ -2066,7 +2064,8 @@ func _draw() -> void:
 	# ★ B3.11：敵人的格與「這一 tick 被打中的格」留給 `_draw_enemies()` 讀
 	#   （受擊一閃是純渲染推導：剛生出來那幾發的落點）。
 	_enemy_cells = cells
-	_hit_cells = _hit_cells_of()
+	_enemy_index = _index_enemies()
+	_hit_ids = _hit_ids_of()
 	_draw_path()
 	_draw_ore_cells()
 	_draw_fields()
@@ -3010,9 +3009,9 @@ func _draw_shots() -> void:
 		# 沒有 `by` 的一律當錨（`TL_CLICKTEST` 手塞的那一發）。
 		var def := NodeDefs.of(String(sh.get("by", "anchor")))
 		var a := _center(sh["from"])
-		# ★ 落點吸附到那一格裡的敵人**本體**（B3.11 近照抓到）：`shots` 只記格子，
-		#   而敵人在格與格之間插值——4× 下火花離敵人大半格，看起來像打空。
-		var b := _target_pos(sh["to"])
+		# ★ 落點鎖定敵人本體（B3.12，`_shot_anchor()`）。B3.11 吸附到「那一格裡的
+		#   敵人」還不夠：彈丸活 3 個 tick，敵人這期間走出那一格就退回了格心。
+		var b := _shot_anchor(sh, "target", "prog", "to")
 		var t := Motion.progress(BattleController.SHOT_TTL, int(sh["ttl"]), frac)
 		var fade := 1.0 - t
 		var beam: bool = bool(def.get("pierce", false))
@@ -3025,18 +3024,36 @@ func _draw_shots() -> void:
 		# 濺射環只掛在這一發濺射的**第一筆**記錄上（`BattleController`），
 		# 所以這裡畫幾次就是幾發，不會被打中的隻數放大。
 		if sh.has("splash_at"):
-			_shot_splash(_target_pos(sh["splash_at"]), t, fade, float(def.get("splash", 0.0)))
+			_shot_splash(
+				_shot_anchor(sh, "splash_target", "splash_prog", "splash_at"),
+				t, fade, float(def.get("splash", 0.0))
+			)
 		if float(def.get("reclaim", 0.0)) > 0.0:
 			_shot_reclaim(a, b, t)
 
 
-## 一發的落點：那一格裡的第一隻敵人的**插值位置**；格裡沒有敵人（已經被打死、
-## 或走出去了）就退回格心——碎片爆本來就在格心，兩者接得上。
-func _target_pos(cell: Vector2i) -> Vector2:
-	var i := _enemy_cells.find(cell)
-	if i >= 0 and i < s.enemies.size():
-		return _enemy_pos(s.enemies[i])
-	return _center(cell)
+## 一發的落點（B3.12）。**鎖定敵人本體**：記錄裡有 `target`（敵人 id）就畫在那一隻
+## **此刻**的位置——彈丸活 3 個 tick，敵人在這期間會走出原本那一格，退回格心的話
+## 彈頭與火花就落在它身後半格到一格（使用者回報「特效跑掉、不往敵人身上打」）。
+## 那一隻已經死了就畫在它**被打中時**的位置（`prog`，碎片爆也在那裡）；
+## 兩者都沒有（`TL_CLICKTEST` 手塞的那一發）才退回格心。
+func _shot_anchor(sh: Dictionary, id_key: String, prog_key: String, cell_key: String) -> Vector2:
+	if sh.has(id_key):
+		var i: int = _enemy_index.get(int(sh[id_key]), -1)
+		if i >= 0 and i < s.enemies.size():
+			return _enemy_pos(s.enemies[i], i)
+	if sh.has(prog_key):
+		return _path_px(float(sh[prog_key]))
+	return _center(sh[cell_key])
+
+
+## id → `s.enemies` 索引，每幀建一次（B3.12）。彈丸記的是 id（敵人會死、陣列會縮），
+## 畫的時候要找得到那一隻此刻在哪。
+func _index_enemies() -> Dictionary:
+	var out: Dictionary = {}
+	for i in s.enemies.size():
+		out[int((s.enemies[i] as Dictionary)["id"])] = i
+	return out
 
 
 ## 砲口閃光：出手那一瞬在塔上開一顆亮青的菱形，半個 `SHOT_TTL` 內收掉。
@@ -3109,74 +3126,48 @@ func _shot_reclaim(a: Vector2, b: Vector2, t: float) -> void:
 
 ## 敵潮屬於**混沌**側（`20_ART_DIRECTION.md` §0）：不規則凸包、不對齊網格、
 ## 呼吸式脈動。玩家的一切則是正圓正方、嚴格對齊——這個對比就是主題本身。
+## ★ B3.12：幾何搬進 `render/Foes.gd`（純函式、全由機制欄位推導；`hud_test` 量它
+##   的行進軸 footprint）。這裡只剩**狀態**：受擊亮階、被光環抓住的青圈、血量弧
+##   ——三者各答一題、形狀各不相同（§4.3b）。
 func _draw_enemies() -> void:
+	var now := _time_s()
 	for i in s.enemies.size():
 		var e: Dictionary = s.enemies[i]
 		var def := Enemies.of(String(e["type"]))
-		var p := _enemy_pos(e)
+		var p := _enemy_pos(e, i)
 		var r := float(def.get("radius", 9.0))
-		# 敵潮的動態是「有機的呼吸」（§4.2 ease-in-out-sine 循環）；
-		# 相位用 id 錯開，一群敵人才不會像節拍器一起脹縮。
-		var pulse := Motion.pulse(s.tick_count, Motion.AMBIENT, 0.12, float(e["id"]))
-		var armored: bool = float(def.get("armor", 0.0)) > 0.0
-		# ⚠ 這個 `fast` 是**看起來快**（速度過門檻），和資料上的 `swift` 旗標
-		#   （免疫減速，B3.2）是兩件事。
-		var fast: bool = float(def.get("speed", 1.0)) > SWIFT_SPEED
-		# ★ 這裡曾經有兩個殘影當拖尾（B1.6.3 第一版），**實看 A/B 之後砍掉**：
-		#   第 5 波的間距是 0.6 格，任何畫在身後的東西都會壓到後面那一隻。
-		#   速度線索全部收進**本體輪廓**，不佔用敵人之間的空隙。
-		var pts := _enemy_shape(e, p, r, pulse, armored, fast)
-		# ★ 受擊一閃（B3.11）：這一 tick 有彈落在它那一格，本體往亮階推 0.2 秒。
-		#   純渲染推導（`_hit_cells`），仍在品紅色相內、不動用橙（§1.7）。
-		var hit: bool = i < _enemy_cells.size() and _hit_cells.has(_enemy_cells[i])
-		draw_colored_polygon(pts, Palette.tide_hit() if hit else Palette.TIDE_MAGENTA)
-		var rim := pts.duplicate()
-		rim.append(pts[0])
-		# ★ 輪廓（B3.11）：1px 的深邊。混沌側也要有邊界——16px 的品紅團壓在紫色的
-		#   路徑帶上會糊進帶子裡。甲殼的 3px 甲板蓋在它上面，1 對 3 仍分得開。
-		draw_polyline(rim, Palette.alpha(Palette.TIDE_DEEP, 0.9), 1.0)
-		# ★ 甲板（B1.6.3）：**同形描邊，不是外圈弧**。血量弧已經是 `tide.deep`
-		#   的圓弧、畫在 `r+4`，再加一圈外弧就是同一個位置上的兩個訊息（§4.3b）。
-		if armored:
-			draw_polyline(rim, Palette.TIDE_DEEP, 3.0)
-		# ★ 亮核心（B1.6.3）：**快**在 16px 上唯一活得下來的線索。
-		elif fast:
-			# ★ **免疫減速的那一隻畫菱形，只是跑得快的畫圓**（B3.2）。
-			# 下限 1px：`pulse` 在減少動態效果時可能壓到 0，而四個點疊在一起的
-			# 多邊形會讓 Godot 的三角化失敗（實跑當場噴 `Invalid polygon data`）。
-			var core := maxf(1.0, r * pulse * 0.45)
-			if bool(def.get("swift", false)):
-				# 用 `draw_polyline` 不是 `draw_colored_polygon`：閉合折線不用三角化。
-				draw_polyline(PackedVector2Array([
-					p + Vector2(0, -core * 1.3), p + Vector2(core, 0),
-					p + Vector2(0, core * 1.3), p + Vector2(-core, 0),
-					p + Vector2(0, -core * 1.3),
-				]), Palette.TIDE_BRIGHT, 2.0)
-			else:
-				draw_circle(p, core, Palette.TIDE_BRIGHT)
-		# ★ 再生（B3.2）：**輪廓內一圈會呼吸的亮線**。用 `tide.bright` 不是新顏色
-		#   （§1.7 的混沌亮階），和青色的減速圈分得開。
-		if float(def.get("regen", 0.0)) > 0.0:
-			var beat := Motion.pulse(s.tick_count, Motion.AMBIENT, 0.5, float(e["id"]))
-			draw_polyline(rim, Palette.alpha(Palette.TIDE_BRIGHT, 0.25 + 0.45 * beat), 2.0)
+		# ★ 受擊一閃（B3.11）：這一 tick 有彈落在它身上，本體往亮階推 0.2 秒。
+		#   純渲染推導（`_hit_ids`），仍在品紅色相內、不動用橙（§1.7）。
+		var hit: bool = _hit_ids.has(int(e["id"]))
+		var parts: Array = Foes.build(def, int(e["id"]), p, _enemy_dir(e, i), now, hit)
+		Foes.paint(self, parts)
 		# ★ 被潮鳴抓住的敵人：輪廓描一圈 `order.cyan`（B1.8）。**標在敵人身上而不是
 		#   塔上**——減速作用在它身上，標在這裡因果才讀得出來。
 		var slow := 0.0 if i >= _auras.size() else (_auras[i] as Vector2).x
 		if slow > 0.01:
-			draw_polyline(rim, Palette.alpha(Palette.ORDER_CYAN, 0.35 + 1.4 * slow), 2.0)
-		var frac := float(e["hp"]) / maxf(1.0, float(def.get("hp", 1.0)))
+			for rim: PackedVector2Array in Foes.outlines(parts):
+				draw_polyline(rim, Palette.alpha(Palette.ORDER_CYAN, 0.35 + 1.4 * slow), 2.0)
+		# 血量弧。★ 分母是這一隻的 `max_hp`（無盡曲線 × 難度層乘過的），不是表上的原值
+		#   ——原本讀表值，第 10 波之後血 2.5 倍的敵人要掉到表值以下才開始有弧。
+		var frac := float(e["hp"]) / maxf(1.0, float(e.get("max_hp", def.get("hp", 1.0))))
 		if frac < 1.0:
 			draw_arc(p, r + 4.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 20, Palette.TIDE_DEEP, 2.0)
 
 
-## 這一 tick 被打中的格（B3.11，純渲染推導）：剛生出來（`ttl` 還滿或剛減一格）
-## 的那幾發的落點。敵人站在這幾格上就閃一下——0.2 秒，和碎片爆一樣是渲染層的事，
-## 不進 `state_hash()`。
-func _hit_cells_of() -> Dictionary:
+## 這一 tick 被打中的敵人（B3.11，B3.12 改成以 **id** 為鍵）：剛生出來（`ttl` 還滿
+## 或剛減一格）的那幾發的目標。0.2 秒的亮階，和碎片爆一樣是渲染層的事，不進
+## `state_hash()`。沒有 `target` 的那一發（`TL_CLICKTEST` 手塞的）退回「那一格裡的第一隻」。
+func _hit_ids_of() -> Dictionary:
 	var out: Dictionary = {}
 	for sh: Dictionary in s.shots:
-		if int(sh["ttl"]) >= BattleController.SHOT_TTL - 1:
-			out[sh["to"]] = true
+		if int(sh["ttl"]) < BattleController.SHOT_TTL - 1:
+			continue
+		if sh.has("target"):
+			out[int(sh["target"])] = true
+			continue
+		var i := _enemy_cells.find(sh["to"])
+		if i >= 0 and i < s.enemies.size():
+			out[int((s.enemies[i] as Dictionary)["id"])] = true
 	return out
 
 
@@ -3329,67 +3320,42 @@ func _draw_bursts() -> void:
 				draw_rect(Rect2(p - Vector2(r, r), Vector2(r, r) * 2.0), c)
 
 
-## ★ 敵人的輪廓（B1.6.3，`20_ART_DIRECTION.md` §1.7）。
-##
-## 三種輪廓**全部由既有的機制欄位推導**，不新增美術資料：
-##   預設        9 邊柔性水滴、wobble ±15%          ← 漂蟲
-##   `armor > 0` 6 邊硬稜角、wobble ±7%             ← 甲殼（物理打不動它）
-##   `speed 快`  垂直於行進方向壓扁                  ← 熾泳
-## 這樣做的第一個理由不是省事，是**設計上不可能說謊**：沒有辦法做出一隻
-## 「有護甲但看起來不硬」的敵人。三者仍然全部屬於**混沌**側（§0）。
-##
-## ★ B3.11：**波動會走。** 原本的 wobble 只由 id 決定（每隻一個固定的形狀），
-##   脈動只做整體脹縮——那是一顆會呼吸的石頭。讓相位隨 tick 前進之後，輪廓像一層
-##   在動的膜，§0 的「隨機微抖」終於有了實作。**零 RNG**：tick 與 id 的函式，
-##   `TL_SHOT` 凍結在同一 tick 就拍出同一張圖；`reduce` 時相位凍住（§4.4）。
-##   兩個頻率疊加（同 `band_jitter` 的理由：單一正弦看得出週期）。
-func _enemy_shape(
-	e: Dictionary, p: Vector2, r: float, pulse: float, armored: bool, fast: bool
-) -> PackedVector2Array:
-	var sides := 6 if armored else 9
-	var amp := 0.07 if armored else 0.15
-	var seed_k := float(e["id"])
-	var flow: float = (
-		0.0 if Motion.reduce
-		else (float(s.tick_count) + _accum / Motion.TICK) * Motion.TICK * 2.6
-	)
-	var pts := PackedVector2Array()
-	# `k` 而不是 `i`：呼叫端已經用掉 `i`（敵人索引），而 GDScript 的 for
-	# 迭代變數共享同一個作用域——同名會是 parse error，不是遮蔽。
-	for k in sides:
-		var a := TAU * float(k) / float(sides)
-		# 值域收在約 ±1.45 amp：再寬就會有頂點塌進去，變成尖角旗子而不是水滴。
-		var wobble := (
-			1.0 + amp * sin(seed_k * 3.7 + a * 2.0 + flow)
-			+ amp * 0.45 * sin(a * 3.0 - flow * 1.7 + seed_k)
-		)
-		var v := Vector2(cos(a), sin(a)) * r * pulse * wobble
-		if fast:
-			# ★ 流線＝**垂直於行進方向壓扁**，不是沿行進方向拉長（B1.6.3 實看修正）：
-			#   第 5 波的間距是 0.6 格，任何沿行進軸變長的東西都會碰到鄰居。
-			var d := _enemy_dir(e)
-			var perp := Vector2(-d.y, d.x)
-			v -= perp * v.dot(perp) * 0.45
-		pts.append(p + v)
-	return pts
+## 敵人**此刻**的畫面位置（B3.12）。兩件事在這裡：
+##   ① **置中於它的格**（`Tide.pos_of()`）：模擬用 `floor(progress)` 當格，原本的畫法
+##      從格心往下一格插值——一隻 progress 3.9 的敵人畫在第 4 格正中央，而模擬、
+##      射程判定、交戰括號都說它在第 3 格。塔看起來在打射程外的東西。
+##   ② **tick 內外推**：模擬 10Hz、畫面 60Hz。原本敵人每 0.1 秒跳一次——§2.4 說的
+##      「插值呈現」在敵人身上從來沒有實作（導管粗細有、敵人沒有）。用這一隻本 tick
+##      的有效速度往前推 `_accum` 秒：`Tide.advance()` 就是這條線性式，所以到下一
+##      tick 正好接上。夾在路徑終點（和模擬一樣不會衝過核心）；`TL_SHOT` 凍結時
+##      `_accum` 恆為 0，同參數仍拍出同一張圖。
+func _enemy_pos(e: Dictionary, i: int) -> Vector2:
+	return _path_px(_enemy_prog(e, i))
 
 
-## 行進方向（單位向量）。路徑是正交的，所以這就是「下一格 − 這一格」。
-func _enemy_dir(e: Dictionary) -> Vector2:
-	var prog := float(e["progress"])
-	var i := clampi(int(floor(prog)), 0, s.path.size() - 1)
-	var j := mini(i + 1, s.path.size() - 1)
-	if i == j:
-		return Vector2.RIGHT
-	return (Vector2(s.path[j] - s.path[i]) as Vector2).normalized()
+## 這一隻此刻的 progress（外推過的）。減速讀本幀的 `_auras`，迅捷免疫（同模擬層）。
+func _enemy_prog(e: Dictionary, i: int) -> float:
+	var def := Enemies.of(String(e["type"]))
+	var slow := 0.0 if i >= _auras.size() else (_auras[i] as Vector2).x
+	if bool(def.get("swift", false)):
+		slow = 0.0
+	var ahead := float(def.get("speed", 1.0)) * (1.0 - slow) * minf(_accum, BattleController.TICK)
+	return minf(float(e["progress"]) + ahead, float(s.path.size() - 1))
 
 
-func _enemy_pos(e: Dictionary) -> Vector2:
-	var prog := float(e["progress"])
-	var i := clampi(int(floor(prog)), 0, s.path.size() - 1)
-	var j := mini(i + 1, s.path.size() - 1)
-	# 格與格之間插值：模擬是離散的，呈現不必是（60Hz 插值，§2.4）。
-	return _center(s.path[i]).lerp(_center(s.path[j]), prog - float(i))
+## 路徑上的連續位置 → 地圖 px。
+func _path_px(prog: float) -> Vector2:
+	return Tide.pos_of(s.path, prog) * Shapes.GRID + Vector2(Shapes.GRID, Shapes.GRID) * 0.5
+
+
+## 行進方向（單位向量），轉角處平滑過渡（`Tide.heading_of()`）。
+func _enemy_dir(e: Dictionary, i: int) -> Vector2:
+	return Tide.heading_of(s.path, _enemy_prog(e, i))
+
+
+## tick 秒 ＋ tick 內已過的秒數：波動相位的時間軸（零 RNG，`TL_SHOT` 下凍結）。
+func _time_s() -> float:
+	return float(s.tick_count) * BattleController.TICK + minf(_accum, BattleController.TICK)
 
 
 ## ★ 被選取那一座：射程圈 ＋ **正在餵它電的那幾台**（B3.6）。

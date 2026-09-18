@@ -34,6 +34,44 @@ static func cell_of(path: Array, progress: float) -> Vector2i:
 	return path[clampi(int(floor(progress)), 0, path.size() - 1)]
 
 
+## ★ 敵人的**畫面**位置（格為單位、連續；B3.12）。**置中於 `cell_of()` 那一格**：
+## `progress` 的整數部分是格、小數是走進這一格多深，所以畫面座標是 `progress − 0.5`
+## 沿路徑的插值——0.5 時正好在格心，整數時在兩格之間。起點前半格與終點（核心）
+## 前半格用兩端的線段外推（剛出場的從邊外走進來、到核心的停在核心邊上啃）。
+##
+## 為什麼要置中：原本畫面層從格心往**下一格**插值，一隻 progress 3.9 的敵人畫在
+## 第 4 格正中央，而射程判定、交戰括號、walk-by 全都說它在第 3 格——塔看起來在打
+## 射程外的東西，火花落在敵人身後。純函式、零 RNG；**不進任何模擬判定**
+## （那些一律走 `cell_of()`，這裡只是那個格的連續讀法）。
+static func pos_of(path: Array, progress: float) -> Vector2:
+	if path.is_empty():
+		return Vector2.ZERO
+	if path.size() == 1:
+		return Vector2(path[0] as Vector2i)
+	var q := progress - 0.5
+	var i := clampi(int(floor(q)), 0, path.size() - 2)
+	var a := Vector2(path[i] as Vector2i)
+	var b := Vector2(path[i + 1] as Vector2i)
+	return a + (b - a) * (q - float(i))
+
+
+## 行進方向（單位向量），**轉角處平滑過渡**：在一格之內從這一段的方向轉到下一段，
+## 中途是 45°（路徑正交）。給畫面層用——本體、亮痕、流痕都相對它生成，
+## 方向一跳整隻就跳。與 `pos_of()` 同一條 `progress − 0.5` 的時間軸。
+static func heading_of(path: Array, progress: float) -> Vector2:
+	if path.size() < 2:
+		return Vector2.RIGHT
+	var q := progress - 0.5
+	var i := clampi(int(floor(q)), 0, path.size() - 2)
+	var w := clampf(q - float(i), 0.0, 1.0)
+	var s0 := Vector2((path[i + 1] as Vector2i) - (path[i] as Vector2i))
+	var s1 := s0 if i + 2 >= path.size() else Vector2((path[i + 2] as Vector2i) - (path[i + 1] as Vector2i))
+	var h := s0 * (1.0 - w) + s1 * w
+	if h.length_squared() < 0.0001:
+		return s0.normalized()
+	return h.normalized()
+
+
 ## 走到終點了嗎？到了就停下來打核心（唯一會讓它駐足的目標）。
 static func at_core(progress: float, path_len: int) -> bool:
 	return progress >= float(path_len - 1) - 0.0001

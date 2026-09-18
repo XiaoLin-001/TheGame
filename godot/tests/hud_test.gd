@@ -17,6 +17,9 @@ const T := preload("res://tests/_assert.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const Shapes := preload("res://scripts/render/Shapes.gd")
 const Glyphs := preload("res://scripts/render/Glyphs.gd")
+const Foes := preload("res://scripts/render/Foes.gd")
+const Enemies := preload("res://data/Enemies.gd")
+const Tide := preload("res://scripts/sim/Tide.gd")
 const Build := preload("res://scripts/sim/Build.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const Maps := preload("res://data/Maps.gd")
@@ -43,6 +46,9 @@ func _initialize() -> void:
 	_every_level_stays_inside_its_cell(t)
 	_glyphs_match_the_extent_table(t)
 	_clip_half_math(t)
+	_shots_lock_onto_their_target(t)
+	_enemy_screen_position_is_centred(t)
+	_foes_keep_their_footprint(t)
 	quit(t.report())
 
 
@@ -529,3 +535,189 @@ func _clip_half_math(t: T) -> void:
 	var gear := Shapes.gear(Vector2.ZERO, 11.5, 6, 3.0)
 	var half := Shapes.clip_half(gear, Vector2.ZERO, Shapes.LIGHT_DIR)
 	t.ok(half.size() >= 3 and half.size() <= gear.size() + 2, "★ 齒輪切一半：一塊、點數合理")
+
+
+## ★ 彈丸鎖定敵人本體（B3.12）。使用者回報「攻擊特效有時候會跑掉，不往敵人身上打」：
+## `shots` 只記格（`to`），彈丸活 3 個 tick，敵人這期間走出那一格就退回格心——
+## 火花落在它身後半格到一格。現在每一發帶 `target`（敵人 id）與 `prog`（被打中時的
+## progress），畫面層用 id 找到那一隻**此刻**的本體。這裡釘的是記錄本身：
+## 剛生出來的那一發，`target` 必須是站在 `to` 那一格的那一隻、`prog` 必須是它的 progress。
+func _shots_lock_onto_their_target(t: T) -> void:
+	var s: RefCounted = SessionState.new()
+	s.setup(Maps.SHOAL)
+	s.alloy = Maps.DEMO_ALLOY
+	BuildController.apply_ops(s, Maps.SHOAL_DEMO)
+	var fresh := 0
+	var bad := 0
+	for _i in 3000:
+		BattleController.step(s)
+		var by_id: Dictionary = {}
+		for e: Dictionary in s.enemies:
+			by_id[int(e["id"])] = e
+		for sh: Dictionary in s.shots:
+			if int(sh["ttl"]) != BattleController.SHOT_TTL:
+				continue
+			fresh += 1
+			if not (sh.has("target") and sh.has("prog")):
+				bad += 1
+				continue
+			var hit_e: Dictionary = by_id.get(int(sh["target"]), {})
+			# 打死的那一隻已經不在陣列裡——那一發仍然有 `prog` 可退，不算錯
+			if hit_e.is_empty():
+				continue
+			if Tide.cell_of(s.path, float(hit_e["progress"])) != sh["to"]:
+				bad += 1
+			elif absf(float(sh["prog"]) - float(hit_e["progress"])) > 0.0001:
+				bad += 1
+	t.ok(fresh > 50, "★ 淺灘示範佈局 3000 tick 內開了夠多火（%d 發）" % fresh)
+	t.eq(bad, 0, "★★ 每一發剛生出來時 target 就是站在 to 那一格的那一隻、prog 是它的 progress")
+	# 濺射：示範佈局沒有碎浪，直接擺一座在路邊、把三隻敵人塞進它射程，連叫 `_fire()`。
+	var s2: RefCounted = SessionState.new()
+	s2.setup(Maps.SHOAL)
+	var anchor: Vector2i = s2.path[8]
+	var cell := Vector2i(-1, -1)
+	for dy in range(-3, 4):
+		for dx in range(-3, 4):
+			var c := anchor + Vector2i(dx, dy)
+			if cell.x < 0 and Build.can_place(s2.sets, s2.occupied(), "breaker", c) == Build.OK:
+				cell = c
+	t.ok(cell.x >= 0, "★ 淺灘路徑第 8 格附近擺得下碎浪")
+	var nid: int = s2.add_node("breaker", cell)
+	for k in 3:
+		s2.add_enemy("drifter")
+		(s2.enemies[k] as Dictionary)["progress"] = 8.3 + 0.6 * float(k)
+	var aura: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
+	var splash := 0
+	var splash_bad := 0
+	for _j in 40:
+		BattleController._fire(s2, {nid: true}, {nid: 1.0}, aura)
+		for sh: Dictionary in s2.shots:
+			if int(sh["ttl"]) == BattleController.SHOT_TTL and sh.has("splash_at"):
+				splash += 1
+				if not (sh.has("splash_target") and sh.has("splash_prog")):
+					splash_bad += 1
+				else:
+					var centre: Dictionary = {}
+					for e2: Dictionary in s2.enemies:
+						if int(e2["id"]) == int(sh["splash_target"]):
+							centre = e2
+					if centre.is_empty() or Tide.cell_of(s2.path, float(centre["progress"])) != sh["splash_at"]:
+						splash_bad += 1
+	t.ok(splash > 0, "★ 碎浪開火留下了濺射記錄（%d 筆）" % splash)
+	t.eq(splash_bad, 0, "★ 濺射環帶著圓心那一隻的 id 與 progress，而那一隻真的站在 splash_at 上")
+
+
+## ★ 敵人的畫面位置置中於它的格（B3.12，`Tide.pos_of()`）。模擬用 `floor(progress)`
+## 當格；原本的畫法從格心往下一格插值，一隻 progress 3.9 的敵人畫在第 4 格正中央，
+## 而射程判定、交戰括號、walk-by 都說它在第 3 格——塔看起來在打射程外的東西。
+## 另外釘 `heading_of()`：轉角處平滑過渡（本體、亮痕、流痕都相對它生成）。
+func _enemy_screen_position_is_centred(t: T) -> void:
+	var path: Array = [Vector2i(0, 3), Vector2i(1, 3), Vector2i(2, 3), Vector2i(2, 4), Vector2i(2, 5)]
+	t.ok(Tide.pos_of(path, 0.5).is_equal_approx(Vector2(0, 3)), "★ progress 0.5 正好在第 0 格格心")
+	t.ok(Tide.pos_of(path, 1.0).is_equal_approx(Vector2(0.5, 3)), "★ 整數 progress 在兩格之間")
+	t.ok(Tide.pos_of(path, 0.0).is_equal_approx(Vector2(-0.5, 3)), "★ 剛出場時在起點前半格（從邊外走進來）")
+	t.ok(Tide.pos_of(path, 4.0).is_equal_approx(Vector2(2, 4.5)), "★ 到核心（progress ＝ 末格）時停在核心前半格")
+	t.ok(Tide.pos_of(path, 2.5).is_equal_approx(Vector2(2, 3)), "★ 轉角格的格心就是轉角")
+	for q: float in [0.0, 0.7, 1.5, 2.5, 3.9]:
+		var c := Tide.cell_of(path, q)
+		var d := Tide.pos_of(path, q) - Vector2(c)
+		var off := maxf(absf(d.x), absf(d.y))
+		t.ok(off <= 0.5 + 0.0001,
+			"★★ progress %.1f 的畫面位置離模擬那一格的格心不超過半格（%.2f）" % [q, off])
+	t.ok(Tide.heading_of(path, 0.5).is_equal_approx(Vector2.RIGHT), "★ 起點朝向第一段")
+	t.ok(Tide.heading_of(path, 2.5).is_equal_approx(Vector2.DOWN), "★ 到轉角格心時已經轉向第二段")
+	var mid := Tide.heading_of(path, 2.0)
+	t.ok(mid.x > 0.5 and mid.y > 0.5, "★ 轉角前半格是 45°（平滑過渡）")
+	t.ok(Tide.heading_of(path, 4.0).is_equal_approx(Vector2.DOWN), "★ 末段方向不變")
+	t.ok(Tide.pos_of([], 1.0).is_equal_approx(Vector2.ZERO), "★ 空路徑不炸")
+
+
+## ★ 六隻敵人的幾何（B3.12，`render/Foes.gd`）。§1.7 那條規則——「敵人的差異化只能用
+## **不增加行進軸 footprint** 的手段」——是實看 A/B 三次的結論，這裡把它釘成數字：
+## 任何零件沿行進軸離中心不得超過 `Foes.FOOT × r`。另外：每一種都畫得出東西、
+## 本體是星形多邊形（`draw_colored_polygon` 才不會噴 `Invalid polygon data`）、
+## 受擊時本體換亮階、`reduce` 時波動凍住、對不到欄位的型別畫成預設樣（不是空的）、
+## 六隻的幾何兩兩不同（不是只差半徑）。
+func _foes_keep_their_footprint(t: T) -> void:
+	var was := Motion.reduce
+	Motion.reduce = false
+	var dirs: Array[Vector2] = [Vector2.RIGHT, Vector2.DOWN, Vector2(0.707, 0.707)]
+	for type: String in Enemies.DEFS:
+		var def := Enemies.of(type)
+		var r := float(def.get("radius", 9.0))
+		var worst := 0.0
+		var bodies := 0
+		var simple := true
+		for d: Vector2 in dirs:
+			for time_s: float in [0.0, 0.37, 1.9, 7.31]:
+				var parts: Array = Foes.build(def, 5, Vector2.ZERO, d, time_s, false)
+				t.ok(not parts.is_empty(), "★★ %s 畫得出東西（%s, %.2fs）" % [type, d, time_s])
+				worst = maxf(worst, Foes.extent_along(parts, Vector2.ZERO, d))
+				for rim: PackedVector2Array in Foes.outlines(parts):
+					bodies += 1
+					if not _star_shaped(rim):
+						simple = false
+		t.ok(worst <= Foes.FOOT * r + 0.001,
+			"★★ %s 沿行進軸不超出 %.2f r（最遠 %.3f r）" % [type, Foes.FOOT, worst / r])
+		t.ok(bodies > 0, "★ %s 有本體輪廓" % type)
+		t.ok(simple, "★★ %s 的本體是星形多邊形（三角化不會失敗）" % type)
+		var hit_parts: Array = Foes.build(def, 5, Vector2.ZERO, Vector2.RIGHT, 0.0, true)
+		var lit := false
+		for part: Dictionary in hit_parts:
+			if String(part["kind"]) == "fill" and bool(part.get("body", false)):
+				lit = (part["col"] as Color).is_equal_approx(Palette.tide_hit())
+		t.ok(lit, "★ %s 受擊時本體換成亮階" % type)
+	# 對不到任何欄位：預設樣，不是空的（漏畫敵人的症狀是「打不到的東西在啃核心」）
+	t.ok(not Foes.build({}, 1, Vector2.ZERO, Vector2.RIGHT, 0.0, false).is_empty(),
+		"★ 沒有任何欄位的型別也畫得出預設樣")
+	# reduce：兩個時刻的幾何完全相同
+	Motion.reduce = true
+	var frozen_a: Array = Foes.build(Enemies.of("drifter"), 3, Vector2.ZERO, Vector2.RIGHT, 0.0, false)
+	var frozen_b: Array = Foes.build(Enemies.of("drifter"), 3, Vector2.ZERO, Vector2.RIGHT, 1.9, false)
+	Motion.reduce = false
+	var live_b: Array = Foes.build(Enemies.of("drifter"), 3, Vector2.ZERO, Vector2.RIGHT, 1.9, false)
+	Motion.reduce = was
+	t.ok(_geometry_sig(frozen_a, 1.0) == _geometry_sig(frozen_b, 1.0),
+		"★ reduce_motion 時波動凍住（兩個時刻同一份幾何）")
+	t.ok(_geometry_sig(frozen_b, 1.0) != _geometry_sig(live_b, 1.0),
+		"★ 不 reduce 時波動真的在走（1.9 秒後不是同一份幾何）")
+	# 六隻各不相同：同一個方向同一時刻，六份幾何（除以半徑）兩兩不同
+	var sigs: Dictionary = {}
+	for type: String in Enemies.DEFS:
+		var norm: Array = Foes.build(Enemies.of(type), 5, Vector2.ZERO, Vector2.RIGHT, 0.0, false)
+		sigs[_geometry_sig(norm, float(Enemies.of(type).get("radius", 9.0)))] = true
+	t.eq(sigs.size(), Enemies.DEFS.size(), "★ 六隻的幾何兩兩不同（不是只差半徑）")
+
+
+## 多邊形（閉合折線）對它自己的重心是否呈星形：頂點極角單調、繞一整圈。
+func _star_shaped(rim: PackedVector2Array) -> bool:
+	if rim.size() < 4:
+		return false
+	var n := rim.size() - 1   # 閉合折線：尾巴是第一點的複本
+	var c := Vector2.ZERO
+	for i in n:
+		c += rim[i]
+	c /= float(n)
+	var turn := 0.0
+	for i in n:
+		var a0 := (rim[i] - c).angle()
+		var a1 := (rim[(i + 1) % n] - c).angle()
+		var da := fposmod(a1 - a0 + PI, TAU) - PI
+		if absf(da) >= PI - 0.001 or absf(da) < 0.0001:
+			return false
+		turn += da
+	return absf(absf(turn) - TAU) < 0.01
+
+
+## 一組零件的幾何簽章（座標除以 `r`，兩位小數）。
+func _geometry_sig(parts: Array, r: float) -> String:
+	var out := ""
+	for part: Dictionary in parts:
+		out += String(part["kind"])
+		if part.has("pts"):
+			for v: Vector2 in (part["pts"] as PackedVector2Array):
+				out += "(%.2f,%.2f)" % [v.x / r, v.y / r]
+		if part.has("c"):
+			var c: Vector2 = part["c"]
+			out += "c(%.2f,%.2f,%.2f)" % [c.x / r, c.y / r, float(part["r"]) / r]
+	return out
