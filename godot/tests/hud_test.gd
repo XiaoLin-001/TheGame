@@ -18,6 +18,9 @@ const Motion := preload("res://scripts/render/Motion.gd")
 const Shapes := preload("res://scripts/render/Shapes.gd")
 const Glyphs := preload("res://scripts/render/Glyphs.gd")
 const Foes := preload("res://scripts/render/Foes.gd")
+const Terrain := preload("res://scripts/render/Terrain.gd")
+const Campaign := preload("res://data/Campaign.gd")
+const MapGen := preload("res://scripts/sim/MapGen.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const Tide := preload("res://scripts/sim/Tide.gd")
 const Build := preload("res://scripts/sim/Build.gd")
@@ -49,6 +52,7 @@ func _initialize() -> void:
 	_shots_lock_onto_their_target(t)
 	_enemy_screen_position_is_centred(t)
 	_foes_keep_their_footprint(t)
+	_terrain_stays_off_the_information(t)
 	quit(t.report())
 
 
@@ -720,4 +724,112 @@ func _geometry_sig(parts: Array, r: float) -> String:
 		if part.has("c"):
 			var c: Vector2 = part["c"]
 			out += "c(%.2f,%.2f,%.2f)" % [c.x / r, c.y / r, float(part["r"]) / r]
+	return out
+
+
+
+## ★ 地貌（B3.13，`render/Terrain.gd`）。§1.6c 的兩條不變量釘成斷言：
+## ① 裝飾**只落在不承載資訊的格**——路徑、暈、礦點、核心與它的八鄰一個點都不准碰
+##   （逐件逐點、線段沿途取樣）；② **確定性**——同一張圖建兩次是同一份。
+## 另外：十二張圖每一張都有地貌、畫得出東西、縮圖也有大件、地至少五種顏色、
+## 無盡圖的地貌由種子決定、對不到的地貌退回預設。
+func _terrain_stays_off_the_information(t: T) -> void:
+	var maps: Array = [Maps.SHOAL, Maps.SANDBOX]
+	for i in Campaign.count():
+		maps.append((Campaign.at(i) as Dictionary)["map"])
+	var grounds: Dictionary = {}
+	for m: Dictionary in maps:
+		var name := String(m["name"])
+		t.ok(Terrain.BIOMES.has(String(m.get("biome", ""))),
+			"★ %s 有地貌（%s）" % [name, m.get("biome", "?")])
+		grounds[Terrain.ground(m)] = true
+		var parts: Array = Terrain.build(m, Shapes.GRID, 1)
+		t.ok(parts.size() >= 8, "★★ %s 的地貌畫得出東西（%d 件）" % [name, parts.size()])
+		t.ok(not Terrain.build(m, 6.0, 0).is_empty(), "★ %s 的縮圖也有大件" % name)
+		var ok := Terrain.allowed_cells(m)
+		var bad := 0
+		# 不變量 ③：威脅與能量的五個 token 一個都不准出現在地上（比 RGB，不管透明度）。
+		var banned: Array[Color] = [
+			Palette.TIDE_MAGENTA, Palette.TIDE_DEEP, Palette.TIDE_BRIGHT,
+			Palette.WARN_ORANGE, Palette.ENERGY_AMBER,
+		]
+		var hot := 0
+		for part: Dictionary in parts + Terrain.build(m, 6.0, 0):
+			var pc: Color = part["col"]
+			for bc: Color in banned:
+				if absf(pc.r - bc.r) + absf(pc.g - bc.g) + absf(pc.b - bc.b) < 0.02:
+					hot += 1
+		t.eq(hot, 0, "★★ %s 的地貌沒有用到威脅或能量的顏色（品紅三階、橙、琥珀）" % name)
+		for part: Dictionary in parts:
+			for p: Vector2 in _part_samples(part):
+				var c := Vector2i(int(floor(p.x / Shapes.GRID)), int(floor(p.y / Shapes.GRID)))
+				if not ok.has(c):
+					bad += 1
+		t.eq(bad, 0, "★★ %s 的裝飾沒有一個點落在路徑、暈、礦點或核心旁（%d 點越界）" % [name, bad])
+		t.ok(_geometry_sig(parts, 1.0) == _geometry_sig(Terrain.build(m, Shapes.GRID, 1), 1.0),
+			"★ %s 的地貌是確定的（建兩次同一份）" % name)
+	t.ok(grounds.size() >= 6, "★ 十二張圖的地至少六種顏色（%d 種）" % grounds.size())
+	var biomes10: Dictionary = {}
+	for i in Campaign.count():
+		biomes10[Terrain.biome_of((Campaign.at(i) as Dictionary)["map"])] = true
+	t.ok(biomes10.size() >= 8, "★ 戰役十關用到八種地貌（%d 種）" % biomes10.size())
+	var ok_shoal := Terrain.allowed_cells(Maps.SHOAL)
+	t.ok(not ok_shoal.has(Vector2i(10, 4)), "★ 路徑格不放裝飾")
+	t.ok(not ok_shoal.has(Vector2i(10, 5)), "★ 暈（路徑外一格）不放裝飾")
+	t.ok(not ok_shoal.has(Vector2i(16, 8)), "★ 礦點不放裝飾")
+	t.ok(not ok_shoal.has(Vector2i(33, 13)), "★ 核心旁不放裝飾")
+	t.ok(ok_shoal.has(Vector2i(20, 12)), "★ 空地可以放")
+	# ★ 無盡圖是亂數：只量手作圖的話，「剛好沒碰到」會是假綠燈（不變量 ④）。
+	var e_bad := 0
+	var e_biomes: Dictionary = {}
+	for sd in range(1, 21):
+		var em: Dictionary = MapGen.generate(sd * 7919 + 13)
+		e_biomes[String(em.get("biome", ""))] = true
+		var eok := Terrain.allowed_cells(em)
+		for part: Dictionary in Terrain.build(em, Shapes.GRID, 1):
+			for p: Vector2 in _part_samples(part):
+				if not eok.has(Vector2i(int(floor(p.x / Shapes.GRID)), int(floor(p.y / Shapes.GRID)))):
+					e_bad += 1
+	t.eq(e_bad, 0, "★★ 二十張無盡圖的裝飾也沒有一個點落在路徑、暈、礦點或核心旁")
+	t.ok(e_biomes.size() >= 4, "★ 二十張無盡圖至少出現四種地貌（%d 種）" % e_biomes.size())
+	var e1: Dictionary = MapGen.generate(42)
+	t.ok(Terrain.BIOMES.has(String(e1.get("biome", ""))), "★ 無盡圖有地貌（%s）" % e1.get("biome", "?"))
+	t.eq(String(e1["biome"]), String(MapGen.generate(42)["biome"]), "★ 同種子同地貌")
+	t.ok(not Terrain.build(e1, Shapes.GRID, 1).is_empty(), "★ 無盡圖的地貌畫得出東西")
+	t.eq(Terrain.biome_of({"biome": "lava"}), Terrain.DEFAULT, "★ 對不到的地貌退回預設")
+	t.eq(Terrain.biome_of({}), Terrain.DEFAULT, "★ 沒寫地貌的圖退回預設（壓力情境圖）")
+
+
+## 一件裝飾的取樣點：多邊形取頂點與重心、折線每段取 8 點、圓取四方、弧沿途取 8 點。
+func _part_samples(part: Dictionary) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	match String(part["kind"]):
+		"fill":
+			var pts: PackedVector2Array = part["pts"]
+			var c := Vector2.ZERO
+			for v: Vector2 in pts:
+				out.append(v)
+				c += v
+			if not pts.is_empty():
+				out.append(c / float(pts.size()))
+		"line":
+			var lpts: PackedVector2Array = part["pts"]
+			for i in range(1, lpts.size()):
+				for k in 9:
+					out.append(lpts[i - 1].lerp(lpts[i], float(k) / 8.0))
+		"disc":
+			var dc: Vector2 = part["c"]
+			var dr := float(part["r"])
+			for d: Vector2 in [Vector2.RIGHT, Vector2.DOWN, Vector2.LEFT, Vector2.UP]:
+				out.append(dc + d * dr)
+		"arc":
+			var ac: Vector2 = part["c"]
+			var ar := float(part["r"])
+			var a0 := float(part["a0"])
+			var a1 := float(part["a1"])
+			for k in 9:
+				var a := lerpf(a0, a1, float(k) / 8.0)
+				out.append(ac + Vector2(cos(a), sin(a)) * ar)
+		_:
+			pass
 	return out

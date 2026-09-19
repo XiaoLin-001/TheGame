@@ -135,6 +135,10 @@ static func generate(s: int) -> Dictionary:
 		"waves": [],
 		"endless": true,
 		"seed": s,
+		# ★ 地貌（B3.13）：種子的整數函式，**不碰上面那條亂數流**——多抽一次
+		#   每一張既有的無盡圖都會變（`endless_test` 釘著 seed 42 的幾何）。
+		#   亂潮不進池——它是第 9 關的臉。
+		"biome": ["shoal", "reef", "slag", "moss", "shell", "current", "trench"][absi(s) % 7],
 		"start_ore": START_ORE,
 		"prep_time": PREP,
 		"crossings": _crossings(rng, path),

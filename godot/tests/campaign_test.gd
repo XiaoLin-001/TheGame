@@ -198,14 +198,22 @@ func _unlock_ladder(t: RefCounted) -> void:
 ## 這裡守的是「沒有人偷偷加了一個係數」——關卡字典裡除了那幾個
 ## 玩家看得見的鍵之外，不准出現別的。
 func _no_hidden_multiplier(t: RefCounted) -> void:
+	# ★ `biome`（B3.13）是**畫面**：地的顏色與裝飾（`render/Terrain.gd`）。它是玩家
+	#   看得最清楚的一個鍵，所以不「隱藏」；它上白名單的條件是**模擬一個字都不讀它**
+	#   ——下面換一種地貌重跑第 1 關的參考解，結果必須逐字相同。
 	var allowed := [
 		"id", "name", "size", "core", "waypoints",
-		"start_ore", "prep_time", "crossings", "ore", "waves",
+		"start_ore", "prep_time", "crossings", "ore", "waves", "biome",
 	]
 	for i in Campaign.count():
 		var m: Dictionary = (Campaign.at(i) as Dictionary)["map"]
 		for k: String in m.keys():
 			t.ok(allowed.has(k), "第 %d 關的地圖沒有隱藏參數（發現 `%s`）" % [i + 1, k])
+	var lv: Dictionary = (Campaign.at(0) as Dictionary).duplicate(true)
+	var before := _play(lv)
+	(lv["map"] as Dictionary)["biome"] = "slag"
+	var after := _play(lv)
+	t.eq(str(after), str(before), "★★ 換一種地貌，第 1 關參考解的結果逐字相同（模擬不讀 biome）")
 
 
 # ── ★ 參考解實跑 ──────────────────────────────────────────────────────

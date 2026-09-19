@@ -55,6 +55,26 @@ const TEXT_PRIMARY := Color("#e8f1f5")
 const TEXT_SECONDARY := Color("#8ba3b0")
 const TEXT_DISABLED := Color("#4a5f6b")
 
+# ── 地貌（★ B3.13，`20_ART_DIRECTION.md` §1.6c）──
+# 每張圖的「地」。**全部是 bg.panel 的鄰居**：明度同一階、彩度極低，差別只在色相偏向
+# ——地是底噪，不可以比玩家的線亮。岩與苔是僅有的兩個地貌 token：岩是 border.strong
+# 的暗階，苔比 ok.green 暗一倍（苔是紋理不是狀態，兩者在畫面上不會被認成同一件事）。
+const GROUND_SHOAL := Color("#10202e")    ## ＝ bg.panel：第一幕的地
+const GROUND_REEF := Color("#0d1a29")
+const GROUND_SLAG := Color("#171a1f")
+const GROUND_MOSS := Color("#0f211f")
+const GROUND_SHELL := Color("#12192a")
+const GROUND_CURRENT := Color("#0c1f31")
+## 海溝：比其他地都偏靛、暗半階。**不能暗到 bg.deep**——那是地圖外面的顏色，
+## 地一旦和它同色，地圖的邊界就消失了。
+const GROUND_TRENCH := Color("#0e1930")
+const ROCK := Color("#243a4d")
+const MOSS := Color("#2f6b55")
+## ★ 殼（B3.13 看圖之後加）。第一版用 `tide.deep` 三成——理由是「殼是潮留下的」，
+## 而截圖上那是**一地的粉紅點，就在真的敵人旁邊**。§1.1 的紀律沒有例外：品紅只給威脅。
+## 改成偏暖的灰：看得出是另一種東西，但不在任何資訊通道上。
+const SHELL := Color("#4f4a5c")
+
 
 ## 導管顏色：青 →（連續）→ 亮青，飢餓為暗青。
 ## 這是「線的顏色＝飽和度」這條資訊視覺化規則的唯一實作（§1.4、R-3）。
@@ -109,6 +129,25 @@ static func shadow() -> Color:
 ## 敵人受擊那一瞬的本體色：品紅往亮階推。仍在品紅色相內，不動用橙（§1.7）。
 static func tide_hit() -> Color:
 	return TIDE_MAGENTA.lerp(TIDE_BRIGHT, 0.7)
+
+
+## 地貌 → 地的顏色（§1.6c）。對不到的一律淺灘。
+static func ground(biome: String) -> Color:
+	match biome:
+		"reef":
+			return GROUND_REEF
+		"slag":
+			return GROUND_SLAG
+		"moss":
+			return GROUND_MOSS
+		"shell":
+			return GROUND_SHELL
+		"current", "riptide":
+			return GROUND_CURRENT
+		"trench":
+			return GROUND_TRENCH
+		_:
+			return GROUND_SHOAL
 
 
 # ── `modulate` 用的乘數 ─────────────────────────────────────────────

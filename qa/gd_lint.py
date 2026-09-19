@@ -11,6 +11,8 @@
   4. 同一支函式的 `match` 各分支共享作用域：**兩個分支各宣告同名的 `var` 是 parse error**
   5. 括號／方括號／大括號逐檔平衡
   6. 縮排用空白（本專案一律 tab）
+  7. 字串裡的 `\u0000`／`\x00`（GDScript 把它讀成 NUL，匯入時每次噴
+     「Unicode parsing error: Unexpected NUL character」，B3.13 踩到）
 
 它抓不到型別錯誤——那要 Godot。但這六條每一條本專案都至少踩過一次。
 """
@@ -69,6 +71,12 @@ def scan(path):
         # `rng.randf()`（注入的 seeded RandomNumberGenerator）是合法的——只抓**全域**函式。
         if rel.startswith('scripts/sim/') and re.search(r'(?<![\w.])(randf|randi|randfn|randi_range|randf_range)\(|Time\.get_ticks', code):
             problems.append('%s:%d sim 層用了系統 RNG／時間' % (rel, no))
+        # 7b. 真的 NUL 字元（寫檔工具把跳脫字面量轉成了 NUL，B3.13 踩到）
+        if chr(0) in raw:
+            problems.append('%s:%d 有一個真的 NUL 字元' % (rel, no))
+        # 7. 字串裡的 NUL 跳脫
+        if re.search(r'\\u0000|\\x00', code):
+            problems.append('%s:%d 字串裡有 NUL 跳脫（`\\u0000`／`\\x00`）' % (rel, no))
         # 5. 括號平衡
         in_str, q = False, ''
         for ch in code:

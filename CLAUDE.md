@@ -110,7 +110,7 @@ TL_STRESS=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 cd godot && python ../qa/copy_extract.py && python ../qa/copy_tells.py
 
 # ★ 靜態地雷掃描（B3.11）。**不需要 Godot**：Color 字面量／泛型 lerp／sim 層系統 RNG／
-# match 分支同名 var／括號平衡／空白縮排。0 條才算過；它抓不到型別錯誤——那要 Godot。
+# match 分支同名 var／括號平衡／空白縮排／NUL（B3.13）。0 條才算過；它抓不到型別錯誤——那要 Godot。
 python qa/gd_lint.py
 
 # 截圖驗證（自動靜音、約 3 秒後存圖並退出）
@@ -259,7 +259,7 @@ TheGame/
     │                          Loadout（局外成長進局的唯一入口）——純函式、零 RNG
     ├── scripts/game/          BattleController / BuildController / SessionState
     ├── scripts/screens/       各畫面
-    ├── scripts/render/        Palette / Shapes / Motion / Glyphs / Foes（美術 token 實作；Glyphs＝節點幾何＋體積語言、Foes＝敵人幾何，由欄位推導）
+    ├── scripts/render/        Palette / Shapes / Motion / Glyphs / Foes / Terrain（美術 token 實作；Glyphs＝節點幾何＋體積語言、Foes＝敵人幾何，由欄位推導、Terrain＝每張圖的地貌）
     ├── scripts/ui/            UiKit
     ├── scripts/meta/          TycoonSim（純函式的**狀態機**）
     ├── data/                  節點、角色、敵人、地圖、戰役、科技、等級軸、成就、**難度層**資料表

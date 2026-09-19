@@ -27,6 +27,7 @@ const Difficulty := preload("res://data/Difficulty.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const Glyphs := preload("res://scripts/render/Glyphs.gd")
 const Foes := preload("res://scripts/render/Foes.gd")
+const Terrain := preload("res://scripts/render/Terrain.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
 
 ## ★ 開打漣漪的壽命（秒，B3.11）。號令音 `wave_start` 有 1.7 秒，漣漪比它短——
@@ -317,6 +318,13 @@ var _threat: Dictionary = {}
 var _enemy_cells: Array = []
 var _enemy_index: Dictionary = {}
 var _hit_ids: Dictionary = {}
+## ★ 地貌（B3.13）。**畫在自己的一層**（`show_behind_parent` 的 Node2D），只在換圖時
+## 重畫一次；之後每幀只改那一層的位置與縮放。十二張手作圖一張是 300–900 件，
+## 64×40 的無盡圖上千件——每幀從 GDScript 重發一次 draw call，就是在 RG-8
+## （渲染 23 FPS）那一筆帳上再加一筆。零件本身是純函式（`Terrain.build()`）。
+var _terrain_layer: Node2D = null
+var _terrain_parts: Array = []
+var _terrain_id: String = "<none>"
 ## ★ 本幀「畫不出圖形」的節點類型（B2.4.6）。`_draw_nodes()` 的 match 每漏一種
 ## 就往這裡記一筆，`TL_CLICKTEST` 拿它當斷言。**這不是防禦性程式碼，是一支感測器**
 ## ——漏掉一種的後果是那座塔在地圖上完全隱形（蓋得下去、會開火、會吃電、會被
@@ -341,6 +349,11 @@ func _ready() -> void:
 	# 只有這張圖上有**——淺灘的示範佈局沒有熔爐，所以第三種資源的視覺編碼
 	# 在任何既有截圖裡都不會出現，而沒被看過的編碼不算通過 R-3。
 	_setup_session()
+	# 地貌層要是**第一個**子節點，而且畫在本體之後面：網格、路徑、節點、遮罩全在它上面。
+	_terrain_layer = Node2D.new()
+	_terrain_layer.show_behind_parent = true
+	_terrain_layer.draw.connect(_paint_terrain)
+	add_child(_terrain_layer)
 	_build_ui()
 	# 截圖驗證要看得到「流動中的網路」，空地圖證明不了任何事——
 	# **除了首次體驗**（`50_QA_PLAN.md` §4.4），那正好要看玩家真正的第一眼，
@@ -2050,7 +2063,9 @@ func _draw() -> void:
 	#   縮放要是滲進 9 支繪圖函式裡，每加一種圖形就要記得乘一次倍率。
 	#   文字不受影響：`_draw()` 裡沒有任何 `draw_string`，HUD 全是 Control 子節點。
 	draw_set_transform(_map_origin(), 0.0, Vector2(_zoom, _zoom))
-	draw_rect(rect, Palette.BG_PANEL)
+	# ★ 地貌（B3.13，§1.6c）：每張圖自己的地 ＋ 靜態裝飾，畫在網格線**之下**。
+	#   本體只負責把那一層對到同一個視野；換圖才重建零件、重畫那一層。
+	_sync_terrain()
 
 	# 網格只畫在地圖範圍內：畫到浮層底下會讓「哪裡可以蓋」變得曖昧。
 	Shapes.draw_grid(self, rect)
@@ -2495,6 +2510,26 @@ func _draw_path() -> void:
 	_draw_incoming()
 	for c: Vector2i in s.map.get("crossings", []):
 		_draw_crossing(c)
+
+
+## 地貌層跟著視野走；換圖（地圖 id 變了）才重建零件並重畫那一層。
+func _sync_terrain() -> void:
+	if _terrain_layer == null:
+		return
+	_terrain_layer.position = _map_origin()
+	_terrain_layer.scale = Vector2(_zoom, _zoom)
+	var map_id := String(s.map.get("id", ""))
+	if map_id != _terrain_id:
+		_terrain_id = map_id
+		_terrain_parts = Terrain.build(s.map, Shapes.GRID, 1)
+		_terrain_layer.queue_redraw()
+
+
+## 地貌層的 `draw`：地的底色 ＋ 裝飾（地圖座標，縮放由那一層自己的 transform 帶）。
+func _paint_terrain() -> void:
+	var size: Vector2i = s.map["size"]
+	_terrain_layer.draw_rect(Rect2(Vector2.ZERO, Vector2(size) * Shapes.GRID), Terrain.ground(s.map))
+	Terrain.paint(_terrain_layer, _terrain_parts)
 
 
 ## 路徑外一格（Chebyshev 距離 1），**不含路徑本身**。回傳的是**集合**不是陣列。

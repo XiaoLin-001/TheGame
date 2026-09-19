@@ -419,7 +419,10 @@ class MapView extends Control:
 			return
 		var sz: Vector2i = map.get("size", Vector2i(36, 19))
 		var k: float = size.x / float(maxi(sz.x, 1))
-		draw_rect(Rect2(Vector2.ZERO, size), Palette.BG_DEEP)
+		# ★ 地貌（B3.13）：縮圖的地是主畫面那一種再壓暗三成（卡片本身是 bg.panel），
+		#   只畫大件（`detail = 0`）——6px 的格上細線只是噪點。
+		draw_rect(Rect2(Vector2.ZERO, size), Terrain.ground(map).darkened(0.3))
+		Terrain.paint(self, Terrain.build(map, k, 0))
 		var path: Array = MapsData.path_of(map)
 		var pset: Dictionary = {}
 		for c: Vector2i in path:

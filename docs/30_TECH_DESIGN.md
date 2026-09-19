@@ -72,7 +72,7 @@ TheGame/
     │   ├── sim/          ★     FlowNetwork.gd / Combat.gd / WaveGen.gd / MapGen.gd / Score.gd
     │   ├── game/               BattleController.gd / BuildController.gd / SessionState.gd
     │   ├── screens/            Title / MainMenu / Battle / Result / TechTree / Roster / Tycoon / Settings
-    │   ├── render/             Palette.gd / Shapes.gd / Motion.gd / Glyphs.gd / Foes.gd（美術 token 實作；Glyphs＝節點幾何的純函式＋體積語言）
+    │   ├── render/             Palette.gd / Shapes.gd / Motion.gd / Glyphs.gd / Foes.gd / Terrain.gd（美術 token 實作；Glyphs＝節點幾何的純函式＋體積語言、Terrain＝地貌，畫在快取的一層）
     │   ├── ui/                 UiKit.gd（共用 UI helpers，static）
     │   └── meta/               TechTree.gd / RosterData.gd / TycoonSim.gd
     ├── data/                   角色、敵人、關卡、訂單的資料表（.json 或 .tres）

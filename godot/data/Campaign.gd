@@ -47,6 +47,7 @@ const L5_BUILD := [
 const L1 := {
 	"id": "tidemouth",
 	"name": "潮口",
+	"biome": "shoal",
 	"size": Vector2i(20, 12),
 	"core": Vector2i(18, 7),
 	"waypoints": [Vector2i(0, 2), Vector2i(14, 2), Vector2i(14, 7), Vector2i(18, 7)],
@@ -94,6 +95,7 @@ const L1_DEMO := [
 const L2 := {
 	"id": "twinbay",
 	"name": "雙灣",
+	"biome": "shoal",
 	"size": Vector2i(26, 15),
 	"core": Vector2i(23, 10),
 	"waypoints": [Vector2i(0, 2), Vector2i(20, 2), Vector2i(20, 10), Vector2i(23, 10)],
@@ -159,6 +161,7 @@ const L2_DEMO := [
 const L3 := {
 	"id": "narrows",
 	"name": "窄橋",
+	"biome": "reef",
 	"size": Vector2i(28, 17),
 	"core": Vector2i(25, 12),
 	"waypoints": [Vector2i(0, 4), Vector2i(22, 4), Vector2i(22, 12), Vector2i(25, 12)],
@@ -230,6 +233,7 @@ const L3_DEMO := [
 const L4 := {
 	"id": "slagbay",
 	"name": "熔渣灣",
+	"biome": "slag",
 	"size": Vector2i(30, 18),
 	"core": Vector2i(27, 13),
 	"waypoints": [Vector2i(0, 4), Vector2i(24, 4), Vector2i(24, 13), Vector2i(27, 13)],
@@ -326,6 +330,7 @@ const L4_DEMO := [
 const L5 := {
 	"id": "tidethroat",
 	"name": "潮汐之喉",
+	"biome": "trench",
 	"size": Vector2i(34, 18),
 	# ★ B1.6.1：核心從 (31,15) 上移到 (31,14)。理由是**流量網路的一條硬語意**：
 	# 節點會先吃滿自己的需求才轉發，所以**把塔擺在幹線的接點上，會餓死它下游
@@ -462,6 +467,7 @@ const ACT2_BUILD := L5_BUILD
 const L6 := {
 	"id": "mossflat",
 	"name": "苔灘",
+	"biome": "moss",
 	"size": Vector2i(30, 16),
 	"core": Vector2i(27, 12),
 	"waypoints": [Vector2i(0, 3), Vector2i(24, 3), Vector2i(24, 12), Vector2i(27, 12)],
@@ -571,6 +577,7 @@ const L6_DEMO := [
 const L7 := {
 	"id": "backwash",
 	"name": "逆流",
+	"biome": "current",
 	"size": Vector2i(32, 17),
 	"core": Vector2i(29, 13),
 	"waypoints": [Vector2i(0, 3), Vector2i(26, 3), Vector2i(26, 13), Vector2i(29, 13)],
@@ -679,6 +686,7 @@ const L7_DEMO := [
 const L8 := {
 	"id": "shellfield",
 	"name": "殼場",
+	"biome": "shell",
 	"size": Vector2i(34, 17),
 	"core": Vector2i(31, 13),
 	"waypoints": [Vector2i(0, 3), Vector2i(28, 3), Vector2i(28, 13), Vector2i(31, 13)],
@@ -780,6 +788,7 @@ const L8_DEMO := [
 const L9 := {
 	"id": "riptide",
 	"name": "亂潮",
+	"biome": "riptide",
 	"size": Vector2i(36, 18),
 	"core": Vector2i(33, 14),
 	"waypoints": [Vector2i(0, 4), Vector2i(30, 4), Vector2i(30, 14), Vector2i(33, 14)],
@@ -876,6 +885,7 @@ const L9_DEMO := [
 const L10 := {
 	"id": "deepthroat",
 	"name": "深喉",
+	"biome": "trench",
 	"size": Vector2i(38, 19),
 	"core": Vector2i(35, 15),
 	"waypoints": [Vector2i(0, 4), Vector2i(32, 4), Vector2i(32, 15), Vector2i(35, 15)],

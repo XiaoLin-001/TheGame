@@ -18,6 +18,7 @@ const Enemies := preload("res://data/Enemies.gd")
 const SHOAL := {
 	"id": "shoal",
 	"name": "淺灘",
+	"biome": "shoal",
 	"size": Vector2i(36, 19),
 	"core": Vector2i(34, 14),
 	# 轉折點，最後一點必為核心。展開規則見 `path_of()`。
@@ -126,6 +127,7 @@ const SHOAL_DEMO := [
 const SANDBOX := {
 	"id": "sandbox",
 	"name": "靜水",
+	"biome": "shoal",
 	"size": Vector2i(20, 16),
 	"core": Vector2i(10, 10),
 	"start_ore": 9999,
