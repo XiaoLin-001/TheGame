@@ -8,6 +8,7 @@ extends SceneTree
 
 const T := preload("res://tests/_assert.gd")
 const Save := preload("res://scripts/core/SaveService.gd")
+const Progress := preload("res://scripts/meta/Progress.gd")
 const Difficulty := preload("res://data/Difficulty.gd")
 
 
@@ -190,7 +191,7 @@ func _hostile_saves(t: RefCounted) -> void:
 		t.ok(d["blueprints"] is Array, "%s：blueprints 修回陣列" % name)
 		t.eq(d["sv"], Save.SAVE_VERSION, "%s：仍然跑得完遷移鏈" % name)
 		# 局外層的每一支查詢都問得出一個數字（這才是「不會炸」的可觀察形式）。
-		t.ok(Save.components(d) >= 0, "%s：材料餘額算得出來" % name)
+		t.ok(Progress.components(d) >= 0, "%s：材料餘額算得出來" % name)
 		t.ok(Difficulty.unlocked(d) >= 0, "%s：難度層解鎖算得出來" % name)
 
 	# ★ 遷移**真的跑完了**，不是「中途炸掉但 sv 被蓋成 3」。

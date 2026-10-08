@@ -27,6 +27,7 @@ const Daily := preload("res://scripts/sim/Daily.gd")
 const Loadout := preload("res://scripts/sim/Loadout.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
+const Progress := preload("res://scripts/meta/Progress.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
@@ -159,9 +160,9 @@ func _unlock_ladder(t: T) -> void:
 	t.ok(Difficulty.why_locked(save, 2).contains("波"), "第 2 層說得出要撐幾波")
 
 	# 差一波不開。
-	SaveService.apply_endless(save, Difficulty.UNLOCK_WAVE - 1, 1.0, 1)
+	Progress.apply_endless(save, Difficulty.UNLOCK_WAVE - 1, 1.0, 1)
 	t.eq(Difficulty.unlocked(save), 1, "★ 差一波就還不開")
-	SaveService.apply_endless(save, Difficulty.UNLOCK_WAVE, 1.0, 1)
+	Progress.apply_endless(save, Difficulty.UNLOCK_WAVE, 1.0, 1)
 	t.eq(Difficulty.unlocked(save), 2, "★ 在第 1 層撐過門檻 → 第 2 層")
 
 	# ★ 跳級：第 2 層的紀錄補不了第 1 層的空缺。
@@ -169,7 +170,7 @@ func _unlock_ladder(t: T) -> void:
 	var st: Dictionary = (skipper["campaign"] as Dictionary)["stars"]
 	for id: String in ids:
 		st[id] = 3
-	SaveService.apply_endless(skipper, 99, 9.0, 2)
+	Progress.apply_endless(skipper, 99, 9.0, 2)
 	t.eq(Difficulty.unlocked(skipper), 1, "★★ 階梯跳不過去（第 2 層的紀錄開不了第 3 層）")
 
 	# 越界一律夾回來——存檔裡出現一個 7 不該變成一局沒有任何倍率的遊戲。
@@ -182,15 +183,15 @@ func _unlock_ladder(t: T) -> void:
 func _records_are_per_tier(t: T) -> void:
 	var save := _fresh()
 	t.eq(int(Difficulty.best(save, 0)["wave"]), 0, "新存檔沒有紀錄")
-	SaveService.apply_endless(save, 20, 5.0, 0)
-	SaveService.apply_endless(save, 8, 2.0, 3)
+	Progress.apply_endless(save, 20, 5.0, 0)
+	Progress.apply_endless(save, 8, 2.0, 3)
 	t.eq(int(Difficulty.best(save, 0)["wave"]), 20, "第 0 層記著 20 波")
 	t.eq(int(Difficulty.best(save, 3)["wave"]), 8, "★ 第 3 層的 8 波沒有被第 0 層的 20 波洗掉")
 	# 反向：低分不會蓋掉同一層的高分。
-	SaveService.apply_endless(save, 5, 1.0, 0)
+	Progress.apply_endless(save, 5, 1.0, 0)
 	t.eq(int(Difficulty.best(save, 0)["wave"]), 20, "同一層之內仍然只增不減")
 	# 兩欄各自取最大值（`apply_endless` 從 B2.1a 起的規則，難度層不該改掉它）。
-	var fresh := SaveService.apply_endless(save, 5, 9.9, 0)
+	var fresh := Progress.apply_endless(save, 5, 9.9, 0)
 	t.ok(not bool(fresh["wave"]) and bool(fresh["output"]),
 		"★ 波次與產能各自比較（一局「波次 −15、產能新高」仍然記得住產能）")
 

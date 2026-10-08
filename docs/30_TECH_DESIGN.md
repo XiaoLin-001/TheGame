@@ -70,11 +70,13 @@ TheGame/
     ├── scripts/
     │   ├── core/               GameState.gd / SaveService.gd / Hooks.gd / AudioBus.gd / Rng.gd
     │   ├── sim/          ★     FlowNetwork.gd / Combat.gd / WaveGen.gd / MapGen.gd / Score.gd
-    │   ├── game/               BattleController.gd / BuildController.gd / SessionState.gd
-    │   ├── screens/            Title / MainMenu / Battle / Result / TechTree / Roster / Tycoon / Settings
+    │   ├── game/         ★     核心玩法（無畫面、無 autoload）：SessionState / BattleController / BuildController /
+    │   │                       RunSetup / RunLoop / RunSettlement / RunDiagnosis / HintRules / Readout（見 §2.6）
+    │   ├── screens/            各畫面 + 局內畫面的元件（Battle.gd 是組裝根，BattleXxx.gd 是元件，見 §2.6）；
+    │   │                       每個畫面的自檢是同資料夾的 FooSelftest.gd（開發用，Hooks.run_selftest 以路徑載入）
     │   ├── render/             Palette.gd / Shapes.gd / Motion.gd / Glyphs.gd / Foes.gd / Terrain.gd（美術 token 實作；Glyphs＝節點幾何的純函式＋體積語言、Terrain＝地貌，畫在快取的一層）
     │   ├── ui/                 UiKit.gd（共用 UI helpers，static）
-    │   └── meta/               TechTree.gd / RosterData.gd / TycoonSim.gd
+    │   └── meta/               TycoonSim.gd（潮汐公司狀態機）/ Progress.gd（局外進度對存檔字典的狀態轉移）
     ├── data/                   角色、敵人、關卡、訂單的資料表（.json 或 .tres）
     ├── tests/                  flow_test.gd / build_test.gd / tide_test.gd / combat_test.gd / save_test.gd / determinism_test.gd
     └── assets/audio/
@@ -178,6 +180,60 @@ TheGame/
 **為什麼不做實體物品搬運**：Factorio 式的物品實體模擬複雜度是 `O(物品數)`（可達數萬），效能與確定性都會成為長期負債，且不符極簡幾何美術。流量模型在**視覺上更清楚**（線的粗細直接表達吞吐）、在**玩法上更聚焦於拓樸與取捨**，這正是本作要的。
 
 ---
+
+### 2.6 核心玩法層與呈現層的邊界（B3.14，為 2D → 3D 預備）
+
+> **為什麼有這一節**：專案預定從 2D 轉成 3D。轉換只該動「呈現」，不該動「玩法」。
+> B3.14 之前這條線是糊的——`screens/Battle.gd` 5316 行同時是相機、輸入、繪圖、HUD、
+> 開局、結算、提示規則與自檢。拆完之後界線如下；**換 3D 時照這張表動手。**
+
+**核心玩法（不知道畫面存在）**——`data/` ＋ `sim/` ＋ `game/` ＋ `meta/`
+
+| 模組 | 職責 |
+|---|---|
+| `game/SessionState` | 一局的狀態與查詢（沒有規則）；`state_hash()` 是確定性的證據 |
+| `game/RunSetup` | **開局**：`spec`（關卡／無盡／每日／測試圖）＋ 存檔 → 設定好的 `SessionState` |
+| `game/RunLoop` | **固定時間步**：`advance(s, accum, delta)`；快進＝多跑 tick，戰鬥期不可加速 |
+| `game/BattleController` | 每 tick 的推進（解算三條資源網、戰鬥、波次、階段機） |
+| `game/BuildController` | 玩家的指令（放置／連線／升級／拆除／藍圖）。回傳原因碼，不碰畫面 |
+| `game/RunSettlement` | **結算**：成績、星等、紀錄、升級材料；只改傳入的存檔字典，不做 IO |
+| `game/RunDiagnosis` | 死因歸因（從逐 tick 差值累計） |
+| `game/HintRules` | 「下一步」與「這條線連不連得成」 |
+| `game/Readout` | 狀態 → 玩家讀得到的數字與句子（階段字串、能量收支各列、檢視面板內容、圖鑑）。顏色只回**語意**（`"energy"`／`"warn"`／`"ok"`） |
+| `meta/Progress` | 局外進度對存檔字典的狀態轉移（星數、無盡／每日紀錄、藍圖、招募、升級材料、等級軸） |
+
+**鐵律**：這一層不得引用 autoload（`GameState`／`SaveService`／`Hooks`／`AudioBus`）、不得引用
+`Control`／`Node`／`Palette`／`Hooks`／系統時鐘與系統 RNG。存檔以**參數**傳入；測試鉤子在畫面層才翻成
+`spec`（例：`Battle.run_spec()` 把 `Hooks.stress` 翻成 `"stress": true`）。
+**證據**：`tests/run_test.gd`——不開視窗、不碰任何 `Control`，靠這幾個模組開局、推進、建造、打完第 1 關、
+結算；同 `spec` ＋ 同存檔 ＝ 同一局（雜湊相等）、30fps 與 144fps 走到同一個局面、測試圖結算不動存檔。
+
+**呈現（局內畫面 `screens/Battle*.gd`）**——`Battle.gd` 是組裝根，其餘是元件
+
+| 元件（handle） | 3D 版的處置 |
+|---|---|
+| `BattleCamera`（`cam`） | **取代**。2D 的視野框架／fit／縮放／平移與「螢幕 ↔ 格」換算。3D 相機要提供同一組語意：`cell_at(螢幕位置)`、`point_at(螢幕位置)`（格為單位的浮點座標，命中導管用）、`to_screen(世界座標)`、`center(格)`、`in_map(格)`、`view_world_rect()`、`center_view_on(格)` |
+| `BattleDrawGround`／`Network`／`Fight`／`Overlay`（`ground`／`network`／`fight`／`overlay`） | **取代**。唯讀地從 `s` 與「本幀推導」（見下）畫出地面、產線、戰鬥、互動層 |
+| `BattleGuide`（`guide`） | 取代或重想。小地圖與邊緣箭頭是為「地圖大過一屏」設計的 |
+| `BattleInput`（`inp`） | **改一處**：把滑鼠位置換成格的那一步走相機；其後（點擊／拖曳拉線／框選）的語意與 `BuildController` 呼叫不變 |
+| `BattleTopbar`／`Bars`／`Prio`／`Help`／`Energy`／`Codex`／`Bp`／`Inspect`／`Hint`／`Menu`／`Result` | **多半沿用**。它們是 2D 疊層（`Control`），內容來自 `Readout`／`HintRules`／`RunSettlement`；3D 場景上照樣蓋這一層 |
+| `BattleAudioCues`（`cues`） | **原封沿用**。音效從狀態的逐幀差值推導，與畫面是平面還是立體無關 |
+| `BattleSelftest`／`BattleStress`／`BattleDemo` | 開發用。自檢（`TL_CLICKTEST`）驗的是 2D 輸入路徑，3D 版要重寫一份 |
+
+**本幀推導**（`Battle._draw()` 開頭用 `Combat` 的純函式算出，繪圖元件讀）：`engaged`（誰在交戰）、`auras`、
+`threat`（誰正被啃）、`enemy_cells`、`enemy_index`、`hit_ids`。3D 版要在自己的繪圖入口算同一份。
+
+**元件慣例**（`qa/gd_members.py` 守著）
+- `class_name BattleXxx extends RefCounted`，以 `var battle: BattleScreen` 回指組裝根；`Battle._init()` 建立全部元件。
+- **狀態歸擁有者**（相機的 `zoom`／`pan` 在 `cam`、小地圖計時在 `guide`）；對外公開的成員**不帶底線**。
+  `Battle.gd` 自己持有的是整局共用的互動狀態（`mode`／`build_type`／`selected`／`hover`／`message` …）。
+- ⚠ GDScript 對「已知型別上不存在的成員」**載入時不報錯**，執行到那一行才炸。`python qa/gd_members.py`
+  把每個 `battle.X`／`battle.handle.Y`／`BattleXxx.Z` 對回真實宣告，0 條才算過。
+- 開發用元件不取 `class_name`，由 `Hooks.run_selftest(screen)`（自檢）或 `Battle._dev(名稱)` 以路徑載入；
+  正式流程的程式碼不靠它們。**它們仍打包進 exe**——exe 上唯一還在的驗證就是 clicktest（見 `CLAUDE.md`）。
+
+**B3.14 刻意沒做的**：`BattleController`（761 行）內部仍是一支；互動狀態仍在 `Battle.gd`；HUD 面板仍用絕對像素座標
+（`FRAME`、各面板的 `position`）；`Hooks._run_sim`／`_run_shot` 仍在 `core/`。這些不擋 3D 轉換，但會是下一輪的候選。
 
 ## 3. 存檔設計
 
@@ -284,6 +340,7 @@ TL_SHOT="C:/tmp/shot.png" TL_PANEL=battle TL_SEED=42 <godot> --path godot --rend
 | `tests/tech_test.gd` | 科技成本表、前置鏈、B2 增幅上限，★ **每一種效果都在跑過的 tick 上量到差異** |
 | `tests/audio_test.gd` | ★ 音源的設計條件：檔案齊（開火音清單由 `NodeDefs` 推導）、三首 BGM 同幀數、**循環接點的跳幅不得大於鄰近取樣步幅的 4 倍**、格式統一 PCM 16-bit 單聲道、不削頂不靜音 |
 | `tests/campaign_test.gd` | 五關參考解 headless 實跑必勝、可讀性地板、星等門檻 |
+| `tests/run_test.gd` | ★ **核心玩法層的 headless 合約**（B3.14）：`RunSetup` 與手動 setup 同一局、`RunLoop` 的固定步長與快進、不開視窗打完第 1 關並結算、結算只改傳入的字典、`RunDiagnosis`／`HintRules`／`Readout` |
 | `tests/endless_test.gd` | 程序生成的五條不變量掃 300 個種子（含「至少 3 個礦點不必過橋」）、無限波次公式、個人最佳的存檔往返 |
 | **`TL_SIM` 本身** | 平衡調校就走它——跑標準關卡 N 個 tick，輸出經濟曲線 JSON 供人工核對。B0.1 建的 `tests/balance_probe.gd` 只是這件事的空殼（斷言 JSON 能往返），B1.1 刪掉；真的需要多場次批跑時再寫 |
 

@@ -8,8 +8,9 @@ extends Control
 ##
 ## 已解鎖的節點**留在畫面上並標成已解鎖**，不隱藏——科技樹同時是路線圖。
 
-const Tech := preload("res://data/Tech.gd")
 const Levels := preload("res://data/Levels.gd")
+const Progress := preload("res://scripts/meta/Progress.gd")
+const Tech := preload("res://data/Tech.gd")
 
 const CARD := Vector2(300, 116)
 
@@ -32,7 +33,7 @@ func _ready() -> void:
 	# ★ `and Hooks.panel == "tech"`（B1.9）：本畫面同時掛得到標題與關卡選擇兩處，
 	#   只有「它自己是受測對象」時才該跑自己的自檢（`Settings` 的同一條）。
 	if Hooks.click_test and Hooks.panel == "tech":
-		_click_selftest.call_deferred()
+		Hooks.run_selftest(self)
 
 
 ## ESC ＝ 返回上一層（B1.4.1）。
@@ -40,90 +41,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	UiKit.esc_returns(self, event, on_exit)
 
 
-## ★ 輸入層自檢（`TL_CLICKTEST=1 TL_PANEL=tech`）。
-##
-## 和關卡選擇同一個理由：這個畫面的全部價值就是「一顆鈕點得到、而且真的扣款」。
-## 存檔在有鉤子時是預設值（研究數據 0），所以先塞一筆數據進去再點——
-## **不寫檔**（`SaveService.persist=false`），玩家的真實進度碰不到。
-func _click_selftest() -> void:
-	await get_tree().process_frame
-	await get_tree().process_frame
-	var twelve: bool = _buttons.size() == Tech.count()
-	# 新存檔：研究數據 0 → 每一顆都買不起；第二階還要前置。
-	var all_broke: bool = twelve and _buttons[0].disabled
-	# ★ 等級軸（B2.7）也一樣：零材料 → 兩顆都是關的。
-	#
-	# ⚠ **這一條要在買科技之前量。** 第一版放在後面，量到的是 `disabled=false`
-	#   ——因為買下 `cap1` 當場達成了成就「第一項科技」，15 材料立刻進帳。
-	#   斷言是錯的，程式是對的：那正是「成就沒有領取鈕」該有的樣子。
-	var broke_levels: bool = _level_buttons.size() == 2 and _level_buttons[0].disabled
-
-	var tech: Dictionary = GameState.data["tech"]
-	tech["data"] = 500.0
-	_build()
-	await get_tree().process_frame
-	var first_open: bool = _buttons[0].text.contains("解鎖")and not _buttons[0].disabled
-	# 第二階（cap2）在第一階還沒買之前必須是鎖著的，而且要說出原因。
-	var tier2_locked: bool = _buttons[1].disabled and _buttons[1].text.contains("導管擴容 I")
-
-	await UiKit.click(_buttons[0])
-	var unlocked: Array = tech["unlocked"]
-	var bought: bool = unlocked.has("cap1")
-	var charged: bool = is_equal_approx(float(tech["data"]), 500.0 - float(Tech.cost("cap1")))
-	# 買完第一階，第二階就該開了——路線圖要當場往前走一格。
-	var tier2_open: bool = not _buttons[1].disabled
-
-	# ★ **最後一顆鈕到得了嗎**（RG-47／RG-60）。捲到底之後它必須整顆在畫面內——
-	#   第一版沒有捲動容器，最長那一支的第 5 張卡直接被推到 720 以外，
-	#   而畫面上看起來只是「這一欄比較短」。
-	_scroll.scroll_vertical = 999999
-	await get_tree().process_frame
-	var last: Button = _buttons[_buttons.size() - 1]
-	var reachable: bool = (
-		last.size.y >= 44.0
-		and last.global_position.y + last.size.y <= float(size.y)
-		and last.global_position.y >= 0.0
-	)
-
-	# ★ 等級軸（B2.7）。存檔在有鉤子時是零級零材料 → 兩顆都該是關的；
-	#   塞一筆局末材料進去（**不寫檔**）之後才點得下去。
-	(GameState.data["levels"] as Dictionary)["from_battle"] = 500
-	_build()
-	await get_tree().process_frame
-	var lv_open: bool = not _level_buttons[0].disabled
-	var before := _components()
-	await UiKit.click(_level_buttons[0])
-	var lv_up: bool = Levels.level_of(GameState.data, Levels.TOWER) == 1
-	# **餘額是推導的**（`SaveService.components()`），所以「有沒有真的扣款」
-	# 問的是那一支——不是去看某個欄位有沒有被減。
-	var lv_charged: bool = _components() == before - Levels.cost(0)
-
-	# ★ ESC ＝ 返回（B1.4.1）。**不能真的呼叫 `on_exit`**（那會把這個畫面拆掉，
-	#   後面的 print 就落在一個正在被釋放的節點上），所以暫時換成一個只翻旗標的
-	#   Callable：要驗的是「事件到不到得了這支處理器」，不是返回本身。
-	var esc_back: bool = await UiKit.esc_reaches(self)
-
-	var ok: bool = (
-		twelve and all_broke and first_open and tier2_locked
-		and bought and charged and tier2_open and reachable and esc_back
-		and broke_levels and lv_open and lv_up and lv_charged
-	)
-	print("[TL_CLICKTEST/tech] twelve=%s broke=%s first_open=%s tier2_locked=%s bought=%s charged=%s tier2_open=%s last_reachable=%s esc_back=%s lv_broke=%s lv_open=%s lv_up=%s lv_charged=%s → %s" % [
-		twelve, all_broke, first_open, tier2_locked, bought, charged, tier2_open, reachable,
-		esc_back, broke_levels, lv_open, lv_up, lv_charged, "PASS" if ok else "FAIL"
-	])
-	if Hooks.shot_path == "":
-		get_tree().quit(0 if ok else 1)
-
-
-
-
 func _data() -> float:
 	return float((GameState.data.get("tech", {}) as Dictionary).get("data", 0))
 
 
 func _components() -> int:
-	return SaveService.components(GameState.data)
+	return Progress.components(GameState.data)
 
 
 ## ★ 等級軸兩張卡（B2.7、§7.15）。橫向一列放在捲動區**外面**：
@@ -175,9 +98,9 @@ func _level_card(axis: String) -> Control:
 	return box
 
 
-## 升一級。**規則判定回頭問 `SaveService.apply_level_up()`**（同 `_unlock()`）。
+## 升一級。**規則判定回頭問 `Progress.apply_level_up()`**（同 `_unlock()`）。
 func _level_up(axis: String) -> void:
-	if not SaveService.apply_level_up(GameState.data, axis):
+	if not Progress.apply_level_up(GameState.data, axis):
 		return
 	AudioBus.play("ui_unlock")
 	SaveService.save_from(GameState.data)

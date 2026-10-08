@@ -4,6 +4,60 @@
 
 ---
 
+## [0.43.0] — 2026-10-08 — 系統重構：拆檔、核心玩法層、自檢分家（B3.14）
+
+使用者要把遊戲從 2D 轉成 3D，要求先把核心玩法確定好且清楚。**這一批只搬家，不改行為**：
+遊戲規則、數值、畫面一個都沒動。分析與取捨在對話裡，界線寫進 `30_TECH_DESIGN.md` §2.6。
+
+### 做了什麼
+
+| 項目 | 之前 | 之後 |
+|---|---|---|
+| `screens/Battle.gd` | 5316 行、167 個函式（相機、輸入、繪圖、HUD、開局、結算、提示規則、自檢全在一起） | **408 行**組裝根 ＋ 22 個元件檔（`BattleCamera`／`BattleDraw*`／`BattleBars`／`Battle*Panel`／`BattleInput`／…） |
+| 核心玩法 | 散在畫面檔裡 | **`scripts/game/` 新增 6 個模組**：`RunSetup`（開局）、`RunLoop`（固定步長）、`RunSettlement`（結算）、`RunDiagnosis`（死因）、`HintRules`（下一步提示）、`Readout`（狀態 → 數字與句子） |
+| 自檢（clicktest） | 寫在 10 個畫面檔裡，`Battle.gd` 一檔就 1100 行 | 各畫面同資料夾的 **`FooSelftest.gd`**，由 `Hooks.run_selftest()` 以路徑載入 |
+| `core/SaveService.gd` | 存檔形狀、遷移、IO ＋ 十支進度轉移 | 只剩形狀／遷移／IO（506 → 316 行）；進度轉移搬到 **`meta/Progress.gd`**，呼叫端全部改過 |
+| `data/Campaign.gd` | 1131 行（一半是各關參考解） | 399 行關卡定義 ＋ **`data/CampaignDemos.gd`**（732 行參考解）；`LEVELS[i]["demo"]` 不變 |
+
+**目錄結構沒動**（使用者指定先只拆檔案）：新檔都放在原本的資料夾，元件用 `Battle` 前綴。
+
+### 給 3D 轉換的界線（`30_TECH_DESIGN.md` §2.6）
+
+- **核心玩法不知道畫面存在**：`scripts/game/` 不引用 autoload、`Control`、`Palette`、`Hooks`、系統時鐘。存檔以參數傳入；測試鉤子在畫面層才翻成 `spec`（`Battle.run_spec()`）。顏色只回語意（`"energy"`／`"warn"`／`"ok"`）。
+- **新測試 `tests/run_test.gd`（83 項）** 是這條界線的證據：不開視窗、不碰任何 `Control`，靠核心模組開局、推進、建造、打贏第 1 關並結算。同 `spec` ＋ 同存檔 ＝ 同一局；30fps 與 144fps 走到同一個局面；測試圖結算不動存檔。
+- 換 3D 時：`BattleCamera` 與 `BattleDraw*` **取代**，`BattleInput` **改一處**（螢幕位置 → 格），HUD 面板與 `BattleAudioCues` **多半沿用**。對照表在 §2.6。
+
+### 驗證（基準＝重構前同一份程式碼在同一台機器上的輸出）
+
+- **20 支 headless 測試全過**（3377 項；基準 19 支 3294 項 ＋ `run_test` 83 項）。其他各支的項數與基準逐支相同。
+- **11 條 clicktest（含 endless）與基準逐行相同**。唯二的正規化：`seed=` 與名冊抽卡的順序（每次執行本來就不同）。
+- **33 張截圖裡 31 張逐位元相同**（battle／first_eye／naked／sandbox／十關／特效近照／選取塔與導管／結算面板／各局外畫面…）。標題畫面差 7×9 像素，正好是版本號末位（`0.42.0` → `0.43.0`）。`tiers_unlocked` 那張在**同一份程式碼上連跑兩次就不同**（clicktest 後進無盡，種子隨機），不列入比對。
+- **`TL_STRESS` 渲染**：master 111.6／110.0 ms、重構後 115.7／112.2 ms（軟體渲染，約 +2–3%，在噪聲量級）。
+- `qa/gd_lint.py` 0 條；文案稽核基準未動（破折號 8、代號 0、`**` 0、結論／評價／辯護詞 0）。
+- **匯出版**（Windows exe ＋ 同一份設定的 Linux 版，`all_resources`、排除 `tests/*`）：11 條 clicktest 在**打包後的 Linux 版**上與基準逐行相同。截圖拿 **master 用同一份設定匯出的 Linux 版**當對照：33 張裡 31 張逐位元相同，只差標題的版本號末位（`tiers_unlocked` 排除）。
+  - 匯出版與編輯器版相比有 8 張截圖（成就、科技、名冊、戰役卡片、選取塔與導管的圖鑑行）在**文字折行位置**上不同（例：「…5 級 射／程 +1 格」變成「…5 級／射程 +1 格」），**master 的匯出版一模一樣**——是引擎在兩種二進制上的分詞差異，與本批無關。看匯出版截圖時要拿匯出版對匯出版。
+  - ⚠ **Windows exe 本身沒有在這台機器上執行過**（Linux 容器）。請在 Windows 上實際開一次。
+
+### 測試抓到的東西（兩件，都是這批自己引進的）
+
+- **移植 `RunSettlement` 時把「前次紀錄」的讀取挪到了寫入之後。** `slot` 是存檔字典裡那一格的**參照**，`apply_*` 會就地改它——結果每一局都讀到剛寫進去的新值，「新紀錄」永遠不亮。`run_test` 的「每日不拿無盡的最佳來比」當場紅。原始碼是先讀後寫；現在在函式裡寫了註解。
+- **拆自檢時 `tycoon_test` 的「畫面恰好兩個」變成三個**（新的 `TycoonOrdersSelftest.gd` 也以 `Tycoon` 開頭）。那條斷言數的是檔案數，現在排除 `*Selftest.gd`。
+
+### 新工具與一個要知道的地雷
+
+- **`qa/gd_members.py`**（不需要 Godot）：GDScript 對「已知型別上不存在的成員」**載入時不報錯**，執行到那一行才炸。元件之間全靠 `battle.X`／`battle.handle.Y`，所以這支把 1168 處參照逐一對回宣告（故意打錯一個字會紅）。`qa/control_members.json` 是 Godot 4.7 的 `Control` 成員名單，升版時用 `qa/dump_control_members.gd` 重跑。
+- 元件回指變數叫 `battle`，不是 `b`——函式裡的 `a, b` 區域變數會蓋掉它（第一版就這樣整批編譯失敗）。
+
+### 已知、刻意沒做
+
+`BattleController`（761 行）內部仍是一支；互動狀態（`mode`／`selected`／`hover` …）仍在 `Battle.gd`；HUD 面板仍用絕對像素座標；`Hooks._run_sim`／`_run_shot` 仍在 `core/`；`BattleSelftest.gd` 仍有 1302 行。這些不擋 3D 轉換。自檢**仍打包進 exe**（exe 上唯一還在的驗證就是 clicktest）——要從正式版拿掉只需一條匯出篩選 `scripts/screens/*Selftest.gd`，但那會讓 exe 上的 clicktest 失效，所以沒有做。
+
+### 這台機器的基準線備註
+
+`TL_CLICKTEST` 的 `audio=false`（`wave_hush`）在 **Linux／Xvfb／無音效裝置** 上於重構前就是紅的，與本批無關；比對一律以「與基準逐行相同」為準，不是以 PASS 為準。
+
+---
+
 ## [0.42.0] — 2026-09-19 — 地貌（B3.13）
 
 使用者指定：「接下來處理地圖美術，我希望有不同地圖，然後多一些裝飾或是主題性」。

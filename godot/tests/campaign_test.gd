@@ -17,6 +17,7 @@ const Build := preload("res://scripts/sim/Build.gd")
 const Shapes := preload("res://scripts/render/Shapes.gd")
 const Score := preload("res://scripts/sim/Score.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
+const Progress := preload("res://scripts/meta/Progress.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const Combat := preload("res://scripts/sim/Combat.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
@@ -275,24 +276,24 @@ func _stars(t: RefCounted) -> void:
 
 func _save_progress(t: RefCounted) -> void:
 	var d := SaveService.defaults()
-	var gain := SaveService.apply_result(d, "tidemouth", 2, 30)
+	var gain := Progress.apply_result(d, "tidemouth", 2, 30)
 	t.near(gain, 60.0, "首通 2 星＝30 × 2")
 	t.near(float((d["tech"] as Dictionary)["data"]), 60.0, "研究數據入帳")
 	# sv2 起「通關」就是「星數 >= 1」，沒有另一份 cleared 清單（B1.4）。
 	t.eq(int(((d["campaign"] as Dictionary)["stars"] as Dictionary)["tidemouth"]), 2, "通關紀錄＝星數")
 
 	# 回頭補到 3 星：**只補差額**。
-	var gain2 := SaveService.apply_result(d, "tidemouth", 3, 30)
+	var gain2 := Progress.apply_result(d, "tidemouth", 3, 30)
 	t.near(gain2, 30.0, "補到 3 星只補差額 30")
 	t.near(float((d["tech"] as Dictionary)["data"]), 90.0, "研究數據累計 90")
 
 	# 重刷同一星數：不再給。這是「賣速度不賣次數」（B6）在戰役側的樣子——
 	# 沒有無限刷分的入口，也就沒有「刷不刷」這個假選擇。
-	var gain3 := SaveService.apply_result(d, "tidemouth", 3, 30)
+	var gain3 := Progress.apply_result(d, "tidemouth", 3, 30)
 	t.near(gain3, 0.0, "重刷同星數不再給")
 
 	# 重玩失敗：星數與通關紀錄都不得被抹掉（紅線 R1「失敗只花時間」）。
-	SaveService.apply_result(d, "tidemouth", 0, 30)
+	Progress.apply_result(d, "tidemouth", 0, 30)
 	t.eq(int(((d["campaign"] as Dictionary)["stars"] as Dictionary)["tidemouth"]), 3, "失敗不扣星")
 	t.ok(not (d["campaign"] as Dictionary).has("cleared"), "sv2 不再有 cleared 這個重複來源")
 

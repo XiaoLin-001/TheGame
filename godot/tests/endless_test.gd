@@ -12,6 +12,7 @@ const MapGen := preload("res://scripts/sim/MapGen.gd")
 const Maps := preload("res://data/Maps.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
+const Progress := preload("res://scripts/meta/Progress.gd")
 const Difficulty := preload("res://data/Difficulty.gd")
 
 ## 不變量掃過的種子數。**掃一個種子等於什麼都沒驗**——生成器的缺陷幾乎
@@ -375,18 +376,18 @@ func _best(t: T) -> void:
 	t.eq(float(old["tech"]["data"]), 5.0, "補鍵不會動到玩家原有的資料")
 
 	var d := SaveService.defaults()
-	var r1 := SaveService.apply_endless(d, 12, 0.8)
+	var r1 := Progress.apply_endless(d, 12, 0.8)
 	t.ok(bool(r1["wave"]) and bool(r1["output"]), "第一局兩欄都是新紀錄")
 	t.eq(int(Difficulty.best(d, 0)["wave"]), 12, "波次寫進去了")
 
 	# ★ 兩欄各自取最大值：波次更高但產能更差的一局，**不得**洗掉產能紀錄。
-	var r2 := SaveService.apply_endless(d, 13, 0.3)
+	var r2 := Progress.apply_endless(d, 13, 0.3)
 	t.ok(bool(r2["wave"]), "波次破紀錄")
 	t.ok(not bool(r2["output"]), "產能沒破紀錄")
 	t.eq(int(Difficulty.best(d, 0)["wave"]), 13, "波次更新為 13")
 	t.near(float(Difficulty.best(d, 0)["output"]), 0.8, "產能紀錄保住 0.8，沒被更差的一局洗掉")
 
-	var r3 := SaveService.apply_endless(d, 5, 0.2)
+	var r3 := Progress.apply_endless(d, 5, 0.2)
 	t.ok(not bool(r3["wave"]) and not bool(r3["output"]), "更差的一局兩欄都不破")
 	t.eq(int(Difficulty.best(d, 0)["wave"]), 13, "更差的一局不會讓紀錄倒退")
 

@@ -19,6 +19,7 @@ const SessionState := preload("res://scripts/game/SessionState.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
+const Progress := preload("res://scripts/meta/Progress.gd")
 
 
 func _initialize() -> void:
@@ -263,7 +264,7 @@ func _save_round_trip(t: T) -> void:
 	t.eq((empty["tech"] as Dictionary)["unlocked"], [], "全新存檔：沒有任何科技")
 	# 局末獎勵仍然只進 data，不會憑空塞科技進去。
 	var d2 := SaveService.defaults()
-	SaveService.apply_result(d2, "l1", 3, 30)
+	Progress.apply_result(d2, "l1", 3, 30)
 	t.eq(float((d2["tech"] as Dictionary)["data"]), 90.0, "三星第 1 關 → 90 研究數據")
 	t.eq((d2["tech"] as Dictionary)["unlocked"], [], "獎勵不會自動解鎖任何科技")
 

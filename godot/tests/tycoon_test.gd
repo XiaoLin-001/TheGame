@@ -262,7 +262,8 @@ func _ui_depth_is_two_screens(t: T) -> void:
 	for f: String in DirAccess.get_files_at("res://scripts/screens"):
 		# ⚠ `get_files_at()` 在原始碼樹上也會回 `.uid`（Godot 4.4+ 的匯入產物）。
 		#   第一版沒濾，於是「兩個畫面」量出來是四個。
-		if f.begins_with("Tycoon") and f.ends_with(".gd"):
+		# ⚠ B3.14：自檢拆成同資料夾的 `*Selftest.gd`（開發用，不是畫面）——不算進畫面數。
+		if f.begins_with("Tycoon") and f.ends_with(".gd") and not f.ends_with("Selftest.gd"):
 			found.append(f)
 	found.sort()
 	t.eq(

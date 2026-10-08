@@ -81,6 +81,10 @@
   **`data/` 是一張表 ＋ 讀它的函式**（`NodeDefs`、`Tech`、`Levels`、`Achievements`、`Roster`、`Campaign`：
   加內容是**加一列**）；**`scripts/meta/` 是有狀態轉移的局外系統**（`TycoonSim`：accept / assign /
   accrue / collect / expand）。不確定時問自己：「新增一筆內容是加資料還是加一個動詞？」
+- **核心玩法 ↔ 呈現的分界**（B3.14，為 2D → 3D 預備；全文 `30_TECH_DESIGN.md` §2.6）：`scripts/game/` 是核心玩法，
+  **不得引用 autoload、`Control`／`Node`、`Palette`、`Hooks`、系統時鐘**；存檔以參數傳入，測試鉤子在畫面層才翻成 `spec`。
+  局內畫面的新邏輯先問「換成 3D 還要不要原封不動」——要，就寫進 `game/`；不要，才寫進 `Battle*.gd` 元件。
+  元件之間只走 `battle.<handle>.<成員>`，對外公開的成員不帶底線；改完跑 `python qa/gd_members.py`。
 - 存檔：`SaveService.SAVE_VERSION` 常數；讀取一律 `d.get(key, default)`；結構改動寫 `_migrate_sv<N>_to_sv<N+1>()`。**只增不破。**
 
 ---
@@ -91,7 +95,8 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（19 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress / difficulty / m2）
+# 自動化測試（20 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress / difficulty / m2 / run）
+# ★ run_test＝核心玩法層的 headless 合約（B3.14）：不開視窗，靠 RunSetup / RunLoop / RunSettlement 打完一關
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -112,6 +117,10 @@ cd godot && python ../qa/copy_extract.py && python ../qa/copy_tells.py
 # ★ 靜態地雷掃描（B3.11）。**不需要 Godot**：Color 字面量／泛型 lerp／sim 層系統 RNG／
 # match 分支同名 var／括號平衡／空白縮排／NUL（B3.13）。0 條才算過；它抓不到型別錯誤——那要 Godot。
 python qa/gd_lint.py
+
+# ★ 元件成員參照驗證（B3.14）。**不需要 Godot。** GDScript 對「已知型別上不存在的成員」載入時不報錯、
+# 執行到那一行才炸，所以 `battle.X`／`battle.handle.Y`／`BattleXxx.Z` 要自己對回宣告。0 條才算過。
+python qa/gd_members.py
 
 # 截圖驗證（自動靜音、約 3 秒後存圖並退出）
 # TL_SHOT 存在時模擬凍結在 TL_DEMO_TICKS 那一格 → 同參數在任何機器上拍出同一張圖
@@ -175,6 +184,8 @@ TL_CLICKTEST=1 TL_SHOT="C:/tmp/wire.png" TL_MUTE=1 TL_PICK=wire TL_PANEL=campaig
 TL_SHOT="C:/tmp/fx.png" TL_PANEL=campaign TL_LEVEL=5 TL_DEMO_TICKS=581 TL_FOCUS="30,15,3" <godot> --path godot --rendering-driver opengl3
 
 # ★ 輸入層自檢：用合成滑鼠事件真的點地圖（約 1 秒後自己退出，0 ＝ PASS）
+# 自檢的程式碼不在畫面檔裡：每個畫面 `Foo.gd` 的自檢是同資料夾的 `FooSelftest.gd`，由 `Hooks.run_selftest()` 以路徑載入
+# （局內畫面是 `BattleSelftest.gd`）。它們仍打包進 exe——exe 上唯一還在的驗證就是 clicktest。
 # ⚠ 唯一不能 --headless 的檢查：dummy display server 不做 GUI 命中測試
 TL_CLICKTEST=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 關卡選擇畫面的同一件事（那個畫面的全部價值就是「一顆鈕點得到」）
@@ -251,17 +262,22 @@ TheGame/
 │   └── agents/                外掛 skill 的設定（見「Agent skills」）
 ├── qa/copy_*.py               文案稽核（掃玩家字串 ＋ 比對 §3.5 的四條禁令）
 ├── qa/gd_lint.py              靜態地雷掃描（不需要 Godot）
+├── qa/gd_members.py           元件成員參照驗證（不需要 Godot；B3.14）
 ├── assetgen/gen_audio.py      音源產生器（純 Python 標準庫；**音源的原始碼**）
 ├── tools/godot/               （gitignore）Godot console exe
 └── godot/
     ├── scripts/core/          GameState / SaveService / Hooks / AudioBus / Rng
     ├── scripts/sim/     ★     FlowNetwork / Combat / WaveGen / MapGen / Score / Daily /
     │                          Loadout（局外成長進局的唯一入口）——純函式、零 RNG
-    ├── scripts/game/          BattleController / BuildController / SessionState
-    ├── scripts/screens/       各畫面
+    ├── scripts/game/    ★     核心玩法（無畫面、無 autoload；換 3D 時原封不動）：
+    │                          SessionState / BattleController / BuildController /
+    │                          RunSetup（開局）/ RunLoop（固定步長）/ RunSettlement（結算）/
+    │                          RunDiagnosis / HintRules / Readout——邊界見 `30_TECH_DESIGN.md` §2.6
+    ├── scripts/screens/       各畫面；局內畫面 `Battle.gd` 是組裝根，`BattleXxx.gd` 是元件
+    │                          （BattleCamera / BattleDraw* / BattleBars / Battle*Panel …）；`*Selftest.gd` 是自檢
     ├── scripts/render/        Palette / Shapes / Motion / Glyphs / Foes / Terrain（美術 token 實作；Glyphs＝節點幾何＋體積語言、Foes＝敵人幾何，由欄位推導、Terrain＝每張圖的地貌）
     ├── scripts/ui/            UiKit
-    ├── scripts/meta/          TycoonSim（純函式的**狀態機**）
+    ├── scripts/meta/          TycoonSim（純函式的**狀態機**）/ Progress（局外進度對存檔字典的狀態轉移）
     ├── data/                  節點、角色、敵人、地圖、戰役、科技、等級軸、成就、**難度層**資料表
     ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / difficulty …
     └── assets/audio/          bgm/ 3 首、sfx/ 14 支（`assetgen/gen_audio.py` 生成）

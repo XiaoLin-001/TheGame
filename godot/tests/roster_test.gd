@@ -14,6 +14,7 @@ const NodeDefs := preload("res://data/NodeDefs.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 const Daily := preload("res://scripts/sim/Daily.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
+const Progress := preload("res://scripts/meta/Progress.gd")
 const Rng := preload("res://scripts/core/Rng.gd")
 
 ## 掃幾個種子驗「不論抽的順序如何，三次都畢業」。
@@ -84,7 +85,7 @@ func _tokens_are_derived(t: T) -> void:
 	#   而 sv3（B2.6）已經把它收進 `endless.best`。於是這條斷言驗的是
 	#   **一個遊戲不再寫、也不再讀的鍵**：它綠了三批，而真實存檔裡
 	#   無盡一張券都沒發過。測試要走玩家走的那條路，不能自己捏形狀。
-	SaveService.apply_endless(d, 25, 0.0, 0)
+	Progress.apply_endless(d, 25, 0.0, 0)
 	t.eq(
 		Roster.earned(d), Roster.RECRUIT_POOL.size() + 2,
 		"★ 無盡 25 波再加 2 券（兩條途徑各算各的）"
@@ -116,7 +117,7 @@ func _no_dupes_and_graduation(t: T) -> void:
 		var rng := Rng.stream(sd)
 		var got: Array[String] = []
 		for _i in Roster.RECRUIT_POOL.size():
-			var one := SaveService.apply_recruit(d, rng)
+			var one := Progress.apply_recruit(d, rng)
 			if one == "" or got.has(one):
 				all_ok = false
 				break
@@ -134,9 +135,9 @@ func _no_dupes_and_graduation(t: T) -> void:
 	var done := _save_at(CampaignData.count())
 	var rng2 := Rng.stream(7)
 	for _i in Roster.RECRUIT_POOL.size():
-		SaveService.apply_recruit(done, rng2)
+		Progress.apply_recruit(done, rng2)
 	var before: int = (done["roster"] as Dictionary)["recruited"].size()
-	t.eq(SaveService.apply_recruit(done, rng2), "", "★ 畢業之後抽不到東西")
+	t.eq(Progress.apply_recruit(done, rng2), "", "★ 畢業之後抽不到東西")
 	t.eq(
 		(done["roster"] as Dictionary)["recruited"].size(), before,
 		"★ 畢業之後**一張券都不扣**（§3.9 明文）"
@@ -144,7 +145,7 @@ func _no_dupes_and_graduation(t: T) -> void:
 
 	# 券不夠就不給。**規則在這一層**，不是在鈕的 disabled 上。
 	var broke := _save_at(0)
-	t.eq(SaveService.apply_recruit(broke, Rng.stream(3)), "", "★ 沒有券就抽不到")
+	t.eq(Progress.apply_recruit(broke, Rng.stream(3)), "", "★ 沒有券就抽不到")
 	t.eq(Roster.recruited(broke).size(), 0, "沒有券時連記錄都不留")
 
 	# ★ 稀有角色若日後由**別的途徑**到手（成就／商店，§3.9），
@@ -170,7 +171,7 @@ func _free_to_play_can_graduate(t: T) -> void:
 	)
 	var rng := Rng.stream(42)
 	for _i in Roster.RECRUIT_POOL.size():
-		t.ok(SaveService.apply_recruit(d, rng) != "", "純戰役的券抽得動")
+		t.ok(Progress.apply_recruit(d, rng) != "", "純戰役的券抽得動")
 	t.ok(Roster.graduated(d), "★★★★ 從未碰過無盡、從未付費 → 名冊全收集")
 	t.eq(Roster.owned(d).size(), Roster.all().size(), "全部角色到手")
 
@@ -267,7 +268,7 @@ func _save_round_trip(t: T) -> void:
 	# ★ 走一趟真的 JSON：`recruited` 是字串陣列＝JSON 原生型別，
 	#   存進去讀出來要是原樣（藍圖庫那一批的同一條驗收）。
 	var d := _save_at(CampaignData.count())
-	SaveService.apply_recruit(d, Rng.stream(9))
+	Progress.apply_recruit(d, Rng.stream(9))
 	var round_trip: Variant = JSON.parse_string(JSON.stringify(d))
 	t.eq(
 		Roster.recruited(SaveService.normalize(round_trip as Dictionary)),

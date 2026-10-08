@@ -27,6 +27,7 @@ const Daily := preload("res://scripts/sim/Daily.gd")
 const Blueprint := preload("res://scripts/sim/Blueprint.gd")
 const TycoonSim := preload("res://scripts/meta/TycoonSim.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
+const Progress := preload("res://scripts/meta/Progress.gd")
 const MapGen := preload("res://scripts/sim/MapGen.gd")
 
 ## §5 內容矩陣的 M1 欄（**下限**，不是目標）。M2／M3 的差距由 §5 那張表
@@ -73,21 +74,21 @@ func _red_lines_still_hold(t: T) -> void:
 	#   走的是真正的局末結算路徑（0 波、0 產能、0 星），不是一個假設。
 	var save := SaveService.defaults()
 	((save["campaign"] as Dictionary)["stars"] as Dictionary)[Campaign.id_at(0)] = 3
-	SaveService.apply_components(save, 40)
-	SaveService.apply_level_up(save, Levels.TOWER)
-	SaveService.apply_endless(save, 18, 4.0, 0)
+	Progress.apply_components(save, 40)
+	Progress.apply_level_up(save, Levels.TOWER)
+	Progress.apply_endless(save, 18, 4.0, 0)
 	var before := SaveService.normalize(save).duplicate(true)
-	var comps_before := SaveService.components(save)
+	var comps_before := Progress.components(save)
 
-	SaveService.apply_result(save, Campaign.id_at(0), 0, 100)   # 0 星＝輸了
-	SaveService.apply_components(save, 0)                        # 0 波
-	SaveService.apply_endless(save, 0, 0.0, 0)
+	Progress.apply_result(save, Campaign.id_at(0), 0, 100)   # 0 星＝輸了
+	Progress.apply_components(save, 0)                        # 0 波
+	Progress.apply_endless(save, 0, 0.0, 0)
 	var after := SaveService.normalize(save)
 
 	t.eq(int(((after["campaign"] as Dictionary)["stars"] as Dictionary)[Campaign.id_at(0)]), 3,
 		"★★ 紅線 R1：輸掉一局不扣星")
 	t.eq(int(Difficulty.best(after, 0)["wave"]), 18, "★★ 紅線 R1：輸掉一局不扣無盡紀錄")
-	t.eq(SaveService.components(save), comps_before, "★★ 紅線 R1：輸掉一局不扣材料")
+	t.eq(Progress.components(save), comps_before, "★★ 紅線 R1：輸掉一局不扣材料")
 	t.eq(int((after["levels"] as Dictionary)["tower"]), int((before["levels"] as Dictionary)["tower"]),
 		"★★ 紅線 R1：輸掉一局不掉等級")
 	t.eq(after["tech"], before["tech"], "★★ 紅線 R1：輸掉一局不扣研究數據")
@@ -202,18 +203,18 @@ func _full_playthrough_save_is_clean(t: T) -> void:
 	var save := SaveService.defaults()
 
 	# 戰役：通關第 1 關拿三星。
-	SaveService.apply_result(save, Campaign.id_at(0), 3, int((Campaign.at(0) as Dictionary)["reward"]))
+	Progress.apply_result(save, Campaign.id_at(0), 3, int((Campaign.at(0) as Dictionary)["reward"]))
 	# 科技：買一個節點。
 	((save["tech"] as Dictionary)["unlocked"] as Array).append("cap1")
 	# 藍圖：存一張。
 	var bp := {"nodes": [{"type": "extractor", "at": [0, 0]}], "conduits": []}
-	SaveService.add_blueprint(save, bp, 2)
+	Progress.add_blueprint(save, bp, 2)
 	# 名冊：招一隻（先把戰役塞滿星才有券）。
 	for id: String in Campaign.ids():
 		((save["campaign"] as Dictionary)["stars"] as Dictionary)[id] = 3
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
-	var got := SaveService.apply_recruit(save, rng)
+	var got := Progress.apply_recruit(save, rng)
 	t.ok(got != "", "招募寫得進存檔")
 	# tycoon：接單 → 上線 → 生產 → 收成。
 	var ty: Dictionary = save["tycoon"]
@@ -222,11 +223,11 @@ func _full_playthrough_save_is_clean(t: T) -> void:
 	TycoonSim.accrue(ty, 9999.0)
 	t.ok(TycoonSim.collect(ty, 0), "訂單收得成")
 	# 等級軸：局末材料 → 升一級。
-	SaveService.apply_components(save, 40)
-	t.ok(SaveService.apply_level_up(save, Levels.TOWER), "等級軸升得了級")
+	Progress.apply_components(save, 40)
+	t.ok(Progress.apply_level_up(save, Levels.TOWER), "等級軸升得了級")
 	# 無盡與每日：兩邊各記一筆。
-	SaveService.apply_endless(save, 12, 3.5, 0)
-	SaveService.apply_daily(save, "2026-01-01", Daily.FREE, 9, 2.0)
+	Progress.apply_endless(save, 12, 3.5, 0)
+	Progress.apply_daily(save, "2026-01-01", Daily.FREE, 9, 2.0)
 
 	# ★ 冪等：`normalize()` 一次不得改動任何東西。
 	var norm := SaveService.normalize(save)
@@ -240,7 +241,7 @@ func _full_playthrough_save_is_clean(t: T) -> void:
 		t.ok(norm.has(key), "schema 的 `%s` 在存檔裡" % key)
 
 	# ★ 全部推導值都算得出來，而且是這一輪真的推出來的（不是預設值）。
-	t.ok(SaveService.components(norm) > 0, "材料餘額 > 0（局末結算那條路走過了）")
+	t.ok(Progress.components(norm) > 0, "材料餘額 > 0（局末結算那條路走過了）")
 	t.ok(Achievements.company_level(norm) >= 1, "公司等級算得出來")
 	t.ok(Achievements.done(norm).size() > 0, "★ 這一輪真的達成了成就（推導的，沒有領取鈕）")
 	t.eq(Difficulty.unlocked(norm), 1, "★ 戰役全通之後第 1 層開了")

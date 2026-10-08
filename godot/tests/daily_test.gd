@@ -13,6 +13,7 @@ const MapGen := preload("res://scripts/sim/MapGen.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
+const Progress := preload("res://scripts/meta/Progress.gd")
 const Tech := preload("res://data/Tech.gd")
 
 ## 掃幾天驗「同日同種子、異日異圖」。
@@ -141,20 +142,20 @@ func _records_and_rollover(t: T) -> void:
 	var day1 := "2026-08-04"
 	var day2 := "2026-08-05"
 
-	var first := SaveService.apply_daily(d, day1, Daily.UNIFORM, 7, 3.5)
+	var first := Progress.apply_daily(d, day1, Daily.UNIFORM, 7, 3.5)
 	t.ok(bool(first["wave"]) and bool(first["output"]), "第一次挑戰兩欄都是新紀錄")
 	# 兩欄各自取最大值（與 `apply_endless` 同一條理由：撐得久 vs 產線好）。
-	SaveService.apply_daily(d, day1, Daily.UNIFORM, 9, 1.0)
+	Progress.apply_daily(d, day1, Daily.UNIFORM, 9, 1.0)
 	var slot: Dictionary = d["daily"]["today"][Daily.UNIFORM]
 	t.eq(int(slot["wave"]), 9, "波次刷新")
 	t.near(float(slot["output"]), 3.5, "★ 產能沒有被一局「波次高但產線爛」洗掉")
 
 	# 另一榜是獨立的一格。
-	SaveService.apply_daily(d, day1, Daily.FREE, 2, 0.5)
+	Progress.apply_daily(d, day1, Daily.FREE, 2, 0.5)
 	t.eq(int(d["daily"]["today"][Daily.UNIFORM]["wave"]), 9, "打自由配置不會動到統一配置")
 
 	# ★ 跨日：昨天的兩榜推進歷史，今天歸零。
-	SaveService.apply_daily(d, day2, Daily.FREE, 1, 0.1)
+	Progress.apply_daily(d, day2, Daily.FREE, 1, 0.1)
 	var hist: Array = d["daily"]["history"]
 	t.eq(hist.size(), 2, "★ 跨日把昨天的兩榜都推進歷史")
 	t.eq(String((hist[0] as Dictionary)["date"]), day1, "歷史記的是昨天的日期")
@@ -166,7 +167,7 @@ func _records_and_rollover(t: T) -> void:
 
 	# 歷史有上限，而且丟的是最舊的。
 	for i in Daily.HISTORY_MAX + 5:
-		SaveService.apply_daily(d, "2026-09-%02d" % (i % 28 + 1), Daily.FREE, i + 1, 1.0)
+		Progress.apply_daily(d, "2026-09-%02d" % (i % 28 + 1), Daily.FREE, i + 1, 1.0)
 	t.ok(
 		(d["daily"]["history"] as Array).size() <= Daily.HISTORY_MAX,
 		"歷史不會無限長（上限 %d）" % Daily.HISTORY_MAX

@@ -1,0 +1,173 @@
+class_name BattleGuide
+extends RefCounted
+## 大圖導引：小地圖與邊緣箭頭（只在地圖大過框架時出現）。
+##
+## 由 `Battle.gd` 拆出（B3.14）：只改搬家，不改行為。
+
+const Motion := preload("res://scripts/render/Motion.gd")
+const Readout := preload("res://scripts/game/Readout.gd")
+
+## 小地圖（B2.1b、`20_ART_DIRECTION.md` §1.8）。**只在地圖大過框架時出現**
+## ——戰役全部一屏可見，問題節點就在畫面上，多一個浮層只是多一塊遮擋。
+const MINIMAP_MAX := Vector2(232.0, 140.0)
+
+const MINIMAP_PAD := 12.0
+
+## 邊緣箭頭上限。**十個箭頭等於沒有箭頭**（§2 反模式：資訊過載）。
+const ARROW_MAX := 3
+
+const ARROW_SIZE := 11.0
+
+## 箭頭的命中半徑。P3 手機移植預留條款要求 ≥ 44×44 px，所以半徑取 22。
+const ARROW_HIT := 22.0
+
+## 小地圖拖曳中。按住不放時視野持續跟著游標走。
+var mini_drag: bool = false
+
+## ★ 小地圖的剩餘顯示秒數（B2.1d.1，使用者指定）。**不常駐**——它蓋在地圖
+## 右下角，常駐等於那一塊永遠點不到（使用者：「有些地方會點不到」）。
+## 縮放或平移時出現，靜止 `MINI_HOLD` 秒後自己退場。
+var mini_ttl: float = 0.0
+
+const MINI_HOLD := 3.0
+
+## 最後這段時間用來淡出，不要用消失的。
+const MINI_FADE := 0.5
+
+var battle: BattleScreen
+
+
+func _init(screen: BattleScreen) -> void:
+	battle = screen
+
+
+## 「問題」不新發明判定，就是既有的兩件事，依嚴重度排序：
+##   ① 正在被 walk-by 啃的節點（`_threat`，和主畫面的四角括號同一份判定）
+##   ② `缺料`／`滿溢`（`node_state`，和三態徽章同一份判定）
+## 排序決定 `ARROW_MAX` 砍掉的是哪幾個——被啃的永遠留著。
+func problem_cells() -> Array[Vector2i]:
+	return Readout.problem_cells(battle.s, battle.threat)
+
+
+## 小地圖的位置：框架**右下角**內側——離建造欄（左）與能量列（上）最遠的角。
+## 尺寸依地圖長寬比縮進 `MINIMAP_MAX`，所以它永遠和地圖同比例（不同比例的
+## 縮圖上，「我在哪」那個框會說謊）。
+func minimap_rect() -> Rect2:
+	var m := Vector2(battle.s.map["size"])
+	var k := minf(MINIMAP_MAX.x / m.x, MINIMAP_MAX.y / m.y)
+	var sz := m * k
+	return Rect2(BattleCamera.FRAME.end - sz - Vector2(MINIMAP_PAD, MINIMAP_PAD), sz)
+
+
+func draw_minimap() -> void:
+	if not battle.cam.oversized() or mini_ttl <= 0.0:
+		return
+	# ★ 最後 `MINI_FADE` 秒淡出。**整體透明度乘在每一筆上**，退場時底板、
+	#   路徑、視野框一起淡——只淡其中幾樣會出現「框還在、底板不見了」。
+	var fade := clampf(mini_ttl / MINI_FADE, 0.0, 1.0)
+	var r := minimap_rect()
+	# ★ 底板往外長，**外框畫在 `r` 上**（B2.1d）。舊版把框也畫在 `box` 上，
+	#   於是推到底時視野框離可見的邊還有 5px ——使用者回報「小地圖滑到底
+	#   不會貼邊」。框就是地圖的邊界，底板只是讓它在遊戲畫面上讀得出來。
+	battle.draw_rect(r.grow(5.0), Palette.alpha(Palette.BG_PANEL, 0.96 * fade))
+	battle.draw_rect(r, Palette.alpha(Palette.BORDER_STRONG, fade), false, 1.0)
+	# 世界座標 → 小地圖座標。
+	var k := r.size.x / (float(battle.s.map["size"].x) * Shapes.GRID)
+	var cell := maxf(1.0, Shapes.GRID * k)
+
+	for c: Vector2i in battle.s.path:
+		battle.draw_rect(
+			Rect2(r.position + Vector2(c) * cell, Vector2(cell, cell)),
+			Palette.alpha(Palette.TIDE_DEEP, fade)
+		)
+	# 玩家節點：小地圖上讀的是**產線的形狀**，不是個別節點，所以一律同一個點。
+	for n: Dictionary in battle.s.nodes:
+		battle.draw_rect(
+			Rect2(r.position + Vector2(n["cell"]) * cell, Vector2(cell, cell)),
+			Palette.alpha(Palette.ORDER_CYAN, fade)
+		)
+	# 問題標記：**比節點大一倍** ＋ 脈動。要在一堆青點裡被一眼挑出來，
+	# 只換顏色不夠（§4.3b）。
+	var pulse := Motion.pulse01(battle.s.tick_count, Motion.BASE * 2.0, 0.45)
+	for c: Vector2i in problem_cells():
+		var at := r.position + Vector2(c) * cell - Vector2(cell, cell) * 0.5
+		battle.draw_rect(
+			Rect2(at, Vector2(cell, cell) * 2.0),
+			Palette.alpha(Palette.WARN_ORANGE, pulse * fade)
+		)
+	# 視野框：「我在哪」——這是小地圖與一張縮圖的唯一差別。
+	var vw := battle.cam.view_world_rect()
+	battle.draw_rect(
+		Rect2(r.position + vw.position * k, vw.size * k).intersection(r),
+		Palette.alpha(Palette.ORDER_BRIGHT, fade), false, 1.0
+	)
+
+
+## 邊緣箭頭：畫在框架內緣，指向畫面外的問題。
+##
+## 只畫**不在畫面內**的——在畫面內的問題本來就看得到，再加一個箭頭是雜訊。
+func draw_arrows() -> void:
+	if not battle.cam.oversized():
+		return
+	var a := Motion.pulse01(battle.s.tick_count, Motion.BASE * 2.0, 0.5)
+	for hit: Array in arrow_hits():
+		var at: Vector2 = hit[0]
+		var dir: Vector2 = hit[1]
+		var perp := Vector2(-dir.y, dir.x)
+		battle.draw_colored_polygon(PackedVector2Array([
+			at + dir * ARROW_SIZE,
+			at - dir * ARROW_SIZE * 0.6 + perp * ARROW_SIZE * 0.75,
+			at - dir * ARROW_SIZE * 0.6 - perp * ARROW_SIZE * 0.75,
+		]), Palette.alpha(Palette.WARN_ORANGE, a))
+
+
+## 箭頭的位置、方向與目標格：`[[螢幕位置, 單位方向, 目標格], ...]`。
+## **繪圖與命中判定共用這一支**——兩份會漂掉，而漂掉的症狀是「看得到但點不到」。
+func arrow_hits() -> Array:
+	var out: Array = []
+	var vw := battle.cam.view_world_rect()
+	var mid := BattleCamera.FRAME.position + BattleCamera.FRAME.size * 0.5
+	# 框架內緣，留出箭頭自己的半徑，否則尖端會被邊緣切掉。
+	var inner := BattleCamera.FRAME.grow(-(ARROW_SIZE + 6.0))
+	for c: Vector2i in problem_cells():
+		if out.size() >= ARROW_MAX:
+			break
+		var w := battle.cam.center(c)
+		if vw.has_point(w):
+			continue
+		var dir := (battle.cam.to_screen(w) - mid)
+		if dir.length() < 0.001:
+			continue
+		dir = dir.normalized()
+		# 從框架中心往那個方向射到內緣：兩軸各算一次，取先撞到的那一個。
+		var tx := INF if is_zero_approx(dir.x) else (inner.size.x * 0.5) / absf(dir.x)
+		var ty := INF if is_zero_approx(dir.y) else (inner.size.y * 0.5) / absf(dir.y)
+		out.append([mid + dir * minf(tx, ty), dir, c])
+	return out
+
+
+## 導引的點擊。回傳「有沒有吃掉這一次點擊」——吃掉了就不可以再當成蓋節點，
+## 否則點小地圖會在它底下的那一格蓋出東西來。
+func guide_click(pos: Vector2) -> bool:
+	if not battle.cam.oversized():
+		return false
+	for hit: Array in arrow_hits():
+		if pos.distance_to(hit[0] as Vector2) <= ARROW_HIT:
+			battle.cam.center_view_on(hit[2] as Vector2i)
+			return true
+	# ★ **看不見就不攔截**（B2.1d.1）。小地圖蓋在地圖右下角，常駐攔截等於
+	#   那一塊永遠蓋不了東西——使用者回報「有些地方會點不到」。
+	if mini_ttl <= 0.0 or not minimap_rect().grow(5.0).has_point(pos):
+		return false
+	# 按下就開始拖曳；放開才結束（見 `_gui_input`）。單擊仍然等於「跳一次」，
+	# 因為按下的當下就已經 seek 過一次了。
+	mini_drag = true
+	mini_seek(pos)
+	return true
+
+
+## 把小地圖上的一點換算成地圖格，並把視野**平滑**移過去。
+func mini_seek(pos: Vector2) -> void:
+	var r := minimap_rect()
+	var k := r.size.x / (float(battle.s.map["size"].x) * Shapes.GRID)
+	battle.cam.center_view_on(Shapes.to_grid((pos - r.position) / k))

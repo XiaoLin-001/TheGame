@@ -12,6 +12,7 @@ const Maps := preload("res://data/Maps.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BuildController := preload("res://scripts/game/BuildController.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
+const Progress := preload("res://scripts/meta/Progress.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const Build := preload("res://scripts/sim/Build.gd")
 const Tech := preload("res://data/Tech.gd")
@@ -222,16 +223,16 @@ func _slots_and_save(t: T) -> void:
 	var bp := Blueprint.capture(s.nodes, s.conduits, SEL_LO, SEL_HI)
 	var d := SaveService.defaults()
 	t.ok(d.has("blueprints"), "新存檔有 blueprints 這一格")
-	t.eq(SaveService.add_blueprint(d, bp, 2), "", "存第一張")
-	t.eq(SaveService.add_blueprint(d, bp, 2), "", "存第二張")
-	var full := SaveService.add_blueprint(d, bp, 2)
+	t.eq(Progress.add_blueprint(d, bp, 2), "", "存第一張")
+	t.eq(Progress.add_blueprint(d, bp, 2), "", "存第二張")
+	var full := Progress.add_blueprint(d, bp, 2)
 	t.ok(full.contains("槽已滿"), "★ 槽滿了要說出來（%s）" % full)
 	t.eq((d["blueprints"] as Array).size(), 2, "★ 槽滿時沒有偷偷多存一張")
 	# 自動命名認得出是哪一種產線。
 	t.eq(String((d["blueprints"] as Array)[0]["name"]), "5×4・3 節點", "自動命名帶尺寸與節點數")
 	# 空框選存不進去。
 	var blank := Blueprint.capture(s.nodes, s.conduits, Vector2i(0, 12), Vector2i(3, 15))
-	t.ok(SaveService.add_blueprint(d, blank, 9).contains("沒有可存的節點"), "空框選有話說")
+	t.ok(Progress.add_blueprint(d, blank, 9).contains("沒有可存的節點"), "空框選有話說")
 
 	# 舊存檔讀進來要長出這一格，且不動原有資料（只增不破）。
 	var norm := SaveService.normalize({"sv": 2, "tech": {"unlocked": ["dmg1"], "data": 5.0}})

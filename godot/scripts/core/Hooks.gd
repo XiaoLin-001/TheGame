@@ -85,6 +85,24 @@ func _ready() -> void:
 		_run_shot()
 
 
+## ★ 執行某個畫面的自檢（`TL_CLICKTEST`）。B3.14 起自檢不再寫在畫面檔裡：
+## 每個畫面 `Foo.gd` 的自檢是同資料夾的 `FooSelftest.gd`，**用路徑載入**——
+## 畫面的程式碼不靠它，要把它從正式版拿掉時只需要一條匯出篩選。
+##
+## 自檢是跨 `await` 的協程，所以實例要有人持有（`Callable` 只記物件 id，不保活）。
+## 掛在畫面節點的 meta 上，畫面離開場景樹時一起消失。
+func run_selftest(screen: Control) -> void:
+	var path: String = screen.get_script().resource_path.replace(".gd", "Selftest.gd")
+	var script: GDScript = load(path) as GDScript
+	if script == null:
+		push_error("[TL_CLICKTEST] 找不到自檢：%s" % path)
+		get_tree().quit(1)
+		return
+	var test: RefCounted = script.new(screen)
+	screen.set_meta("selftest", test)
+	test.run.call_deferred()
+
+
 ## headless 模擬：不開視窗跑 N 個 tick，輸出狀態摘要 JSON 到 stdout 後退出。
 ##
 ## **平衡調校的主力工具**（`CLAUDE.md`「跑與測」）：它跑的是與 `TL_PANEL=battle`

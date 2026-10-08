@@ -20,6 +20,7 @@ const Roster := preload("res://data/Roster.gd")
 const Daily := preload("res://scripts/sim/Daily.gd")
 const Loadout := preload("res://scripts/sim/Loadout.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
+const Progress := preload("res://scripts/meta/Progress.gd")
 const CampaignData := preload("res://data/Campaign.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const MapsData := preload("res://data/Maps.gd")
@@ -119,31 +120,31 @@ func _run(map_def: Dictionary, ops: Array, levels: Dictionary) -> Dictionary:
 
 func _components_are_derived(t: T) -> void:
 	var d := _fresh()
-	t.eq(SaveService.components(d), 0, "新存檔沒有材料")
-	t.eq(SaveService.apply_components(d, 12), 12, "局末給的就是波數")
-	t.eq(SaveService.components(d), 12, "進帳算進餘額")
-	t.eq(SaveService.apply_components(d, 0), 0, "零波不給（測試圖與沙盤走這條）")
-	t.eq(SaveService.apply_components(d, -5), 0, "負波不給（不該有，但不能倒扣）")
+	t.eq(Progress.components(d), 0, "新存檔沒有材料")
+	t.eq(Progress.apply_components(d, 12), 12, "局末給的就是波數")
+	t.eq(Progress.components(d), 12, "進帳算進餘額")
+	t.eq(Progress.apply_components(d, 0), 0, "零波不給（測試圖與沙盤走這條）")
+	t.eq(Progress.apply_components(d, -5), 0, "負波不給（不該有，但不能倒扣）")
 
 	# 買一級 → 餘額減掉那一級的價，**而且沒有任何欄位被減**。
 	var before_battle := int((d["levels"] as Dictionary)["from_battle"])
-	t.ok(SaveService.apply_level_up(d, Levels.TOWER), "材料夠就升得了級")
-	t.eq(SaveService.components(d), 12 - Levels.cost(0), "★ 升級之後餘額扣掉那一級的價")
+	t.ok(Progress.apply_level_up(d, Levels.TOWER), "材料夠就升得了級")
+	t.eq(Progress.components(d), 12 - Levels.cost(0), "★ 升級之後餘額扣掉那一級的價")
 	t.eq(int((d["levels"] as Dictionary)["from_battle"]), before_battle,
 		"★ 累計欄位沒被動過（花費是由等級反推的，不是扣出來的）")
-	t.ok(not SaveService.apply_level_up(d, Levels.TOWER), "材料不夠就升不了")
+	t.ok(not Progress.apply_level_up(d, Levels.TOWER), "材料不夠就升不了")
 	t.eq(Levels.level_of(d, Levels.TOWER), 1, "升不了就不動等級")
-	t.ok(not SaveService.apply_level_up(d, "nonsense"), "不存在的軸不動任何東西")
+	t.ok(not Progress.apply_level_up(d, "nonsense"), "不存在的軸不動任何東西")
 
 	# 滿級之後不再收費、也不再升。
 	var rich := _fresh()
-	SaveService.apply_components(rich, 99999)
+	Progress.apply_components(rich, 99999)
 	for _i in Levels.MAX_LEVEL + 3:
-		SaveService.apply_level_up(rich, Levels.LINE)
+		Progress.apply_level_up(rich, Levels.LINE)
 	t.eq(Levels.level_of(rich, Levels.LINE), Levels.MAX_LEVEL, "★ 滿級就停住")
-	var at_max := SaveService.components(rich)
-	SaveService.apply_level_up(rich, Levels.LINE)
-	t.eq(SaveService.components(rich), at_max, "★ 滿級之後再按也不扣款")
+	var at_max := Progress.components(rich)
+	Progress.apply_level_up(rich, Levels.LINE)
+	t.eq(Progress.components(rich), at_max, "★ 滿級之後再按也不扣款")
 	t.eq(Levels.cost(Levels.MAX_LEVEL), 0, "滿級的下一級無價")
 
 
@@ -155,7 +156,7 @@ func _battle_payout_is_monotone(t: T) -> void:
 	var prev := -1
 	for waves in [0, 1, 3, 5, 10, 50]:
 		var d := _fresh()
-		var got := SaveService.apply_components(d, waves)
+		var got := Progress.apply_components(d, waves)
 		t.ok(got > prev or waves == 0, "波數 %d 的材料不低於前一級" % waves)
 		prev = got
 	# 戰役五關各自的波數（`data/Enemies.gd`）：第 5 關必須不劣於第 1 關。
@@ -175,9 +176,9 @@ func _achievements_are_derived(t: T) -> void:
 	# 達成 → 獎勵當場在餘額裡，**沒有領取這個動作**。
 	((d["campaign"] as Dictionary)["stars"] as Dictionary)[CampaignData.id_at(0)] = 1
 	t.ok(Achievements.done(d).has("clear1"), "通關一關 → 初次通關")
-	t.eq(SaveService.components(d), 20, "★ 達成的當下獎勵就在餘額裡（沒有領取鈕）")
+	t.eq(Progress.components(d), 20, "★ 達成的當下獎勵就在餘額裡（沒有領取鈕）")
 	# 再算一次不會變多——這就是「不可能重複發放」。
-	t.eq(SaveService.components(d), 20, "★ 重算不重複發放（成就沒有 claimed 清單）")
+	t.eq(Progress.components(d), 20, "★ 重算不重複發放（成就沒有 claimed 清單）")
 
 	# 券的第四條路是**加法**：`Roster.earned()` 沒有因此少算別的來源。
 	var stars_only := _fresh()
@@ -241,13 +242,13 @@ func _achievement_table_is_consistent(t: T) -> void:
 ## out20／out50 五條成就**永遠是 0／N**，而整份測試連續三批全綠。
 ##
 ## 這一條改問另一個問題：**寫進去之後它會不會動。**
-## 差別在於它走的是 `SaveService.apply_endless()`——玩家打完一局走的那條路
+## 差別在於它走的是 `Progress.apply_endless()`——玩家打完一局走的那條路
 ## ——而不是自己在字典裡塞一個鍵。測試自己捏形狀，就驗不到形狀改了。
 func _metrics_move_with_real_writes(t: T) -> void:
 	var d := _fresh()
 	t.eq(int(Achievements.metrics(d)["best_wave"]), 0, "（對照）沒打過無盡時是 0")
 
-	SaveService.apply_endless(d, 60, 60.0, 0)
+	Progress.apply_endless(d, 60, 60.0, 0)
 	var after := Achievements.metrics(d)
 	t.ok(int(after["best_wave"]) >= 60, "★★ apply_endless 之後 best_wave 真的動了")
 	t.ok(int(after["best_output"]) >= 60, "★★ apply_endless 之後 best_output 真的動了")
@@ -259,7 +260,7 @@ func _metrics_move_with_real_writes(t: T) -> void:
 
 	# 券的那條路同樣要通（`Roster.earned()` 讀的是同一個量）。
 	var tok := _fresh()
-	SaveService.apply_endless(tok, Roster.WAVE_PER_TOKEN * 2, 0.0, 0)
+	Progress.apply_endless(tok, Roster.WAVE_PER_TOKEN * 2, 0.0, 0)
 	t.eq(Roster.earned(tok), 2, "★★ 無盡 %d 波 ＝ 2 券（B2.6 起這條路一張都沒發過）" % (
 		Roster.WAVE_PER_TOKEN * 2
 	))
@@ -267,7 +268,7 @@ func _metrics_move_with_real_writes(t: T) -> void:
 	# 高難度層的紀錄一樣算數：局外里程碑不該逼玩家回第 0 層再刷一次，
 	# 而第 3 層的 30 波嚴格難於第 0 層的 30 波。
 	var tiered := _fresh()
-	SaveService.apply_endless(tiered, 30, 0.0, 3)
+	Progress.apply_endless(tiered, 30, 0.0, 3)
 	t.eq(
 		int(Achievements.metrics(tiered)["best_wave"]), 30,
 		"★ 第 3 層的波數一樣進得了局外里程碑"
@@ -295,16 +296,16 @@ func _free_to_play_can_max_levels(t: T) -> void:
 	# ★ tycoon 一動也沒動。
 	t.eq(d["tycoon"], (SaveService.defaults()["tycoon"] as Dictionary),
 		"★ 這份存檔從沒開過潮汐公司")
-	var tycoon_free := SaveService.components(d)
+	var tycoon_free := Progress.components(d)
 	t.ok(tycoon_free > 0, "純塔防的成就真的發得出材料（得到 %d）" % tycoon_free)
 
 	# 剩下的缺口用局末波數補。**算得出來要打幾波**才是一條有意義的斷言。
 	var need := Levels.total_cost() * Levels.AXES.size()
 	var short := maxi(0, need - tycoon_free)
-	SaveService.apply_components(d, short)
+	Progress.apply_components(d, short)
 	for axis: String in Levels.AXES:
 		for _i in Levels.MAX_LEVEL:
-			SaveService.apply_level_up(d, axis)
+			Progress.apply_level_up(d, axis)
 	for axis: String in Levels.AXES:
 		t.eq(Levels.level_of(d, axis), Levels.MAX_LEVEL,
 			"★ 從沒開過 tycoon 的存檔把「%s」推到滿級（憲法 B6）" % axis)
@@ -316,7 +317,7 @@ func _free_to_play_can_max_levels(t: T) -> void:
 
 	# 反向對照：一份零進度的存檔**升不了任何一級**——上面那條不是因為到處白送。
 	var virgin := _fresh()
-	t.ok(not SaveService.apply_level_up(virgin, Levels.TOWER),
+	t.ok(not Progress.apply_level_up(virgin, Levels.TOWER),
 		"★ 反向對照：零進度的存檔一級都升不了")
 
 
@@ -390,12 +391,12 @@ func _save_round_trip(t: T) -> void:
 	var fixed := SaveService.normalize(legacy)
 	t.ok(fixed.has("levels"), "★ B2.5 以前的存檔補得出 levels 這一格")
 	t.eq(Levels.level_of(fixed, Levels.TOWER), 0, "補出來的是零級")
-	t.eq(SaveService.components(fixed), 0, "補出來的是零材料")
+	t.eq(Progress.components(fixed), 0, "補出來的是零材料")
 
 	var d := _fresh()
-	SaveService.apply_components(d, 40)
-	SaveService.apply_level_up(d, Levels.TOWER)
+	Progress.apply_components(d, 40)
+	Progress.apply_level_up(d, Levels.TOWER)
 	var text := JSON.stringify(d)
 	var back: Dictionary = SaveService.normalize(JSON.parse_string(text) as Dictionary)
 	t.eq(Levels.level_of(back, Levels.TOWER), 1, "等級存得回來")
-	t.eq(SaveService.components(back), SaveService.components(d), "餘額存得回來")
+	t.eq(Progress.components(back), Progress.components(d), "餘額存得回來")
