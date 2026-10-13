@@ -12,7 +12,7 @@ const NodeDefs := preload("res://data/NodeDefs.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const BattleScreen := preload("res://scripts/screens/Battle.gd")
 const TechScreen := preload("res://scripts/screens/Tech.gd")
-const Glyphs := preload("res://scripts/render/Glyphs.gd")
+const Glyphs := preload("res://scripts/render/2d/Glyphs.gd")
 
 ## 卡片寬度。五張 ＋ 四道間距要放進 1280 的設計基準。
 const CARD := Vector2(228, 300)

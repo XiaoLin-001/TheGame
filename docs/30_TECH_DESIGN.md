@@ -49,7 +49,7 @@
 │  把玩家操作翻譯成模擬層的指令；擁有當前局的狀態                   │
 ├─────────────────────────────────────────────────────────────┤
 │  scripts/sim/          ★★★  ── 模擬層（純函式、零副作用、零 RNG）│
-│  FlowNetwork / Combat / WaveGen / Score                      │
+│  FlowNetwork / Combat / Tide / Build / MapGen / Score         │
 │  同輸入必同輸出。這是確定性、可重播、可驗證榜單的地基             │
 ├─────────────────────────────────────────────────────────────┤
 │  scripts/core/                ── 服務層（autoload）           │
@@ -59,25 +59,31 @@
 
 ### 2.2 目錄結構
 
+> 比這裡更細的「哪個檔案負責什麼、砍了會怎樣、想做某件事去哪裡」在 `60_CODE_MAP.md`；
+> 依賴方向由 `python qa/gd_graph.py --layers` 守著。
+
 ```
 TheGame/
-├── CLAUDE.md
-├── CHANGELOG.md
-├── docs/                       00–50 五份權威文件
+├── CLAUDE.md / README.md / CHANGELOG.md
+├── docs/                       00–70 八份文件（00–50 權威、60 程式碼地圖、70 3D 轉換準備）
+├── dev/                        setup.py / play.bat / export.bat（環境、開遊戲、匯出）
+├── qa/                         check.py（統一入口）/ gd_lint.py / gd_graph.py / copy_*.py
+├── assetgen/                   gen_audio.py（音源的原始碼）
 ├── tools/godot/                （gitignore）Godot console exe
 └── godot/
     ├── project.godot           設定 + autoload 註冊
     ├── scripts/
-    │   ├── core/               GameState.gd / SaveService.gd / Hooks.gd / AudioBus.gd / Rng.gd
-    │   ├── sim/          ★     FlowNetwork.gd / Combat.gd / WaveGen.gd / MapGen.gd / Score.gd
-    │   ├── game/               BattleController.gd / BuildController.gd / SessionState.gd
-    │   ├── screens/            Title / MainMenu / Battle / Result / TechTree / Roster / Tycoon / Settings
-    │   ├── render/             Palette.gd / Shapes.gd / Motion.gd / Glyphs.gd / Foes.gd / Terrain.gd（美術 token 實作；Glyphs＝節點幾何的純函式＋體積語言、Terrain＝地貌，畫在快取的一層）
+    │   ├── core/               GameState / SaveService / Hooks / AudioBus / Rng ＋ Env（鉤子讀取層）
+    │   ├── sim/          ★     FlowNetwork / Combat / Tide / Build / MapGen / Score / Clock / Daily / Blueprint / Loadout
+    │   ├── game/               BattleController（每 tick 解算）/ BuildController / SessionState
+    │   ├── meta/               TycoonSim（局外系統的純函式狀態機）
+    │   ├── render/             共用美術 token：Palette / Motion / Shapes
+    │   │   └── 2d/             2D 專用：Glyphs（節點幾何）/ Foes（敵人幾何）/ Terrain（地貌）/ TitleBackdrop
     │   ├── ui/                 UiKit.gd（共用 UI helpers，static）
-    │   └── meta/               TechTree.gd / RosterData.gd / TycoonSim.gd
-    ├── data/                   角色、敵人、關卡、訂單的資料表（.json 或 .tres）
-    ├── tests/                  flow_test.gd / build_test.gd / tide_test.gd / combat_test.gd / save_test.gd / determinism_test.gd
-    └── assets/audio/
+    │   └── screens/            各畫面；局內畫面見 §2.6
+    ├── data/                   節點、敵人、地圖、戰役、科技、等級軸、成就、難度層、名冊的資料表（GDScript 表 ＋ 讀它的純函式）
+    ├── tests/                  19 支 headless 測試 ＋ 輔助
+    └── assets/audio/           bgm 3 首、sfx 14 支（程序生成）
 ```
 
 ### 2.3 狀態擁有權
@@ -178,6 +184,34 @@ TheGame/
 **為什麼不做實體物品搬運**：Factorio 式的物品實體模擬複雜度是 `O(物品數)`（可達數萬），效能與確定性都會成為長期負債，且不符極簡幾何美術。流量模型在**視覺上更清楚**（線的粗細直接表達吞吐）、在**玩法上更聚焦於拓樸與取捨**，這正是本作要的。
 
 ---
+
+### 2.6 局內畫面的模組化（B3.14）
+
+`screens/Battle.gd` 原本是 5316 行的單一類別（畫圖、輸入、十幾個面板、自檢全在裡面）。
+成員交叉分析（哪個函式引用哪個成員）顯示**繪圖層是葉節點**——UI 與輸入從不呼叫它——所以可以無痛切開。
+現在它是**指揮者**，其餘在 `screens/battle/`，每個模組是 `Battle` 的**子節點**（`extends Node`／`Control`）：
+
+| 模組 | 負責 | 備註 |
+|---|---|---|
+| `Stage.gd`（契約）／`Stage2D.gd` | 視野、投影、拾取、全部 `_draw_*` | **2D→3D 的接縫**，見 `70_3D_MIGRATION.md` §3 |
+| `Overlay2D.gd` | 能量列、小地圖、邊緣箭頭（螢幕座標） | 3D 之後原封不動 |
+| `Feedback.gd` | 從狀態差值推導音效與死因 | 模擬層不知道它存在（sim 零副作用） |
+| `hud/*.gd`（11 個） | 各面板：擁有自己的 widget、狀態、更新、事件處理 | 版面（誰放哪、加入順序）留在 `Battle._build_ui()` |
+| `SelfTest.gd` | `TL_CLICKTEST`／`TL_STRESS`／示範佈局 | 一般遊玩閒置；約 1400 行 |
+
+**接線約定**：模組想用另一個模組，就在自己身上宣告一個**同名欄位**（欄位名 ＝ `Battle.gd` 頂端的變數名：
+`stage`、`topbar`、`inspector`…）；`Battle._wire_modules()` 對號入座。要用主畫面本身就走 `scr`。
+需要 `s`（`SessionState`）的模組宣告 `var s`，`_bind_session()` 在**每次換局後**重新指派。
+
+**子節點的加入順序就是繪圖順序與命中順序**：舞台在最底、覆蓋層次之、HUD widget 最上；
+`Battle.restart()` 只重建 HUD 的 widget，**不得**對 `get_children()` 一律 `queue_free()`（RG-178）。
+
+⚠ 這套是**動態呼叫**：跨模組的 `scr.xxx`／`stage.xxx` 在編譯期不會因為成員不存在而報錯（欄位有型別時也一樣），
+打錯字要到執行期才炸——clicktest 是它的網。另外兩個踩過的坑：型別陣列字面量經過動態呼叫會退化成 untyped
+`Array`（要先宣告 `var x: Array[String] = [...]` 再傳）；`:=` 推不出跨模組呼叫的回傳型別（要明寫）。
+
+**驗證手法**（搬動程式碼的批次通用）：`python qa/check.py shots OUT --against BASE` 要求 32 張 **0 像素差**
+——截圖在 `TL_SHOT` 下是確定性的。B3.14 的三步（拆舞台、拆 HUD、HUD 自建 widget）每一步都過了它。
 
 ## 3. 存檔設計
 

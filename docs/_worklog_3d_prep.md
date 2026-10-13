@@ -36,23 +36,29 @@ Phase 3：render/ 分 2D 專用與共用；Main.gd 標題背景抽出
 
 ## 已完成
 
-- [x] 分支 `3D-project`
-- [x] 基線測試／截圖
-- [x] `qa/check.py`（統一入口）、`dev/setup.py`／`play.bat`／`export.bat`
+- [x] 分支 `3D-project`（從 master `0621b0b` 切出；**未 push**）
+- [x] 基線：19 支測試全過、gd_lint 0 條、截圖基線 32 張（兩次重拍 0 像素差＝確定性）
+- [x] `qa/check.py`（統一入口）、`dev/setup.py`／`play.bat`／`export.bat`、`qa/gd_graph.py`（依賴圖／砍除分析／分層檢查）
+- [x] Phase 1（60791e5）：Battle.gd → Stage／Stage2D／Overlay2D／Feedback／SelfTest（5316→2336）
+- [x] Phase 2（05cd566）：HUD 11 個面板到 `screens/battle/hud/`（→800 行）；Phase 2b（4b67cbc）各面板自建 widget（→約 690 行）
+- [x] 以上每一步：32 張截圖逐像素 0 差、clicktest 全過
+- [x] F-1 TL_PICK 漏列（修；gd_lint 規則 8 防再犯）、F-2 重來之後地貌消失（修；clicktest restart 段落）
+- [x] 文件草稿：README.md、docs/60_CODE_MAP.md、docs/70_3D_MIGRATION.md（數字待最後校正）
 
-- [x] Phase 1（commit 60791e5）：Battle.gd → Stage/Stage2D/Overlay2D/Feedback/SelfTest（5316→2336 行）。截圖 32/32 逐像素 0 差、clicktest 全過
-- [x] F-2 已驗證為真 bug 並修掉（重來之後地貌消失），clicktest 新增 restart 段落
+## 下一步（照順序）
 
-## 下一步
+- [ ] （進行中）Phase 3：render/2d/（Glyphs／Foes／Terrain 搬家；TitleBackdrop 從 Main.gd 抽出）→ 驗證 → commit
+- [ ] 全測試（19 支，含 campaign）＋ 效能量測（baseline vs 現在；TL_STRESS 在這台機器被釘 133ms，RG-177，要換量法）
+- [ ] 程式碼審查找 bug（聚焦：存檔遷移、離線結算、每日換日、設定套用、Hooks）
+- [ ] 文件校正：60／70 的行數、CLAUDE.md 結構段與指令、30_TECH_DESIGN §結構、20/10 內的 `Battle._draw_*` 路徑、CHANGELOG、50_QA_PLAN 缺陷登記（RG-178 重來地貌、RG-179 TL_PICK）、40_PRODUCTION_PLAN §5
+- [ ] VERSION bump（0.43.0）→ 匯出 exe → 在 exe 上跑 clicktest ＋ 截圖（確認版本號是新的）
+- [ ] （選配）Stage3D 脊椎 spike，放在 TL 鉤子後面、預設 2D
+- [ ] 最後：整理給使用者的簡報（要他決斷的：D1–D7 摘要、是否 push）
 
-- [ ] （進行中）Phase 2：HUD 面板拆到 `screens/battle/hud/`（spec2.py，`gdsplit2.py`）
-- [ ] Phase 3：render/ 分 2D 專用；Main.gd 標題背景抽出
-- [ ] 修 F-1（Env.HOOKS 補 TL_PICK）；繼續查 bug：全測試、exe 匯出驗證、程式碼審查
-- [ ] 文件：docs/60_CODE_MAP.md、docs/70_3D_MIGRATION.md、README、CLAUDE.md 結構段、CHANGELOG、50_QA_PLAN 缺陷登記、VERSION bump
+## 發現的問題
 
-## 發現的問題（待登記進 50_QA_PLAN.md 的缺陷登記簿）
-
-| 暫編 | 說明 | 狀態 |
+| 編號 | 說明 | 狀態 |
 |---|---|---|
-| F-1 | `Env.HOOKS` 漏列 `TL_PICK`：單獨使用它時 `any_hook()` 為假 → 存檔不受保護（同 RG-61 的 TL_LEVEL／TL_FOCUS 舊案） | 待修 |
-| F-2（已修） | `Battle._restart()` 對 `get_children()` 全部 `queue_free()`，包含地貌層 `_terrain_layer`（未歸 null）→ 重來之後地貌消失 | ✅ 已驗證並修掉（RG-177） |
+| RG-178 | `Battle._restart()` 對 `get_children()` 全部 `queue_free()`，連地貌層一起砍掉；`_terrain_id` 沒變所以不會重建 → 按「立刻重來」之後整張圖地貌消失（master 上已驗證：截圖前後差異；修後逐像素相同） | ✅ 已修 |
+| RG-179 | `Env.HOOKS` 漏列 `TL_PICK`：單獨使用時 `any_hook()` 為假 → 存檔不受保護（RG-61 的同一個錯第三次） | ✅ 已修；`gd_lint` 規則 8 |
+| （觀察） | 重構時差點踩到：成員改名後，函式參數與新成員同名（`_on_mode(…, mode)` 變 `mode = mode`）；外部畫面（Campaign）讀 Battle 內部欄位——只 grep tests/ 會漏 | 已處理；工具 `gdsplit2` 有 shadow 檢查 |

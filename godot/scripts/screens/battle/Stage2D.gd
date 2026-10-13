@@ -19,9 +19,9 @@ const Combat := preload("res://scripts/sim/Combat.gd")
 const Blueprint := preload("res://scripts/sim/Blueprint.gd")
 const FlowNetwork := preload("res://scripts/sim/FlowNetwork.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
-const Glyphs := preload("res://scripts/render/Glyphs.gd")
-const Foes := preload("res://scripts/render/Foes.gd")
-const Terrain := preload("res://scripts/render/Terrain.gd")
+const Glyphs := preload("res://scripts/render/2d/Glyphs.gd")
+const Foes := preload("res://scripts/render/2d/Foes.gd")
+const Terrain := preload("res://scripts/render/2d/Terrain.gd")
 
 
 ## ★ 開打漣漪的壽命（秒，B3.11）。號令音 `wave_start` 有 1.7 秒，漣漪比它短——
@@ -1002,7 +1002,7 @@ func _shot_reclaim(a: Vector2, b: Vector2, t: float) -> void:
 
 ## 敵潮屬於**混沌**側（`20_ART_DIRECTION.md` §0）：不規則凸包、不對齊網格、
 ## 呼吸式脈動。玩家的一切則是正圓正方、嚴格對齊——這個對比就是主題本身。
-## ★ B3.12：幾何搬進 `render/Foes.gd`（純函式、全由機制欄位推導；`hud_test` 量它
+## ★ B3.12：幾何搬進 `render/2d/Foes.gd`（純函式、全由機制欄位推導；`hud_test` 量它
 ##   的行進軸 footprint）。這裡只剩**狀態**：受擊亮階、被光環抓住的青圈、血量弧
 ##   ——三者各答一題、形狀各不相同（§4.3b）。
 func _draw_enemies() -> void:
