@@ -137,9 +137,9 @@ func _glyph_selftest() -> void:
 					flows.get((s.conduits[best])["id"], 0.0)
 				):
 					best = i
-			scr._select_wire(int((s.conduits[best])["id"]))
+			scr.inspector.select_wire(int((s.conduits[best])["id"]))
 		for n: Dictionary in s.nodes:
-			if scr._sel_wire >= 0:
+			if scr.sel_wire >= 0:
 				break
 			var ty := String(n["type"])
 			if float(NodeDefs.of(ty).get("range", 0.0)) <= 0.0:
@@ -177,7 +177,7 @@ func _glyph_selftest() -> void:
 	#   兩件事一起驗，因為它們是同一個錯法。
 	var blank := PackedStringArray()
 	for ty: String in NodeDefs.BUILDABLE:
-		if scr._codex_lines(ty).size() < 2 or String(scr._codex_lines(ty)[1]).strip_edges() == "":
+		if scr.codexpanel._codex_lines(ty).size() < 2 or String(scr.codexpanel._codex_lines(ty)[1]).strip_edges() == "":
 			blank.append(ty)
 	blank.sort()
 	var ok: bool = missing.is_empty() and blank.is_empty()
@@ -206,7 +206,7 @@ func _topbar_selftest() -> void:
 	var ore_before: float = s.ore
 	var xs := func() -> PackedFloat32Array:
 		var out := PackedFloat32Array()
-		for c: Node in scr._top.get_children():
+		for c: Node in scr.topbar.top.get_children():
 			out.append((c as Control).global_position.x)
 		return out
 	var same := func(a: PackedFloat32Array, b: PackedFloat32Array) -> bool:
@@ -217,19 +217,19 @@ func _topbar_selftest() -> void:
 				return false
 		return true
 	s.ore = 1111.0
-	scr._refresh_top()
+	scr.topbar.refresh_top()
 	await get_tree().process_frame
 	var base: PackedFloat32Array = xs.call()
 	s.ore = 8888.0
-	scr._refresh_top()
+	scr.topbar.refresh_top()
 	await get_tree().process_frame
 	var digits_ok: bool = same.call(base, xs.call())
 	s.ore = 99.0
-	scr._refresh_top()
+	scr.topbar.refresh_top()
 	await get_tree().process_frame
 	var width_ok: bool = same.call(base, xs.call())
 	s.ore = ore_before
-	scr._refresh_top()
+	scr.topbar.refresh_top()
 	print("[TL_CLICKTEST/topbar] 同位數不位移=%s 任意位數不位移=%s → %s" % [
 		digits_ok, width_ok, "PASS" if (digits_ok and width_ok) else "FAIL",
 	])
@@ -252,8 +252,8 @@ func click_selftest() -> void:
 		return
 	# 有示範佈局在場時只驗浮層：地圖上的格子被佔走了，建造斷言本來就不成立。
 	if s.nodes.size() > 1:
-		scr._energy_button.button_pressed = true
-		scr._on_codex_show("prism", scr._build_buttons["prism"])
+		scr.energypanel.energy_button.button_pressed = true
+		scr.codexpanel.on_codex_show("prism", scr.buildbar.build_buttons["prism"])
 		print("[TL_CLICKTEST] 示範佈局在場，只開浮層（建造斷言略過）")
 		return
 	var ore: Vector2i = (s.map["ore"] as Array)[0]
@@ -266,11 +266,11 @@ func click_selftest() -> void:
 
 	_click(on_path)          # 路徑格禁節點 → 要被擋下且**說明原因**
 	await _frames(3)
-	var rejected: bool = s.nodes.size() == before + 1 and scr._message.begins_with("✕")
+	var rejected: bool = s.nodes.size() == before + 1 and scr.message.begins_with("✕")
 
 	# ★ 45° 導管（使用者回報「沒辦法 45 度放置管道」）：在礦點的正斜角放一個
 	#   中繼，再從一端拖到另一端。整條路徑都走真實輸入——包含按鈕。
-	_press(scr._build_buttons["relay"])
+	_press(scr.buildbar.build_buttons["relay"])
 	var from := Vector2i(10, 10)
 	var to := Vector2i(13, 13)     # 正斜角，且遠離路徑（路徑走 y=4 與 x=30）
 	_click(from)
@@ -285,7 +285,7 @@ func click_selftest() -> void:
 	#   兩個對角相鄰的節點之間——連一個中間格都沒有，舊的格子命中判定必然落空。
 	#   ★ B3.7.1：升級模式沒有了，這條改走**選取 → 面板加粗**的新路徑。
 	#     驗的仍然是同一件事：**那個像素點命不命中得到這條線**，那才是當年壞掉的地方。
-	_press(scr._build_buttons["relay"])
+	_press(scr.buildbar.build_buttons["relay"])
 	_click(Vector2i(6, 12))
 	_click(Vector2i(7, 13))
 	await _frames(3)
@@ -294,9 +294,9 @@ func click_selftest() -> void:
 	_click_at(stage.to_screen((stage.center(Vector2i(6, 12)) + stage.center(Vector2i(7, 13))) * 0.5))
 	await _frames(3)
 	var short_diag: int = s.conduit_near(Vector2(6.5, 12.5))
-	var picked_diag: bool = short_diag >= 0 and scr._sel_wire == int((s.conduits[short_diag])["id"])
+	var picked_diag: bool = short_diag >= 0 and scr.sel_wire == int((s.conduits[short_diag])["id"])
 	if picked_diag:
-		_click_button(scr._inspect_up)
+		_click_button(scr.inspector._inspect_up)
 		await _frames(3)
 	short_diag = s.conduit_near(Vector2(6.5, 12.5))
 	var upgraded: bool = (
@@ -311,19 +311,19 @@ func click_selftest() -> void:
 	await _frames(3)
 	var ore_before: float = s.ore
 	var price := Build.node_upgrade_cost(NodeDefs.cost("relay"), 0)
-	_click_button(scr._inspect_up)
+	_click_button(scr.inspector._inspect_up)
 	await _frames(3)
 	var node_lvl: bool = int(s.node_at(lvl_cell).get("level", 0)) == 1
 	var node_paid: bool = is_equal_approx(s.ore, ore_before - float(price))
 	# ★ **鈕不得在按下之後跑掉**（B3.9.1，使用者回報「點了升級之後，滑鼠會位移到
 	#   一個很奇怪的位置」）。位移的不是游標是面板——見 `_place_inspect` 那段。
-	var btn_at: Vector2 = scr._inspect_up.global_position
+	var btn_at: Vector2 = scr.inspector._inspect_up.global_position
 	var btn_drift := 0.0
 	# 上限是規則：連按八次也只到 5 級（B3.9；滿級之後那顆鈕自己會關掉）。
 	for _i in 8:
-		_click_button(scr._inspect_up)
+		_click_button(scr.inspector._inspect_up)
 		await get_tree().process_frame
-		btn_drift = maxf(btn_drift, btn_at.distance_to(scr._inspect_up.global_position))
+		btn_drift = maxf(btn_drift, btn_at.distance_to(scr.inspector._inspect_up.global_position))
 	var node_cap: bool = int(s.node_at(lvl_cell).get("level", 0)) == Build.NODE_MAX_LEVEL
 	# ⚠ 上面那一條只量得到「這一輪的字剛好有沒有變長」——**在舊程式碼下它照樣是
 	#   綠的**（中繼那一格升五級，最長的一行沒變）。所以再直接量**規矩本身**：
@@ -331,15 +331,15 @@ func click_selftest() -> void:
 	#   （頂邊本來就該隨內容上下長）。
 	# 型別陣列字面量經過動態呼叫會退化成 untyped `Array`，所以先明寫型別再傳。
 	var short_lines: Array[String] = ["短"]
-	scr._place_inspect(short_lines)
+	scr.inspector._place_inspect(short_lines)
 	await get_tree().process_frame
-	var box_short := Rect2(scr._inspect_panel.position, scr._inspect_panel.size)
+	var box_short := Rect2(scr.inspector._inspect_panel.position, scr.inspector._inspect_panel.size)
 	var long_lines: Array[String] = []
 	for _i in 12:
 		long_lines.append("這一行刻意寫得很長很長很長很長很長很長很長很長很長很長")
-	scr._place_inspect(long_lines)
+	scr.inspector._place_inspect(long_lines)
 	await get_tree().process_frame
-	var box_long := Rect2(scr._inspect_panel.position, scr._inspect_panel.size)
+	var box_long := Rect2(scr.inspector._inspect_panel.position, scr.inspector._inspect_panel.size)
 	var pos_stable: bool = (
 		absf(box_short.position.x - box_long.position.x) < 0.5
 		and absf(box_short.end.y - box_long.end.y) < 0.5
@@ -347,8 +347,8 @@ func click_selftest() -> void:
 	# ⚠ 量完要**把尺寸也收掉**，不只是內容：面板是直接掛在畫面上的自由 Control，
 	#   而 Godot 只讓這種 Control 長到最小尺寸、**不會自己縮回去**。留著那 12 行
 	#   撐出來的 552px 高度，後面那條中鍵平移就拖不動了（當場紅了一次）。
-	scr._inspect_panel.size = Vector2.ZERO
-	scr._refresh_inspect()
+	scr.inspector._inspect_panel.size = Vector2.ZERO
+	scr.inspector.refresh_inspect()
 	var btn_still: bool = btn_drift < 0.5 and pos_stable
 	# 收起來，交給下一段從零開始驗「點一下就開」。
 	_click(lvl_cell)
@@ -362,30 +362,30 @@ func click_selftest() -> void:
 	#   視窗就一直開著（RG-164 的同一個形狀，B3.6 當場踩過）。
 	_click(lvl_cell)
 	await _frames(3)
-	var sel_open: bool = scr.selected == lvl_cell and scr._inspect_panel != null and scr._inspect_panel.visible
-	var sel_says: bool = sel_open and scr._inspect_label.text.contains(NodeDefs.label("relay"))
+	var sel_open: bool = scr.selected == lvl_cell and scr.inspector._inspect_panel != null and scr.inspector._inspect_panel.visible
+	var sel_says: bool = sel_open and scr.inspector._inspect_label.text.contains(NodeDefs.label("relay"))
 	# ★ 面板要**整個在畫面內**（RG-139／RG-149／RG-170 的同一句話第四次）。
 	var sel_inside: bool = sel_open and (
-		scr._inspect_panel.position.x >= 0.0
-		and scr._inspect_panel.position.y >= 0.0
-		and scr._inspect_panel.position.x + scr._inspect_panel.size.x <= float(scr.size.x) + 0.5
-		and scr._inspect_panel.position.y + scr._inspect_panel.size.y <= float(scr.size.y) + 0.5
+		scr.inspector._inspect_panel.position.x >= 0.0
+		and scr.inspector._inspect_panel.position.y >= 0.0
+		and scr.inspector._inspect_panel.position.x + scr.inspector._inspect_panel.size.x <= float(scr.size.x) + 0.5
+		and scr.inspector._inspect_panel.position.y + scr.inspector._inspect_panel.size.y <= float(scr.size.y) + 0.5
 	)
 	# ★ 和右上的能量面板**不得相交**（RG-162 那條，套在新的浮層上）。
 	#   兩個都開著才驗得到，所以先確定能量面板是開的。
 	var sel_clear := true
-	if scr._energy_panel != null and scr._energy_panel.visible and scr._inspect_panel.visible:
-		sel_clear = not Rect2(scr._energy_panel.position, scr._energy_panel.size).intersects(
-			Rect2(scr._inspect_panel.position, scr._inspect_panel.size)
+	if scr.energypanel.energy_panel != null and scr.energypanel.energy_panel.visible and scr.inspector._inspect_panel.visible:
+		sel_clear = not Rect2(scr.energypanel.energy_panel.position, scr.energypanel.energy_panel.size).intersects(
+			Rect2(scr.inspector._inspect_panel.position, scr.inspector._inspect_panel.size)
 		)
 	_click(lvl_cell)
 	await _frames(3)
-	var sel_toggles: bool = scr.selected.x < 0 and not scr._inspect_panel.visible
+	var sel_toggles: bool = scr.selected.x < 0 and not scr.inspector._inspect_panel.visible
 
 	# ★ 拖曳拉線（B1.6.2）：**全程停在建造模式**。會壞的地方有兩個——按下時
 	#   沒把起點記起來、放開的事件沒被路由到——而兩個都只有真的送出
 	#   「按下 → 移動 → 放開」三顆事件才驗得出來。
-	_press(scr._build_buttons["relay"])
+	_press(scr.buildbar.build_buttons["relay"])
 	_click(Vector2i(3, 8))
 	_click(Vector2i(3, 11))
 	await _frames(3)
@@ -401,43 +401,43 @@ func click_selftest() -> void:
 	# ⚠ **先把能量面板打開**。版面那一條要驗的正是「讓不讓得開鄰居」，而面板關著時
 	#   檢視面板貼在 y=56、離能量面板和小地圖都有幾百像素——那樣的斷言是**恆真**的。
 	#   （量了才知道：關著時它在 y 56–230，小地圖在 525–648。）
-	scr._energy_button.button_pressed = true
+	scr.energypanel.energy_button.button_pressed = true
 	await get_tree().process_frame
 	var wire_mid := stage.to_screen((stage.center(Vector2i(3, 8)) + stage.center(Vector2i(3, 11))) * 0.5)
 	var wire_id: int = int((s.conduits[s.conduits.size() - 1])["id"])
 	_click_at(wire_mid)
 	await _frames(3)
 	var wire_sel: bool = (
-		scr._sel_wire == wire_id and scr._inspect_panel != null and scr._inspect_panel.visible
-		and scr._inspect_label.text.contains("導管") and scr.selected.x < 0
+		scr.sel_wire == wire_id and scr.inspector._inspect_panel != null and scr.inspector._inspect_panel.visible
+		and scr.inspector._inspect_label.text.contains("導管") and scr.selected.x < 0
 	)
 	# 再點一次＝取消（選取是開關；沒有這條的話面板一開就關不掉，而它蓋著右半邊）。
 	_click_at(wire_mid)
 	await _frames(3)
-	var wire_toggle: bool = scr._sel_wire < 0 and not scr._inspect_panel.visible
+	var wire_toggle: bool = scr.sel_wire < 0 and not scr.inspector._inspect_panel.visible
 	_click_at(wire_mid)
 	await _frames(3)
 	# ★ 版面規則對**兩種選取都要成立**（RG-139／149／162／170 的同一句話）：
 	#   整個在畫面內、不疊能量面板、不疊小地圖那一角。導管面板比節點面板更高
 	#   （多一行「加粗後」），所以它才是會先掉出去的那一個。
-	var wire_rect := Rect2(scr._inspect_panel.position, scr._inspect_panel.size)
+	var wire_rect := Rect2(scr.inspector._inspect_panel.position, scr.inspector._inspect_panel.size)
 	var wire_fits: bool = (
-		scr._inspect_panel.visible
+		scr.inspector._inspect_panel.visible
 		and wire_rect.position.x >= 0.0 and wire_rect.position.y >= 0.0
 		and wire_rect.end.x <= float(scr.size.x) + 0.5 and wire_rect.end.y <= float(scr.size.y) + 0.5
 		and not wire_rect.intersects(overlay.minimap_rect())
 		and not (
-			scr._energy_panel != null and scr._energy_panel.visible
-			and Rect2(scr._energy_panel.position, scr._energy_panel.size).intersects(wire_rect)
+			scr.energypanel.energy_panel != null and scr.energypanel.energy_panel.visible
+			and Rect2(scr.energypanel.energy_panel.position, scr.energypanel.energy_panel.size).intersects(wire_rect)
 		)
 	)
 	# 加粗鈕：級數真的加了、礦砂**真的扣了**、而且扣的是那個價
 	#   （只驗級數的話，一個免費加粗的實作照樣全綠——B3.5 那條的同一句話）。
 	var w_ore0: float = s.ore
 	var w_price := Build.upgrade_cost(0)
-	_click_button(scr._inspect_up)
+	_click_button(scr.inspector._inspect_up)
 	await _frames(3)
-	var wi_now: int = scr.sel_wire_index()
+	var wi_now: int = scr.inspector.sel_wire_index()
 	var wire_up: bool = wi_now >= 0 and int((s.conduits[wi_now])["level"]) == 1 and (
 		is_equal_approx(s.ore, w_ore0 - float(w_price))
 	)
@@ -445,11 +445,11 @@ func click_selftest() -> void:
 	var w_ore1: float = s.ore
 	var w_refund := BuildController.conduit_refund(s.conduits[maxi(wi_now, 0)])
 	var wires_now: int = s.conduits.size()
-	_click_button(scr._inspect_del)
+	_click_button(scr.inspector._inspect_del)
 	await _frames(3)
 	var wire_del: bool = (
-		s.conduits.size() == wires_now - 1 and scr._sel_wire < 0
-		and not scr._inspect_panel.visible and is_equal_approx(s.ore, w_ore1 + float(w_refund.x))
+		s.conduits.size() == wires_now - 1 and scr.sel_wire < 0
+		and not scr.inspector._inspect_panel.visible and is_equal_approx(s.ore, w_ore1 + float(w_refund.x))
 	)
 
 	# ★ 同兩顆鈕的**節點**那一半：選一座建築，升級與拆除都在面板上。
@@ -459,17 +459,17 @@ func click_selftest() -> void:
 	await _frames(3)
 	var n_ore0: float = s.ore
 	var n_price := Build.node_upgrade_cost(NodeDefs.cost("relay"), 0)
-	_click_button(scr._inspect_up)
+	_click_button(scr.inspector._inspect_up)
 	await _frames(3)
 	var node_btn_up: bool = int(s.node_at(nd_cell).get("level", 0)) == 1 and (
 		is_equal_approx(s.ore, n_ore0 - float(n_price))
 	)
 	var n_ore1: float = s.ore
 	var n_refund := BuildController.node_refund("relay")
-	_click_button(scr._inspect_del)
+	_click_button(scr.inspector._inspect_del)
 	await _frames(3)
 	var node_btn_del: bool = (
-		s.node_at(nd_cell).is_empty() and scr.selected.x < 0 and not scr._inspect_panel.visible
+		s.node_at(nd_cell).is_empty() and scr.selected.x < 0 and not scr.inspector._inspect_panel.visible
 		and is_equal_approx(s.ore, n_ore1 + float(n_refund.x))
 	)
 	# ★ **核心兩顆鈕都不該在**：它升不得也拆不得，而一顆按下去保證失敗的鈕
@@ -483,8 +483,8 @@ func click_selftest() -> void:
 	_click(core_cell)
 	await _frames(3)
 	var core_verbs: bool = (
-		scr.selected == core_cell and scr._inspect_panel.visible
-		and not scr._inspect_up.visible and not scr._inspect_del.visible
+		scr.selected == core_cell and scr.inspector._inspect_panel.visible
+		and not scr.inspector._inspect_up.visible and not scr.inspector._inspect_del.visible
 	)
 	_click(core_cell)
 	await _frames(3)
@@ -501,20 +501,20 @@ func click_selftest() -> void:
 		) == Build.OK:
 			step_cell = cand2
 			break
-	_press(scr._build_buttons["anchor"])
+	_press(scr.buildbar.build_buttons["anchor"])
 	s.ore += 500.0
 	_click(step_cell)
 	await _frames(3)
 	_click(step_cell)          # 蓋完再點一下＝選取它
 	await _frames(3)
-	var step_lv0: String = scr._inspect_up.text
-	_click_button(scr._inspect_up)
+	var step_lv0: String = scr.inspector._inspect_up.text
+	_click_button(scr.inspector._inspect_up)
 	await _frames(3)
-	var step_lv1: String = scr._inspect_up.text
+	var step_lv1: String = scr.inspector._inspect_up.text
 	var step_says: bool = (
 		not s.node_at(step_cell).is_empty()
-		and step_lv0.contains(scr._step_text(Build.STEP_POWER))
-		and step_lv1.contains(scr._step_text(Build.STEP_ROF))
+		and step_lv0.contains(scr.codexpanel.step_text(Build.STEP_POWER))
+		and step_lv1.contains(scr.codexpanel.step_text(Build.STEP_ROF))
 		and step_lv0 != step_lv1
 	)
 
@@ -548,16 +548,16 @@ func click_selftest() -> void:
 	#   視窗外，那是合法的**，會害人的是被**釘住卻被擠出去**的那幾顆：
 	#     ① 三顆模式鈕與捲動容器本身：永遠不得越過底欄（它們不會捲）。
 	#     ② 最後一顆建造鈕：**捲到底之後**必須整顆在捲動視窗內（同科技樹 RG-47）。
-	var last_type: String = String(scr._buildable()[scr._buildable().size() - 1])
-	var last_button: Button = scr._build_buttons[last_type]
-	var pinned_ok: bool = scr._build_scroll.global_position.y + scr._build_scroll.size.y <= scr.BAR_Y
-	for b: Variant in scr._mode_buttons.values():
+	var last_type: String = String(scr.buildbar.buildable()[scr.buildbar.buildable().size() - 1])
+	var last_button: Button = scr.buildbar.build_buttons[last_type]
+	var pinned_ok: bool = scr.buildbar.build_scroll.global_position.y + scr.buildbar.build_scroll.size.y <= scr.BAR_Y
+	for b: Variant in scr.buildbar.mode_buttons.values():
 		var btn := b as Button
 		if btn.global_position.y + btn.size.y > scr.BAR_Y:
 			pinned_ok = false
-	scr._build_scroll.scroll_vertical = int(scr._build_scroll.get_v_scroll_bar().max_value)
+	scr.buildbar.build_scroll.scroll_vertical = int(scr.buildbar.build_scroll.get_v_scroll_bar().max_value)
 	await get_tree().process_frame
-	var view := Rect2(scr._build_scroll.global_position, scr._build_scroll.size)
+	var view := Rect2(scr.buildbar.build_scroll.global_position, scr.buildbar.build_scroll.size)
 	var reachable: bool = (
 		pinned_ok
 		and last_button.size.y >= 44.0
@@ -565,7 +565,7 @@ func click_selftest() -> void:
 	)
 	# ★ 捲回頂端。自檢**不得留下狀態**——`TL_CLICKTEST` 與 `TL_SHOT` 可以一起下
 	#   （CLAUDE.md「拍只有互動才到得了的狀態」），而捲到底的建造欄會被拍進去。
-	scr._build_scroll.scroll_vertical = 0
+	scr.buildbar.build_scroll.scroll_vertical = 0
 	_press(last_button)
 	# ★ 這一格要**沒有導管壓在格心**（B3.7）。原本寫死 (12,12)，而 B3.7 讓
 	#   「點在導管上」變成檢視那條線——(12,12) 正好有一條線經過，於是這一條
@@ -583,7 +583,7 @@ func click_selftest() -> void:
 	await _frames(3)
 	var alloy_gated: bool = (
 		NodeDefs.alloy_cost(last_type) > 0
-		and scr.build_type == last_type and scr._message.contains("合金")
+		and scr.build_type == last_type and scr.message.contains("合金")
 	)
 	print("[TL_CLICKTEST/select] 合金閘找到的空格 %s（要求：空地、蓋得下、格心上沒有導管）" % alloy_cell)
 
@@ -593,19 +593,19 @@ func click_selftest() -> void:
 	#   ⚠ 光驗 `_build_type == ""` 不夠：**取消之後點空地不該蓋出東西**，
 	#     而那是這件事唯一會咬到玩家的地方。用第一顆鈕（採集器）——最後一顆在
 	#     捲動區底部，合成點擊會打到它上面蓋著的東西。
-	_press(scr._build_buttons["extractor"])
+	_press(scr.buildbar.build_buttons["extractor"])
 	await _frames(3)
 	var armed: bool = scr.build_type == "extractor"
 	var nodes_before_idle: int = s.nodes.size()
-	_click_button(scr._build_buttons["extractor"])
+	_click_button(scr.buildbar.build_buttons["extractor"])
 	await _frames(3)
 	var disarmed: bool = armed and scr.build_type == ""
 	_click(alloy_cell)
 	await _frames(3)
 	# 空手點空地要**安靜地什麼都不做**——不是丟一句 ✕。「我只是想收起面板」
 	# 和「我蓋錯地方了」不是同一件事。
-	var idle_click: bool = disarmed and s.nodes.size() == nodes_before_idle and scr._message == ""
-	_press(scr._build_buttons["extractor"])
+	var idle_click: bool = disarmed and s.nodes.size() == nodes_before_idle and scr.message == ""
+	_press(scr.buildbar.build_buttons["extractor"])
 	await _frames(3)
 	var rearmed: bool = scr.build_type == "extractor"
 
@@ -613,7 +613,7 @@ func click_selftest() -> void:
 	#   **不直接呼叫 `Blueprint.capture()`**——那只驗得到純函式，而這一批
 	#   會壞的地方在「拖曳有沒有真的被當成框選」和「拿著藍圖時左鍵做什麼」。
 	GameState.data["blueprints"] = []
-	_press(scr._mode_buttons[scr.Mode.BLUEPRINT])
+	_press(scr.buildbar.mode_buttons[scr.Mode.BLUEPRINT])
 	var built_cells: Array[Vector2i] = []
 	for n: Dictionary in s.nodes:
 		if String(n["type"]) != "core":
@@ -650,7 +650,7 @@ func click_selftest() -> void:
 			if spot.x >= 0:
 				break
 	# 拿起來 → 左鍵點那一格 → 節點數要真的變多。
-	scr._on_take_blueprint(0)
+	scr.bppanel._on_take_blueprint(0)
 	var bp_nodes_before: int = s.nodes.size()
 	if spot.x >= 0:
 		_click(spot)
@@ -658,14 +658,14 @@ func click_selftest() -> void:
 	var bp_expanded: bool = s.nodes.size() > bp_nodes_before and scr.bp_index < 0
 	# ★ 錢不夠時要**說出缺口，而且一格都不放**（DoD 第二條）。
 	#   位置沿用同一格 → 唯一的失敗理由只剩錢。
-	scr._on_take_blueprint(0)
+	scr.bppanel._on_take_blueprint(0)
 	s.ore = 0.0
 	s.alloy = 0.0
 	var nodes_broke: int = s.nodes.size()
 	if spot.x >= 0:
 		_click(spot)
 	await _frames(2)
-	var bp_short: bool = scr._message.contains("礦砂差") and s.nodes.size() == nodes_broke
+	var bp_short: bool = scr.message.contains("礦砂差") and s.nodes.size() == nodes_broke
 	# ★ 把局面還原給後面的斷言用：**展開出來的節點要拆掉**、錢改回去、
 	#   藍圖放下、模式回建造。
 	#   少了這幾行，後面的視野／選單／局末三條會因為帳上是 0、或因為那幾格
@@ -680,38 +680,38 @@ func click_selftest() -> void:
 	s.alloy = alloy_keep
 	scr.bp_index = -1
 	GameState.data["blueprints"] = []
-	_press(scr._build_buttons["extractor"])
+	_press(scr.buildbar.build_buttons["extractor"])
 
 	# 三個浮層也走同一條真實路徑：按鈕 → 面板出現且有內容。
-	scr._energy_button.button_pressed = true
-	scr._on_codex_show("smelter", scr._build_buttons["smelter"])
-	scr._prio_panel.visible = true
+	scr.energypanel.energy_button.button_pressed = true
+	scr.codexpanel.on_codex_show("smelter", scr.buildbar.build_buttons["smelter"])
+	scr.priopanel.prio_panel.visible = true
 	await get_tree().process_frame
 	var energy_ok: bool = (
-		scr._energy_panel.visible and (scr._energy_rows["net"] as Label).text != ""
-		and scr._energy_rows.has("smelt")
+		scr.energypanel.energy_panel.visible and (scr.energypanel.energy_rows["net"] as Label).text != ""
+		and scr.energypanel.energy_rows.has("smelt")
 	)
 	# 圖鑑與能量是兩顆各自獨立的開關 → 玩家可以同時開。所以「不互相蓋掉」
 	# 和優先權面板一樣是斷言，不是希望（B1.6.2 的截圖上抓到它們疊在一起）。
 	var codex_ok: bool = (
-		scr._codex_panel.visible and scr._codex_label.text.contains("熔爐")
-		and scr._codex_panel.position.x + scr._codex_panel.size.x <= scr._energy_panel.position.x
+		scr.codexpanel.codex_panel.visible and scr.codexpanel.codex_label.text.contains("熔爐")
+		and scr.codexpanel.codex_panel.position.x + scr.codexpanel.codex_panel.size.x <= scr.energypanel.energy_panel.position.x
 	)
 	# 藍圖抽屜也要守同一條：三張浮層可以同時開，就不得互相蓋掉。
-	scr._bp_panel.visible = true
-	scr._refresh_blueprints()
+	scr.bppanel.bp_panel.visible = true
+	scr.bppanel.refresh_blueprints()
 	await get_tree().process_frame
 	var bp_fits: bool = (
-		scr._bp_panel.position.x >= scr._prio_panel.position.x + scr._prio_panel.size.x
-		and scr._bp_panel.position.x + scr._bp_panel.size.x <= scr._energy_panel.position.x
-		and scr._bp_panel.position.y + scr._bp_panel.size.y <= 660.0
+		scr.bppanel.bp_panel.position.x >= scr.priopanel.prio_panel.position.x + scr.priopanel.prio_panel.size.x
+		and scr.bppanel.bp_panel.position.x + scr.bppanel.bp_panel.size.x <= scr.energypanel.energy_panel.position.x
+		and scr.bppanel.bp_panel.position.y + scr.bppanel.bp_panel.size.y <= 660.0
 	)
-	scr._bp_panel.visible = false
+	scr.bppanel.bp_panel.visible = false
 	# 優先權面板 9 列雙欄：整張表要留在畫面內，且不得蓋掉能量面板。
 	var prio_ok: bool = (
-		scr._prio_panel.size.y > 0.0
-		and scr._prio_panel.position.y + scr._prio_panel.size.y <= scr.BAR_Y
-		and scr._prio_panel.position.x + scr._prio_panel.size.x <= scr._energy_panel.position.x
+		scr.priopanel.prio_panel.size.y > 0.0
+		and scr.priopanel.prio_panel.position.y + scr.priopanel.prio_panel.size.y <= scr.BAR_Y
+		and scr.priopanel.prio_panel.position.x + scr.priopanel.prio_panel.size.x <= scr.energypanel.energy_panel.position.x
 	)
 
 	# ★ 視野（B1.2.2）。四件事：進場就是 fit、fit 真的填滿框架、放大/全景走得通、
@@ -722,42 +722,42 @@ func click_selftest() -> void:
 	# ★ 局內選單（B1.4.1）。會壞的地方有四個，每一個都只有真的送出事件才驗得到：
 	#   ESC 到不到得了、遮罩擋不擋得住地圖、設定回不回得到選單、
 	#   以及**左上角那顆鈕是不是同一件事**（P3：不能只有鍵盤那條路）。
-	_press(scr._build_buttons["relay"])
+	_press(scr.buildbar.build_buttons["relay"])
 	var free_cell := Vector2i(20, 12)
 	_escape()
 	await _frames(3)
-	var menu_open: bool = scr._menu_layer != null and scr._menu_buttons.size() == 4
+	var menu_open: bool = scr.menulayer.menu_layer != null and scr.menulayer.menu_buttons.size() == 4
 	var nodes_before: int = s.nodes.size()
 	_click(free_cell)
 	await _frames(3)
 	var menu_blocks: bool = s.nodes.size() == nodes_before
 
-	_press(scr._menu_buttons[2])          # 設定
+	_press(scr.menulayer.menu_buttons[2])          # 設定
 	await _frames(3)
-	var settings_open: bool = scr._settings_layer != null
+	var settings_open: bool = scr.menulayer.settings_layer != null
 	_escape()                          # 設定的 ESC ＝ 回選單，**不是**回戰場
 	await _frames(3)
-	var settings_back: bool = scr._settings_layer == null and scr._menu_layer != null
+	var settings_back: bool = scr.menulayer.settings_layer == null and scr.menulayer.menu_layer != null
 	_escape()
 	await _frames(3)
-	var menu_closed: bool = scr._menu_layer == null
+	var menu_closed: bool = scr.menulayer.menu_layer == null
 	# 同一格在選單關掉之後蓋得起來 → 上面那個「蓋不起來」才證明得了是遮罩擋的，
 	# 而不是那一格本來就不能蓋。
 	_click(free_cell)
 	await _frames(3)
 	var buildable_after: bool = s.nodes.size() == nodes_before + 1
-	_press(scr._menu_button)
+	_press(scr.menulayer.menu_button)
 	await _frames(3)
-	var menu_by_button: bool = scr._menu_layer != null
+	var menu_by_button: bool = scr.menulayer.menu_layer != null
 	# 選單面板整個要留在畫面內。`CenterContainer` 幾乎不會出錯，但科技樹那張
 	# 掉出畫面的卡片與設定畫面溢出的最後一行都是「`_draw()` 一個字都不會說」
 	# 的同一類缺陷——量一次比相信便宜。
-	var panel: Control = scr._menu_buttons[0].get_parent().get_parent() as Control
+	var panel: Control = scr.menulayer.menu_buttons[0].get_parent().get_parent() as Control
 	var menu_fits: bool = (
 		panel.global_position.y >= 0.0
 		and panel.global_position.y + panel.size.y <= float(scr.size.y)
 	)
-	scr._close_menu()
+	scr.menulayer._close_menu()
 
 	# ★ 音訊（B1.5）。四件事，全部只有真的跑起來才問得到：
 	#   ① 準備期的 BGM **在播**，而且音量真的不是 0。
@@ -801,7 +801,7 @@ func click_selftest() -> void:
 	#   讓局結束，然後量兩件事：線有沒有被收掉、還會不會繼續發出聲音。
 	# ⚠ 開火線的起點**必須是一座真的塔**，否則 `fire_<type>` 找不到檔案、
 	#   `play()` 直接 return，這一段就變成一個永遠會過的空測試。
-	_press(scr._build_buttons["anchor"])
+	_press(scr.buildbar.build_buttons["anchor"])
 	var tower_cell := Vector2i(22, 12)
 	_click(tower_cell)
 	await _frames(3)
@@ -812,7 +812,7 @@ func click_selftest() -> void:
 	#   這裡缺的那一環是 `_draw()` 有沒有把它算進 `_auras`。少了那一行，
 	#   潮鳴就會安靜地退回 B1.7 之前「每秒吃 9 電、畫面上零回饋」的樣子，
 	#   而 `_draw()` 對此一個字都不會說（B0.7.2 那個 size (0,0) 的同一類缺陷）。
-	_press(scr._build_buttons["knell"])
+	_press(scr.buildbar.build_buttons["knell"])
 	_click(Vector2i(20, 8))              # 離路徑 (20,4) 四格 → 在 5 格射程內
 	await _frames(3)
 	var knell: Dictionary = s.node_at(Vector2i(20, 8))
@@ -830,7 +830,7 @@ func click_selftest() -> void:
 	s.phase = "won"
 	await _frames(4)
 	# ① 局末面板出現的那一刻，凍住的開火線與碎片要被收乾淨。
-	var over_cleared: bool = s.shots.is_empty() and scr._over_panel != null
+	var over_cleared: bool = s.shots.is_empty() and scr.resultpanel.over_panel != null
 	# ② 面板已經在了（`_refresh_over` 之後不會再清一次），這時再塞一條滿 `ttl` 的
 	#    開火線——**舊版會每一幀重播一次它的開火音**，新版因為 tick 沒有前進而不播。
 	s.shots.append({
@@ -852,13 +852,13 @@ func click_selftest() -> void:
 	s.phase = "lost"
 	await _frames(4)
 	var why_shown := false
-	if scr._over_panel != null:
-		for n: Node in scr._over_panel.find_children("*", "Label", true, false):
+	if scr.resultpanel.over_panel != null:
+		for n: Node in scr.resultpanel.over_panel.find_children("*", "Label", true, false):
 			if (n as Label).text.begins_with("為什麼輸"):
 				why_shown = true
 	var why_fits: bool = (
-		scr._over_panel != null
-		and scr._over_panel.position.y + scr._over_panel.size.y <= float(scr.size.y)
+		scr.resultpanel.over_panel != null
+		and scr.resultpanel.over_panel.position.y + scr.resultpanel.over_panel.size.y <= float(scr.size.y)
 	)
 	s.phase = phase_before
 	await _frames(3)
@@ -872,7 +872,7 @@ func click_selftest() -> void:
 	#   一定要放在所有斷言之後：懸著的起點會讓下一次點擊被當成拖曳的終點。
 	_press_at(stage.to_screen(stage.center(from)), true)
 	scr.hover = from + Vector2i(4, 3)     # 橫 4 直 3：正好不是 45°
-	scr._refresh_hint()
+	scr.hintbar.refresh_hint()
 
 	var menu_ok: bool = (
 		menu_open and menu_blocks and settings_open and settings_back and menu_closed
@@ -895,10 +895,10 @@ func click_selftest() -> void:
 	# ⚠ **要用提示文字真正的高度**。第一版寫成 1px 高，於是它的矩形（y 666–667）
 	#   和底欄（y 668 起）永遠不相交——**斷言在它該紅的情境下是綠的**，
 	#   而我是把提示推到底欄正中間去測它才發現。RG-158 的同一課：先確認尺會動。
-	var hint_rect := Rect2(scr._hint.global_position, scr._hint.size)
+	var hint_rect := Rect2(scr.hintbar.hint.global_position, scr.hintbar.hint.size)
 	var bar_hint_clear: bool = bar_rect.size.x > 0.0 and not bar_rect.intersects(hint_rect)
 	# 而且提示文字自己要留在視窗內（推到右邊之後才有可能掉出去）。
-	var hint_inside: bool = scr._hint.global_position.x + scr._hint.size.x <= float(scr.size.x) + 0.5
+	var hint_inside: bool = scr.hintbar.hint.global_position.x + scr.hintbar.hint.size.x <= float(scr.size.x) + 0.5
 	var ok: bool = (
 		placed and rejected and diag_placed and wired and upgraded and dragged and panned
 		and reachable and alloy_gated and energy_ok and codex_ok and prio_ok
@@ -913,7 +913,7 @@ func click_selftest() -> void:
 	print("[TL_CLICKTEST] place=%s reject_path=%s diag_node=%s diag_conduit=%s diag_upgrade=%s drag_wire=%s mid_pan=%s last_btn=%s alloy_gate=%s energy=%s codex=%s prio=%s view=%s menu=%s audio=%s over=%s bar_hint=%s(底欄右緣 %.0f／提示 x %.0f) hint_in=%s node_lv=%s(付款 %s／上限 %s) 檢視=%s(說得出是誰 %s／在畫面內 %s／再點收起 %s／不疊能量面板 %s) → %s" % [
 		placed, rejected, diag_placed, wired, upgraded, dragged, panned, reachable, alloy_gated,
 		energy_ok, codex_ok, prio_ok, view_ok, menu_ok, audio_ok, over_ok,
-		bar_hint_clear, bar_rect.end.x, scr._hint.global_position.x, hint_inside,
+		bar_hint_clear, bar_rect.end.x, scr.hintbar.hint.global_position.x, hint_inside,
 		node_lvl, node_paid, node_cap, sel_open, sel_says, sel_inside, sel_toggles, sel_clear,
 		"PASS" if ok else "FAIL"
 	])
@@ -939,14 +939,14 @@ func click_selftest() -> void:
 	var restart_ok := true
 	if Hooks.shot_path == "":
 		var layer_before: Node2D = stage.terrain_layer
-		scr._restart()
+		scr.restart()
 		await _frames(3)
 		var layer_kept: bool = is_instance_valid(layer_before) and layer_before.get_parent() == stage
 		var modules_kept: bool = true
 		for m: Node in scr._modules():
 			modules_kept = modules_kept and is_instance_valid(m) and m.get_parent() == scr
 		var rebound: bool = stage.s == scr.s and overlay.s == scr.s and feedback.s == scr.s
-		var hud_back: bool = scr._top != null and not scr._build_buttons.is_empty() and scr._hint != null
+		var hud_back: bool = scr.topbar.top != null and not scr.buildbar.build_buttons.is_empty() and scr.hintbar.hint != null
 		restart_ok = layer_kept and modules_kept and rebound and hud_back
 		print("[TL_CLICKTEST/restart] 地貌層還在=%s 四個模組還在=%s 新局已交給模組=%s HUD 重建=%s → %s" % [
 			layer_kept, modules_kept, rebound, hud_back, "PASS" if restart_ok else "FAIL"
@@ -969,7 +969,7 @@ func _view_selftest() -> bool:
 	var inside: bool = px.x * stage.fit <= stage.FRAME.size.x + 0.5 and px.y * stage.fit <= stage.FRAME.size.y + 0.5
 
 	# ② 頂欄不能長到撞上縮放鈕（礦砂上萬之後那一排會變長）。
-	var bar_clear: bool = scr._top.position.x + scr._top.size.x <= scr._zoom_button.get_parent().position.x
+	var bar_clear: bool = scr.topbar.top.position.x + scr.topbar.top.size.x <= scr._zoom_button.get_parent().position.x
 
 	# ③ 放大 → 倍率上升；「全景」→ 回到 fit 且平移歸零。
 	scr._on_zoom(stage.ZOOM_STEP)
@@ -999,7 +999,7 @@ func _view_selftest() -> bool:
 	#    放大兩級、把目標礦點平移到框架正中（玩家放大就是為了看某個東西），
 	#    再點它——蓋出來的必須就是那一格，不是隔壁那一格。
 	scr._on_zoom(stage.ZOOM_STEP * stage.ZOOM_STEP)
-	_press(scr._build_buttons["extractor"])
+	_press(scr.buildbar.build_buttons["extractor"])
 	var target: Vector2i = (s.map["ore"] as Array)[1]
 	var px_map := Vector2(s.map["size"]) * Shapes.GRID
 	stage.pan = (px_map * 0.5 - stage.center(target)) * stage.zoom
@@ -1016,7 +1016,7 @@ func _view_selftest() -> bool:
 	stage.reset_view()
 	await get_tree().process_frame
 	var z0 := stage.zoom
-	_wheel(scr._build_scroll.global_position + Vector2(20.0, 20.0), true)
+	_wheel(scr.buildbar.build_scroll.global_position + Vector2(20.0, 20.0), true)
 	await get_tree().process_frame
 	var wheel_outside_ok: bool = is_equal_approx(stage.zoom, z0)
 	_wheel(stage.FRAME.get_center(), true)
@@ -1035,12 +1035,12 @@ func _view_selftest() -> bool:
 	# ★ `bar_clear` 紅掉時要**知道差多少**才改得動 `TOP_CELLS` 的欄寬——
 	#   「太寬了」這三個字修不了東西，「超出 63px」可以。
 	var widths := PackedStringArray()
-	for c: Node in scr._top.get_children():
+	for c: Node in scr.topbar.top.get_children():
 		widths.append("%.0f" % (c as Control).size.x)
 	print("[TL_CLICKTEST/view/bar] 頂欄 %.0f→%.0f（寬 %.0f＝%s），縮放鈕在 %.0f，餘裕 %.0f px" % [
-		scr._top.position.x, scr._top.position.x + scr._top.size.x, scr._top.size.x, "+".join(widths),
+		scr.topbar.top.position.x, scr.topbar.top.position.x + scr.topbar.top.size.x, scr.topbar.top.size.x, "+".join(widths),
 		scr._zoom_button.get_parent().position.x,
-		scr._zoom_button.get_parent().position.x - (scr._top.position.x + scr._top.size.x),
+		scr._zoom_button.get_parent().position.x - (scr.topbar.top.position.x + scr.topbar.top.size.x),
 	])
 	return (
 		at_fit and filled and inside and bar_clear and zoomed_in and centered and anchored
@@ -1231,7 +1231,7 @@ func _guide_selftest() -> void:
 		#   點不到看不見的格子）。蓋完再 `_reset_view()` 把它送回畫面外。
 		stage.center_view_on(target, true)
 		await _frames(2)
-		_press(scr._build_buttons["extractor"])
+		_press(scr.buildbar.build_buttons["extractor"])
 		_click(target)
 		await _frames(3)
 		# 推幾個 tick，`node_state` 才算得出 `滿溢`。
@@ -1282,14 +1282,14 @@ func _guide_selftest() -> void:
 	#
 	# ★ 先切成「中繼」再點：中繼哪裡都蓋得起來，所以 `mini_safe` 才是真斷言。
 	#   用採集器的那一版是**假通過**——點到非礦點本來就會被擋，攔不攔截都一樣綠。
-	_press(scr._build_buttons["relay"])
+	_press(scr.buildbar.build_buttons["relay"])
 	var r := overlay.minimap_rect()
 	var pan_before := stage.pan
 	# ★ 哨兵字串，不是「節點數沒變」。節點數那一版**紅不起來**：那一格剛好
 	#   不能蓋，攔不攔截都是綠的（第一版的假斷言）。`_act()` 在 BUILD 模式下
 	#   **一定**會覆寫 `_message`（成功是空字串、失敗是原因），所以哨兵還在
 	#   ＝ 這次點擊根本沒走到建造層。
-	scr._message = "＿哨兵＿"
+	scr.message = "＿哨兵＿"
 	# ★ 點「離目前視野最遠的那個角」，不是固定點左上角。固定左上是**看種子
 	#   臉色**的斷言：前一步的箭頭跳轉若剛好把視野帶到左上，`_pan` 已經夾在
 	#   (0,0)，再點左上當然不會動——測試紅掉而產品沒問題（`TL_SEED=42` 實際
@@ -1302,7 +1302,7 @@ func _guide_selftest() -> void:
 	))
 	await _frames(2)
 	var mini_moved: bool = stage.pan_goal != pan_before
-	var mini_safe: bool = scr._message == "＿哨兵＿"
+	var mini_safe: bool = scr.message == "＿哨兵＿"
 
 	# ★ 按住拖曳（B2.1d，使用者指定）：**按住不放時視野要持續跟著游標**。
 	#   ⚠ `_click_at()` 是按下**即放開**，所以要自己按住——第一版直接接在
@@ -1333,11 +1333,11 @@ func _guide_selftest() -> void:
 	overlay.mini_ttl = 0.0
 	# 哨兵同前：`_act()` 在 BUILD 模式下一定會覆寫 `_message`，
 	# 哨兵被蓋掉 ＝ 這一次點擊真的走到了建造層（＝小地圖沒有擋）。
-	_press(scr._build_buttons["relay"])
-	scr._message = "＿哨兵＿"
+	_press(scr.buildbar.build_buttons["relay"])
+	scr.message = "＿哨兵＿"
 	_click_at(r.position + r.size * 0.5)
 	await _frames(2)
-	var mini_gone: bool = scr._message != "＿哨兵＿"
+	var mini_gone: bool = scr.message != "＿哨兵＿"
 	# 再動一下視野，它要自己回來。
 	stage.center_view_on(target)
 	await _frames(2)

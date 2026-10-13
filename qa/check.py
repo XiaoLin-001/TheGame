@@ -97,8 +97,11 @@ def _godot(args: list[str], env_extra: dict[str, str], timeout: int) -> tuple[in
 
 
 def cmd_lint(_a: argparse.Namespace) -> int:
-    r = subprocess.run([sys.executable, str(ROOT / "qa" / "gd_lint.py")], cwd=ROOT)
-    return r.returncode
+    """靜態掃描 ＋ 分層檢查（sim／data／meta 不得往上依賴 screens／render／ui／game／core）。"""
+    rc = 0
+    for script, args in (("gd_lint.py", []), ("gd_graph.py", ["--layers"])):
+        rc |= subprocess.run([sys.executable, str(ROOT / "qa" / script), *args], cwd=ROOT).returncode
+    return rc
 
 
 def cmd_copy(_a: argparse.Namespace) -> int:

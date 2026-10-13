@@ -14,7 +14,10 @@
   7. 字串裡的 `\u0000`／`\x00`（GDScript 把它讀成 NUL，匯入時每次噴
      「Unicode parsing error: Unexpected NUL character」，B3.13 踩到）
 
-它抓不到型別錯誤——那要 Godot。但這六條每一條本專案都至少踩過一次。
+  8. `scripts/` 裡出現的 `TL_*` 鉤子名，都要列在 `Env.HOOKS`（漏列的鉤子單獨使用時會寫進
+     玩家的真實存檔，鐵律 1；RG-61 的 TL_LEVEL／TL_FOCUS、B3.14 的 TL_PICK 都是這樣漏的）
+
+它抓不到型別錯誤——那要 Godot。但這幾條每一條本專案都至少踩過一次。
 """
 import io, os, re, sys
 
@@ -133,6 +136,28 @@ for dp, _, fs in os.walk(ROOT):
     for f in fs:
         if f.endswith('.gd'):
             scan(os.path.join(dp, f))
+
+# 8. 鉤子完備：scripts/ 裡讀到的每一個 TL_* 都要在 Env.HOOKS 裡
+def check_hooks():
+    env_path = os.path.join(ROOT, 'scripts', 'core', 'Env.gd')
+    env_src = io.open(env_path, encoding='utf-8').read()
+    m = re.search(r'const HOOKS\s*:?=\s*\[(.*?)\n\]', env_src, re.S)
+    listed = set(re.findall(r'"(TL_[A-Z_]+)"', m.group(1))) if m else set()
+    if not listed:
+        problems.append('scripts/core/Env.gd 找不到 `const HOOKS := [...]`（lint 規則 8 失效）')
+        return
+    for dp, _, fs in os.walk(os.path.join(ROOT, 'scripts')):
+        for f in fs:
+            if not f.endswith('.gd') or f == 'Env.gd':
+                continue
+            path = os.path.join(dp, f)
+            rel = os.path.relpath(path, ROOT).replace(os.sep, '/')
+            for no, raw in enumerate(io.open(path, encoding='utf-8').read().split('\n'), 1):
+                for name in re.findall(r'"(TL_[A-Z_]+)"', strip_comment(raw)):
+                    if name not in listed:
+                        problems.append('%s:%d 鉤子 `%s` 沒列在 Env.HOOKS（單獨使用時存檔不受保護）' % (rel, no, name))
+
+check_hooks()
 
 if problems:
     print('\n'.join(problems))

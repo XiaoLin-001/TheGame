@@ -1247,7 +1247,7 @@ func _time_s() -> float:
 func _draw_selection() -> void:
 	# ★ 選著一條導管（B3.7）：把它整條描出來。用**外框而不是換色**——導管自己的
 	#   顏色正在講流量與滿載（§1.4a），塗掉它等於為了指出一條線而讓它不能讀。
-	var wi: int = scr.sel_wire_index()
+	var wi: int = scr.inspector.sel_wire_index()
 	if wi >= 0:
 		var sc: Dictionary = s.conduits[wi]
 		var a := center(sc["a"])
@@ -1284,7 +1284,7 @@ func _draw_selection() -> void:
 		draw_circle(c, rng * Shapes.GRID, Palette.alpha(Palette.ORDER_CYAN, 0.07))
 		draw_arc(c, rng * Shapes.GRID, 0.0, TAU, 64, Palette.alpha(Palette.ORDER_BRIGHT, 0.7), 2.0)
 
-	var chain := FlowNetwork.upstream_power(s.conduits, scr.energy_net(), scr.selected, scr.power_sources())
+	var chain := FlowNetwork.upstream_power(s.conduits, scr.energypanel.energy_net(), scr.selected, scr.energypanel.power_sources())
 	var lit: Dictionary = chain["conduits"]
 	for ci in s.conduits.size():
 		var cd: Dictionary = s.conduits[ci]
@@ -1354,7 +1354,7 @@ func _draw_hover() -> void:
 		draw_rect(rect, Palette.alpha(Palette.ORDER_CYAN, 0.12))
 		draw_rect(rect, Palette.ORDER_CYAN, false, 2.0)
 	elif scr.bp_index >= 0:
-		var list: Array = scr.blueprints()
+		var list: Array = scr.bppanel.blueprints()
 		if scr.bp_index < list.size():
 			# **每一格各自上色**：綠＝放得下、橘＝這一格擋住了。整份一個顏色
 			# 只能說「不行」，指不出是哪一格——而那正是玩家的下一步要知道的事。
