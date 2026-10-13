@@ -40,13 +40,19 @@ Phase 3：render/ 分 2D 專用與共用；Main.gd 標題背景抽出
 - [x] 基線測試／截圖
 - [x] `qa/check.py`（統一入口）、`dev/setup.py`／`play.bat`／`export.bat`
 
+- [x] Phase 1（commit 60791e5）：Battle.gd → Stage/Stage2D/Overlay2D/Feedback/SelfTest（5316→2336 行）。截圖 32/32 逐像素 0 差、clicktest 全過
+- [x] F-2 已驗證為真 bug 並修掉（重來之後地貌消失），clicktest 新增 restart 段落
+
 ## 下一步
 
-- [ ] （進行中）Phase 1 拆 Battle.gd
+- [ ] （進行中）Phase 2：HUD 面板拆到 `screens/battle/hud/`（spec2.py，`gdsplit2.py`）
+- [ ] Phase 3：render/ 分 2D 專用；Main.gd 標題背景抽出
+- [ ] 修 F-1（Env.HOOKS 補 TL_PICK）；繼續查 bug：全測試、exe 匯出驗證、程式碼審查
+- [ ] 文件：docs/60_CODE_MAP.md、docs/70_3D_MIGRATION.md、README、CLAUDE.md 結構段、CHANGELOG、50_QA_PLAN 缺陷登記、VERSION bump
 
 ## 發現的問題（待登記進 50_QA_PLAN.md 的缺陷登記簿）
 
 | 暫編 | 說明 | 狀態 |
 |---|---|---|
 | F-1 | `Env.HOOKS` 漏列 `TL_PICK`：單獨使用它時 `any_hook()` 為假 → 存檔不受保護（同 RG-61 的 TL_LEVEL／TL_FOCUS 舊案） | 待修 |
-| F-2 | `Battle._restart()` 對 `get_children()` 全部 `queue_free()`，包含地貌層 `_terrain_layer`（未歸 null）→ 重來之後地貌可能消失 | 待驗證 |
+| F-2（已修） | `Battle._restart()` 對 `get_children()` 全部 `queue_free()`，包含地貌層 `_terrain_layer`（未歸 null）→ 重來之後地貌消失 | ✅ 已驗證並修掉（RG-177） |
