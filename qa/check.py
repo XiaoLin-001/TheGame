@@ -5,7 +5,7 @@ CLAUDE.md「跑與測」列了二十幾條各自獨立的指令。這支把它�
 讓接手的人不必先讀完 CLAUDE.md 才知道「改完要跑什麼」。
 
     python qa/check.py lint                 靜態地雷掃描（不需要 Godot，約 1 秒）
-    python qa/check.py tests                headless 單元／整合測試（19 支，約 5 分鐘）
+    python qa/check.py tests                headless 單元／整合測試（20 支，約 5 分鐘）
     python qa/check.py tests flow save      只跑指定幾支
     python qa/check.py tests --fast         跳過最慢的 campaign_test（約 3 分鐘）
     python qa/check.py click                輸入層自檢（需要視窗；每條約 6 秒）
@@ -36,7 +36,7 @@ GODOT = Path(os.environ.get("TL_GODOT", ROOT / "tools" / "godot" / "Godot_v4.7-s
 # 跑的順序 ＝ 從快到慢，壞掉的地基先紅。campaign 最慢（五關參考解實跑）。
 TESTS = [
     "flow", "build", "combat", "tide", "save", "determinism", "hud", "tech", "audio",
-    "perf", "endless", "daily", "blueprint", "roster", "tycoon", "progress",
+    "perf", "fuzz", "endless", "daily", "blueprint", "roster", "tycoon", "progress",
     "difficulty", "m2", "campaign",
 ]
 
@@ -119,7 +119,8 @@ def cmd_tests(a: argparse.Namespace) -> int:
     bad: list[str] = []
     for n in names:
         rc, out, dt = _godot(["--headless", "--path", "godot", "--script", f"res://tests/{n}_test.gd"], {}, 900)
-        ok = rc == 0
+        # 執行期錯誤會**中止那一支函式**而不是讓斷言變紅（RG-164），所以 stderr 裡的 SCRIPT ERROR 一律當失敗。
+        ok = rc == 0 and "SCRIPT ERROR" not in out
         print(f"  {'PASS' if ok else 'FAIL'}  {n:<12} {dt:6.1f}s")
         if not ok:
             bad.append(n)

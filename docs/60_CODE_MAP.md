@@ -123,7 +123,7 @@
 ### 2.5 T4 開發輔助（一般遊玩閒置）
 
 `screens/battle/SelfTest.gd`（約 1400 行：`TL_CLICKTEST`／`TL_STRESS`／示範佈局）、`core/Hooks.gd` 的 `TL_SIM`／`TL_SHOT`、
-`tests/`（19 支 headless ＋ 輔助）、`qa/`、`dev/`、`assetgen/`。匯出時 `exclude_filter="tests/*"`——
+`tests/`（20 支 headless ＋ 輔助）、`qa/`、`dev/`、`assetgen/`。匯出時 `exclude_filter="tests/*"`——
 **所以 headless 測試在 exe 上跑不到**，exe 上唯一還在的驗證是 `clicktest` 與 `TL_SHOT`（見 `CLAUDE.md` 每批收尾）。
 
 ---
