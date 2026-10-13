@@ -45,6 +45,8 @@ const STRESS_FRAMES := 240
 
 ## `TL_STRESS` 的量測狀態。
 var _stress_frames: int = 0
+## 上一幀的牆上時間（微秒）。0 ＝ 還沒量過。
+var _stress_last_us: int = 0
 
 var _stress_total: float = 0.0
 
@@ -1182,7 +1184,16 @@ func _move_at(at: Vector2) -> void:
 ## **模擬是凍結的**，所以這裡量到的是純粹的「畫 547 個節點 ＋ 2045 條導管 ＋
 ## 200 隻敵人要多久」。前 30 幀丟掉（著色器編譯與第一次配置都落在那裡），
 ## 之後取平均與最壞值——**最壞值才是玩家感覺得到的那一下卡頓**。
-func stress_frame(delta: float) -> void:
+##
+## ★ **量的是牆上時鐘，不是 `delta`**（RG-183，也是 RG-177 的根因）。Godot 把 `_process` 的 `delta`
+##   夾在 `max_physics_steps_per_frame ÷ physics_ticks_per_second` ＝ 8 ÷ 60 ＝ **133.3 ms**——
+##   真實的一幀超過這個數字時，`delta` 照樣只報 133.3。B3.10 到 B3.13 四個版本量起來「都是
+##   133.3」不是節流，是**每一幀都被夾住了**：壓力情境單幀的 `_draw` 光是 CPU 就約 180 ms
+##   （B3.14 在改動前後各量一次：189.7 → 176.0 ms），這台機器上實際約 5 FPS。
+func stress_frame(_delta: float) -> void:
+	var now_us := Time.get_ticks_usec()
+	var delta := 0.0 if _stress_last_us == 0 else float(now_us - _stress_last_us) / 1.0e6
+	_stress_last_us = now_us
 	_stress_frames += 1
 	if _stress_frames <= STRESS_WARMUP:
 		return

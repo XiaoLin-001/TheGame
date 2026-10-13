@@ -18,7 +18,7 @@ CLAUDE.md「跑與測」列了二十幾條各自獨立的指令。這支把它�
 拍出同一張圖——所以「搬動程式碼」的批次可以要求 0 像素差。
 
 Godot 執行檔：預設 `tools/godot/Godot_v4.7-stable_win64_console.exe`，
-可用環境變數 `TL_GODOT` 覆寫。沒有的話先跑 `dev/setup.ps1`。
+可用環境變數 `TL_GODOT` 覆寫。沒有的話先跑 `python dev/setup.py`。
 """
 from __future__ import annotations
 
@@ -80,20 +80,26 @@ SHOTS: dict[str, dict[str, str]] = {
 
 def _godot(args: list[str], env_extra: dict[str, str], timeout: int) -> tuple[int, str, float]:
     if not GODOT.exists():
-        sys.exit(f"找不到 Godot：{GODOT}\n先跑 dev/setup.ps1，或設環境變數 TL_GODOT。")
+        sys.exit(f"找不到 Godot：{GODOT}\n先跑 `python dev/setup.py`，或設環境變數 TL_GODOT。")
     env = {k: v for k, v in os.environ.items() if not k.startswith("TL_") or k == "TL_GODOT"}
     env.update(env_extra)
     t0 = time.time()
+    # Popen 而不是 run：`*_console.exe` 只是個轉接殼，真正的遊戲是它的子行程。
+    # `subprocess.run(timeout=)` 逾時只殺殼，**視窗會一直留在使用者的桌面上**（B3.14 踩到）。
+    p = subprocess.Popen(
+        [str(GODOT), *args], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
+    )
     try:
-        p = subprocess.run(
-            [str(GODOT), *args], cwd=ROOT, env=env, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout,
-        )
-        return p.returncode, (p.stdout or "") + (p.stderr or ""), time.time() - t0
-    except subprocess.TimeoutExpired as e:
-        out = (e.stdout or b"")
-        out = out.decode("utf-8", "replace") if isinstance(out, bytes) else out
-        return 124, out + "\n[check.py] 逾時", time.time() - t0
+        out, err = p.communicate(timeout=timeout)
+        return p.returncode, (out or "") + (err or ""), time.time() - t0
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True)
+        else:
+            p.kill()
+        out, err = p.communicate()
+        return 124, (out or "") + (err or "") + "\n[check.py] 逾時（已連同子行程一起結束）", time.time() - t0
 
 
 def cmd_lint(_a: argparse.Namespace) -> int:

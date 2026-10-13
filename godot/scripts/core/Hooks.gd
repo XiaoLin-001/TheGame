@@ -64,10 +64,14 @@ func _ready() -> void:
 	if click_test and panel == "":
 		panel = "battle"
 	# 壓力情境是局內畫面的事，而且它自己就是佈局——示範佈局要關掉。
+	# ★ 但**明寫 `TL_DEMO_TICKS` 時尊重它**（B3.14）：`TL_STRESS=1 TL_PANEL=campaign TL_LEVEL=10
+	#   TL_DEMO_TICKS=3000` 量的是**真實關卡**跑到第 3000 tick 時的渲染幀時間（模擬凍結在那一格）——
+	#   「壓力情境很慢」不等於「玩家玩到的很慢」，兩者要分開量。
 	if stress:
 		if panel == "":
 			panel = "battle"
-		demo_ticks = 0
+		if Env.str_of("TL_DEMO_TICKS") == "":
+			demo_ticks = 0
 	if click_test:
 		# 空地圖才驗得到「點一下有沒有蓋出東西」。但明寫 `TL_DEMO_TICKS` 時尊重它——
 		# 那是「我要的是示範佈局跑到第 N tick 的畫面，只是需要有人幫我開浮層」。
