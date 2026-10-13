@@ -43,7 +43,7 @@ TESTS = [
 # 輸入層自檢：(名稱, TL_PANEL)。空字串 ＝ 預設的局內畫面。
 # ⚠ 這是唯一不能 --headless 的檢查（dummy display server 不做 GUI 命中測試）。
 CLICKTESTS = [
-    ("battle", ""), ("campaign", "campaign"), ("tech", "tech"), ("achievements", "achievements"),
+    ("battle", ""), ("endless", "endless"), ("campaign", "campaign"), ("tech", "tech"), ("achievements", "achievements"),
     ("tiers", "tiers"), ("daily", "daily"), ("roster", "roster"), ("tycoon", "tycoon"),
     ("settings", "settings"), ("title", "title"),
 ]
