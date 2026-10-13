@@ -57,7 +57,7 @@ const INSPECT_W := 383.0
 const INSPECT_MAX_H := 360.0
 
 
-func build_inspect_panel() -> void:
+func build_panel() -> void:
 	# ★ B3.7 起用標準不透明度（0.96），不再是角色簡介那種半透明。
 	# 半透明的理由是「讓玩家看見底下是什麼」，而這個面板底下不是它要講的東西
 	# ——被選取的那一格與供電來源都在畫面另一邊。加了兩顆鈕之後代價更明顯：

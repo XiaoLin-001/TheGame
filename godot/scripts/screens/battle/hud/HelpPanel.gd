@@ -17,7 +17,16 @@ var help_panel: Control = null
 var help_button: Button = null
 
 
-func build_help_panel() -> void:
+## 底欄的說明鈕（自己一群）。
+func make_toggle() -> Button:
+	help_button = Button.new()
+	help_button.text = "說明"
+	help_button.toggle_mode = true
+	help_button.toggled.connect(on_toggle_help)
+	return help_button
+
+
+func build_panel() -> void:
 	var box := UiKit.panel(0.94)
 	box.position = Vector2(150, 250)
 	var col := UiKit.vbox(3)

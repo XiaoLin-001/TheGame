@@ -116,7 +116,7 @@ func _click_selftest() -> void:
 		UiKit.press_escape()
 		for _i in 3:
 			await get_tree().process_frame
-		esc_to_battle = is_instance_valid(battle) and battle._menu_layer != null
+		esc_to_battle = is_instance_valid(battle) and battle.menulayer.menu_layer != null
 
 	var ok: bool = (
 		five and first_open and second_locked and says_why and entered and esc_to_battle

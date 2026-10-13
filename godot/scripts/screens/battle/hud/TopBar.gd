@@ -66,6 +66,51 @@ var ff_button: Button = null
 var summon_button: Button = null
 
 
+## ★ 頂欄五欄（B2.4.4）。**加入順序就是繪圖順序**——由 `Battle._build_ui()` 照順序叫。
+func build_top() -> void:
+	# ★ 頂欄三階 ＋ 固定寬度（B2.4.4）。舊版是七個 15px（**階外**）的 Label 直接
+	#   丟進 HBox——11 個數字同一階，而且寬度隨數值變。規格見 `TOP_CELLS`。
+	top = UiKit.hbox(8)
+	top.position = Vector2(120, 12)
+	scr.add_child(top)
+	top_values.clear()
+	top_notes.clear()
+	for spec: Dictionary in TOP_CELLS:
+		var cell := UiKit.hbox(4)
+		cell.alignment = BoxContainer.ALIGNMENT_CENTER
+		if String(spec["tag"]) != "":
+			cell.add_child(UiKit.label(String(spec["tag"]), 13, Palette.TEXT_SECONDARY, false))
+		var v := UiKit.label("", int(spec["vs"]), Palette.TEXT_PRIMARY, false)
+		v.custom_minimum_size.x = float(spec["vw"])
+		v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		cell.add_child(v)
+		top_values.append(v)
+		var n := UiKit.label("", 13, Palette.TEXT_SECONDARY, false)
+		n.custom_minimum_size.x = float(spec["nw"])
+		n.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		cell.add_child(n)
+		top_notes.append(n)
+		top.add_child(cell)
+
+
+## 底欄左群：快進、提前召喚（`group` 是 `Battle._build_ui()` 排好的那個 HBox）。
+func build_time_controls(group: Control) -> void:
+	ff_button = Button.new()
+	ff_button.text = "快進 4×"
+	ff_button.pressed.connect(on_fast_forward)
+	group.add_child(UiKit.touchable(ff_button))
+	summon_button = Button.new()
+	summon_button.pressed.connect(on_summon_now)
+	# ★ **全底欄唯一一顆不可逆的鈕**：按下去這一波就提早來，獎勵倍率也定了。
+	#   §7.2 B-5 原本開的處方是 `energy.amber` 描邊——**那違反 §1.1 配色紀律 2**
+	#   （琥珀專屬於能量，而提前召喚跟耗能無關）。改用 `warn.orange`：紀律 1 說
+	#   橙／品紅專屬於「敵人與危險狀態」，而這顆鈕做的事**就是把敵潮叫過來**，
+	#   它是玩家自己選的危險。同一條紀律，剛好也是更強的編碼。
+	summon_button.add_theme_color_override("font_color", Palette.WARN_ORANGE)
+	summon_button.add_theme_color_override("font_hover_color", Palette.WARN_ORANGE)
+	group.add_child(UiKit.touchable(summon_button))
+
+
 func refresh_top() -> void:
 	_refresh_summon()
 	# ★ 快進鈕自己講自己開沒開（B2.4.4）。它不是 toggle（按下去只是切換 tick 倍率），

@@ -42,6 +42,21 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	toggle_menu()
 
 
+## 左上角的「選單」鈕。
+func build_button() -> void:
+	# ★ 選單（B1.4.1）。ESC 是快捷，**不是唯一的路**（P3：操作不得只靠鍵盤）。
+	#   放左上角 x<120、y<56 那塊角落——頂欄從 x=120 起、建造欄從 y=56 起，
+	#   全畫面只剩這裡是空的，而它也正好是選單的慣例位置。
+	var menu_bar := UiKit.hbox(0)
+	menu_bar.position = Vector2(8, 6)
+	scr.add_child(menu_bar)
+	menu_button = Button.new()
+	menu_button.text = "選單"
+	menu_button.custom_minimum_size.x = 104
+	menu_button.pressed.connect(toggle_menu)
+	menu_bar.add_child(UiKit.touchable(menu_button))
+
+
 func toggle_menu() -> void:
 	if menu_layer != null:
 		_close_menu()

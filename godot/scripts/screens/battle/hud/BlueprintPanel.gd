@@ -26,7 +26,18 @@ var bp_panel: PanelContainer = null
 ##   ③ 預設收合。它是抽屜不是常駐欄（§6.2 全畫面地圖 ＋ 可收合浮層）。
 ## ★ 藍圖抽屜（B2.3）。位置在畫面左中——優先權面板在 (128, 380)、
 ## 能量面板在右上、提示列在底邊，這一塊是剩下唯一放得下一張清單的地方。
-func build_blueprint_panel() -> void:
+## 底欄的抽屜開關。
+func make_toggle() -> Button:
+	# ★ 藍圖庫（B2.3）。放底欄抽屜而不是左欄：左欄的八種節點加動作鈕已經
+	#   吃掉 380px，而藍圖是**每局用一兩次**的東西，不該和每秒都在點的建造欄搶位置。
+	var bp_btn := Button.new()
+	bp_btn.text = "藍圖"
+	bp_btn.toggle_mode = true
+	bp_btn.toggled.connect(on_toggle_blueprint)
+	return bp_btn
+
+
+func build_panel() -> void:
 	var box := UiKit.panel()
 	# 位置是**擠出來的**，不是挑出來的：優先權面板佔 128..510、能量面板佔
 	# 872..1264、圖鑑浮層下緣到 320、提示列從 660 起——中間這一塊是唯一

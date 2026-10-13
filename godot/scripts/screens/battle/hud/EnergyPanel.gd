@@ -40,7 +40,16 @@ var energy_rows: Dictionary = {}
 ##
 ## 只列**這一局真的存在**的項目：一張永遠有八行的表沒有資訊量，
 ## 有幾行會動、什麼時候動，本身就是資訊。
-func build_energy_panel() -> void:
+## 底欄的抽屜開關。
+func make_toggle() -> Button:
+	energy_button = Button.new()
+	energy_button.text = "能量"
+	energy_button.toggle_mode = true
+	energy_button.toggled.connect(on_toggle_energy)
+	return energy_button
+
+
+func build_panel() -> void:
 	var box := UiKit.panel()
 	box.position = Vector2(872, 96)
 	box.visible = false

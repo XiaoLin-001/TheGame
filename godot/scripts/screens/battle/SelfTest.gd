@@ -932,7 +932,7 @@ func click_selftest() -> void:
 		menu_open, menu_blocks, settings_open, settings_back, menu_closed, buildable_after,
 		menu_by_button, menu_fits
 	])
-	# ★ 重來（RG-177）。**放在最後，而且只在不拍照時跑**：它把整個 HUD 砍掉重建，
+	# ★ 重來（RG-178）。**放在最後，而且只在不拍照時跑**：它把整個 HUD 砍掉重建，
 	#   之前持有的 widget 參照全部作廢，也會改掉要交給截圖鉤子的畫面。
 	#   B3.13 的缺陷：`_restart()` 對 `get_children()` 全部 `queue_free()`，連地貌層一起砍掉，
 	#   而換圖才會重建它——按「立刻重來」之後整張地圖的地貌消失。這條路徑在此之前零覆蓋。

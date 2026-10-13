@@ -24,7 +24,17 @@ var codex_on: bool = true
 ##
 ## 內容一律**從 `data/NodeDefs.gd` 現算**，不另外寫一份文案表——
 ## 兩份會漂移，而漂移的那一份剛好就是玩家讀到的那一份。
-func build_codex_panel() -> void:
+## 底欄的抽屜開關。
+func make_toggle() -> Button:
+	codex_button = Button.new()
+	codex_button.text = "圖鑑"
+	codex_button.toggle_mode = true
+	codex_button.button_pressed = true   # 預設開：它只在滑鼠停在建造鈕上時才出現
+	codex_button.toggled.connect(func(on: bool) -> void: codex_on = on)
+	return codex_button
+
+
+func build_panel() -> void:
 	# 角色簡介刻意半透明：它浮在地圖上，要讓人看得見底下是什麼（使用者指定）。
 	var box := UiKit.panel(0.88)
 	box.visible = false

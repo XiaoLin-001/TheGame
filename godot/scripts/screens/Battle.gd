@@ -575,43 +575,10 @@ func label_at(cell: Vector2i) -> String:
 
 # ── 浮層 ──────────────────────────────────────────────────────────────
 
-func _build_ui() -> void:
-	# ★ 頂欄三階 ＋ 固定寬度（B2.4.4）。舊版是七個 15px（**階外**）的 Label 直接
-	#   丟進 HBox——11 個數字同一階，而且寬度隨數值變。規格見 `TOP_CELLS`。
-	topbar.top = UiKit.hbox(8)
-	topbar.top.position = Vector2(120, 12)
-	add_child(topbar.top)
-	topbar.top_values.clear()
-	topbar.top_notes.clear()
-	for spec: Dictionary in topbar.TOP_CELLS:
-		var cell := UiKit.hbox(4)
-		cell.alignment = BoxContainer.ALIGNMENT_CENTER
-		if String(spec["tag"]) != "":
-			cell.add_child(UiKit.label(String(spec["tag"]), 13, Palette.TEXT_SECONDARY, false))
-		var v := UiKit.label("", int(spec["vs"]), Palette.TEXT_PRIMARY, false)
-		v.custom_minimum_size.x = float(spec["vw"])
-		v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		cell.add_child(v)
-		topbar.top_values.append(v)
-		var n := UiKit.label("", 13, Palette.TEXT_SECONDARY, false)
-		n.custom_minimum_size.x = float(spec["nw"])
-		n.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		cell.add_child(n)
-		topbar.top_notes.append(n)
-		topbar.top.add_child(cell)
+# ── HUD 的版面 ────────────────────────────────────────────────────────
 
-	# ★ 選單（B1.4.1）。ESC 是快捷，**不是唯一的路**（P3：操作不得只靠鍵盤）。
-	#   放左上角 x<120、y<56 那塊角落——頂欄從 x=120 起、建造欄從 y=56 起，
-	#   全畫面只剩這裡是空的，而它也正好是選單的慣例位置。
-	var menu_bar := UiKit.hbox(0)
-	menu_bar.position = Vector2(8, 6)
-	add_child(menu_bar)
-	menulayer.menu_button = Button.new()
-	menulayer.menu_button.text = "選單"
-	menulayer.menu_button.custom_minimum_size.x = 104
-	menulayer.menu_button.pressed.connect(menulayer.toggle_menu)
-	menu_bar.add_child(UiKit.touchable(menulayer.menu_button))
-
+## 縮放鈕（右上）。`stage` 的契約只有 `ZOOM_STEP`／`zoom_by`／`reset_view`，不管它是 2D 還是 3D。
+func _build_zoom_bar() -> void:
 	# ★ 縮放（B1.2.2）。放在頂欄右端那片空白——建造欄與底欄都已經滿了，
 	#   而地圖右上角是縮放控制的慣例位置。**三顆鈕都是可點的**：滾輪只是
 	#   桌面的便利，手機移植預留條款 P3 不許任何操作只有滾輪／右鍵一條路。
@@ -630,95 +597,17 @@ func _build_ui() -> void:
 	zoom_bar.add_child(UiKit.touchable(_zoom_button))
 	refresh_zoom()
 
-	# 間距 2 而不是 4：B1.1 起建造欄有 10 種節點＋3 個模式鈕，44px 的觸控高度
-	# （手機移植前提，不能縮）乘 13 已經吃掉 572px，只剩間距可以讓。
-	#
-	# ★ B2.4.2：那句話在 B2.4 加了三隻角色之後**就不夠了**——13 種把「加粗／拆除」
-	#   推到和底欄疊在一起，「藍圖」整顆掉出畫面（RG-139），而**全收集的玩家打無盡
-	#   就是 13 種**。所以建造清單改裝進捲動容器，模式鈕釘在它下面。
-	#
-	#   為什麼是捲動而不是「壓矮一點」或「排兩欄」：44px 是手機移植的硬底線
-	#   （P2，不能縮），兩欄在 112px 欄寬裡塞不下「回收者」三個字。而真正的理由是
-	#   **這條清單還要再長一倍**——`10_GDD.md` §5 的 M3 內容矩陣是 24 隻角色，
-	#   加 5 種生產節點就是 29 顆鈕。任何「剛好排得下」的方案都只是把同一個 bug
-	#   往後推一批。
-	var col := UiKit.vbox(2)
-	col.position = Vector2(8, 56)
-	# 112 ＝ 剛好貼到地圖原點 x=120（`ORIGIN`）而不蓋住它。
-	# 最長的一顆是「碎浪 140+60合」。
-	col.custom_minimum_size = Vector2(112, 0)
-	add_child(col)
 
-	# ★ 全部 11 個鈕共用一個 `ButtonGroup`：任一時刻**恰好一個**是按下狀態，
-	#   而那正好就是這個 UI 的真相（選了建造類型就是離開連線模式）。
-	#   用 Godot 內建的 toggle 群組，不自己維護一套「哪個被選中」的高亮。
-	#   B0.6 之前完全沒有選中指示——玩家只能從提示列的文字推自己在哪個模式。
-	var group := ButtonGroup.new()
-	# ★ B3.7.1：允許「按一下選、再按一下取消」（使用者指定）。`ButtonGroup` 預設
-	#   永遠有一顆是按下的——那對模式是對的（總得在某個模式裡），對「手上拿著誰」
-	#   不對：玩家常常只是想看一下地圖，而不是隨時都握著一種節點。
-	group.allow_unpress = true
-	# ★ 只列**這一關解鎖的**（`10_GDD.md` §7.9）。第 1 關給四顆鈕不是十顆——
-	#   十顆對一個還不知道「電是流率」的人來說不是自由，是雜訊。
-	#   一局之內這份清單不會變，所以鈕的位置仍然是固定的（R-15 的同一條理由）。
-	buildbar.build_scroll = ScrollContainer.new()
-	buildbar.build_scroll.custom_minimum_size = Vector2(112, BUILD_LIST_H)
-	buildbar.build_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	col.add_child(buildbar.build_scroll)
-	var list := UiKit.vbox(2)
-	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	buildbar.build_scroll.add_child(list)
+## HUD 的版面：**每個面板自己建自己的 widget**（`hud/*.gd`），這裡只決定它們放在哪、
+## 以什麼順序加進來——**加入順序就是繪圖順序與命中順序**，下面每一段都不要調換。
+func _build_ui() -> void:
+	# 左上到右上那一排：頂欄、選單鈕、縮放鈕。
+	topbar.build_top()
+	menulayer.build_button()
+	_build_zoom_bar()
 
-	# ★ 生產／防線分段（B2.4.2）。**兩段不是排版，是這一欄的整句話**——
-	#   優先權面板為了同一件事特地做了雙欄（`NodeDefs.PRIORITY_SPLIT`），
-	#   而建造欄是玩家做**同一個決定**的地方（這 40 礦砂餵產線還是餵防線）。
-	#   分段同時讓捲動清單找得到東西：29 顆一模一樣的鈕捲起來是找不到路的。
-	# ★ **自己排序，不假設 `_buildable()` 已經是生產在前**（B2.4.2 code review 抓到）。
-	#   那份清單是各關在 `data/Campaign.gd` 手寫的，目前碰巧都是生產在前——
-	#   而「碰巧」不是不變量。有一關把塔寫在採集器前面時，那顆採集器會安靜地
-	#   歸到「防線」那一段，畫面看起來完全正常。
-	var ordered: Array[String] = []
-	for pass_towers: bool in [false, true]:
-		for type: String in buildbar.buildable():
-			if bool(NodeDefs.of(type).get("tower", false)) == pass_towers:
-				ordered.append(type)
-	var seen_tower := false
-	for type: String in ordered:
-		var is_tower: bool = bool(NodeDefs.of(type).get("tower", false))
-		if not seen_tower and is_tower:
-			seen_tower = true
-			list.add_child(buildbar.section_label("防線"))
-		elif not seen_tower and list.get_child_count() == 0:
-			list.add_child(buildbar.section_label("生產"))
-		# TL_NAKED 連造價都遮：它的語意是「隱藏所有數值標籤」，不是「隱藏狀態數值」。
-		# 鈕上**只有名字**（使用者指定，B1.3.1）：價牌在提示列的第一行，
-		# 而滑鼠移到鈕上時圖鑑浮層也會寫一次。同一個數字印三遍只是把鈕撐長。
-		var b := buildbar.tool_button(group, NodeDefs.label(type))
-		# ★ B3.7.1：接 `toggled` 不是 `pressed`（使用者指定「再按一下就是取消選擇」）。
-		#   `pressed` 收不到「這一顆剛被放開」——那正是取消選擇要聽的事件。
-		b.toggled.connect(buildbar.on_build_type.bind(type))
-		# ★ 角色簡介：滑鼠停在鈕上就浮出來，移開就消失（可用底欄「圖鑑」關掉）。
-		b.mouse_entered.connect(codexpanel.on_codex_show.bind(type, b))
-		b.mouse_exited.connect(codexpanel.on_codex_hide)
-		buildbar.build_buttons[type] = b
-		list.add_child(UiKit.touchable(b))
-	# ★ B3.7.1：`_build_type` 可以是空字串（手上什麼都沒拿），而空字串沒有對應的鈕。
-	#   索引不到會丟執行期錯誤 → **中止整支 `_build_ui()`**，症狀是「半個畫面沒建出來」
-	#   而不是報錯（RG-164 的形狀）。
-	if buildbar.build_buttons.has(build_type):
-		(buildbar.build_buttons[build_type] as Button).button_pressed = true
-
-	col.add_child(buildbar.spacer(4))
-	# ★ 動作鈕只剩一顆（B3.7.1，使用者指定）。歷次拿掉的理由是同一條：
-	#   **一個模式鈕如果只是「同一件事的比較慢的做法」，它就該消失。**
-	#   「連線」B1.6.2 被拖曳取代；「移動」B1.3.1 改中鍵拖；
-	#   「升級」「拆除」B3.7 被檢視面板上的鈕取代——切模式 → 點目標 → 切回建造，
-	#   三步裡有兩步不是決定。
-	#   藍圖留著：它不是動詞，是**手上拿著的東西**，沒有別的地方表達得了。
-	var bp_btn_mode := buildbar.tool_button(group, "藍圖")
-	bp_btn_mode.toggled.connect(buildbar.on_mode.bind(Mode.BLUEPRINT))
-	buildbar.mode_buttons[Mode.BLUEPRINT] = bp_btn_mode
-	col.add_child(UiKit.touchable(bp_btn_mode))
+	# 左欄：建造清單。
+	buildbar.build()
 
 	# 建造欄放不下八種節點再加動作鈕（8×44 已經吃掉 380px），
 	# 所以時間流與面板開關搬到地圖下緣那條 56px 的空帶——那裡本來就空著。
@@ -734,75 +623,22 @@ func _build_ui() -> void:
 	bar.add_child(g_time)
 	bar.add_child(g_panels)
 	bar.add_child(g_help)
-	topbar.ff_button = Button.new()
-	topbar.ff_button.text = "快進 4×"
-	topbar.ff_button.pressed.connect(topbar.on_fast_forward)
-	g_time.add_child(UiKit.touchable(topbar.ff_button))
-	topbar.summon_button = Button.new()
-	topbar.summon_button.pressed.connect(topbar.on_summon_now)
-	# ★ **全底欄唯一一顆不可逆的鈕**：按下去這一波就提早來，獎勵倍率也定了。
-	#   §7.2 B-5 原本開的處方是 `energy.amber` 描邊——**那違反 §1.1 配色紀律 2**
-	#   （琥珀專屬於能量，而提前召喚跟耗能無關）。改用 `warn.orange`：紀律 1 說
-	#   橙／品紅專屬於「敵人與危險狀態」，而這顆鈕做的事**就是把敵潮叫過來**，
-	#   它是玩家自己選的危險。同一條紀律，剛好也是更強的編碼。
-	topbar.summon_button.add_theme_color_override("font_color", Palette.WARN_ORANGE)
-	topbar.summon_button.add_theme_color_override("font_hover_color", Palette.WARN_ORANGE)
-	g_time.add_child(UiKit.touchable(topbar.summon_button))
-	# 抽屜開關本來就是一個開關：做成 toggle，按下狀態才**真的**等於「抽屜開著」。
-	# 之前是普通按鈕，它拿到焦點時的外框看起來就像被選中，玩家會以為抽屜開了。
-	var prio := Button.new()
-	prio.text = "優先權"  # 底欄六個鈕，字都壓到最短——提示列要留得下兩行字
-
-	prio.toggle_mode = true
-	prio.toggled.connect(priopanel.on_toggle_priority)
-	g_panels.add_child(UiKit.touchable(prio))
-	# ★ 藍圖庫（B2.3）。放底欄抽屜而不是左欄：左欄的八種節點加動作鈕已經
-	#   吃掉 380px，而藍圖是**每局用一兩次**的東西，不該和每秒都在點的建造欄搶位置。
-	var bp_btn := Button.new()
-	bp_btn.text = "藍圖"
-	bp_btn.toggle_mode = true
-	bp_btn.toggled.connect(bppanel.on_toggle_blueprint)
-	g_panels.add_child(UiKit.touchable(bp_btn))
-	helppanel.help_button = Button.new()
-	helppanel.help_button.text = "說明"
-	helppanel.help_button.toggle_mode = true
-	helppanel.help_button.toggled.connect(helppanel.on_toggle_help)
-
-	energypanel.energy_button = Button.new()
-	energypanel.energy_button.text = "能量"
-	energypanel.energy_button.toggle_mode = true
-	energypanel.energy_button.toggled.connect(energypanel.on_toggle_energy)
-	g_panels.add_child(UiKit.touchable(energypanel.energy_button))
-	codexpanel.codex_button = Button.new()
-	codexpanel.codex_button.text = "圖鑑"
-	codexpanel.codex_button.toggle_mode = true
-	codexpanel.codex_button.button_pressed = true   # 預設開：它只在滑鼠停在建造鈕上時才出現
-	codexpanel.codex_button.toggled.connect(func(on: bool) -> void: codexpanel.codex_on = on)
-	g_panels.add_child(UiKit.touchable(codexpanel.codex_button))
+	topbar.build_time_controls(g_time)
+	g_panels.add_child(UiKit.touchable(priopanel.make_toggle()))
+	g_panels.add_child(UiKit.touchable(bppanel.make_toggle()))
+	g_panels.add_child(UiKit.touchable(energypanel.make_toggle()))
+	g_panels.add_child(UiKit.touchable(codexpanel.make_toggle()))
 	# 說明自己一群：它是唯一一顆**跟局面無關**的鈕（不改狀態、不開資料浮層）。
-	g_help.add_child(UiKit.touchable(helppanel.help_button))
+	g_help.add_child(UiKit.touchable(helppanel.make_toggle()))
 
-	priopanel.build_priority_panel()
-	bppanel.build_blueprint_panel()
-	energypanel.build_energy_panel()
-	codexpanel.build_codex_panel()
-	inspector.build_inspect_panel()
-	helppanel.build_help_panel()
+	priopanel.build_panel()
+	bppanel.build_panel()
+	energypanel.build_panel()
+	codexpanel.build_panel()
+	inspector.build_panel()
+	helppanel.build_panel()
 
-	# 兩行：上行「下一步」、下行當下動作的細節。
-	#
-	# ★ x **跟著底欄實際的右緣走**，不是一個寫死的 520（B2.9）。原本是寫死的，
-	#   而 B2.9 給按鈕套上美術 token（`content_margin` 12/8）之後每一顆鈕都變寬了
-	#   ——七顆鈕加起來超過 520，提示文字當場被壓在「說明」那顆鈕上面。
-	#   寫死的座標就是這樣壞的：它記的是**當時**那七顆鈕有多寬。
-	#   （這也是手機預留條款 P1「不硬編碼像素位置」在這一行的兌現。）
-	hintbar.hint = UiKit.label("", 13, Palette.TEXT_SECONDARY, false)
-	hintbar.hint.position = Vector2(520, 666)
-	hintbar.hint.size = Vector2(755, 50)
-	add_child(hintbar.hint)
-	bar.resized.connect(hintbar.place_hint.bind(bar))
-	hintbar.place_hint.call_deferred(bar)
-	hintbar.refresh_hint()
+	hintbar.build(bar)
 
 
 func restart() -> void:

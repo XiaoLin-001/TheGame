@@ -31,6 +31,24 @@ func place_hint(bar: Control) -> void:
 	hint.size.x = maxf(120.0, float(scr.size.x) - hint.position.x - 8.0)
 
 
+## 兩行字，放在底欄右邊。`bar` 是底欄——它的寬度要到版面跑完才知道，所以走 `resized`。
+func build(bar: Control) -> void:
+	# 兩行：上行「下一步」、下行當下動作的細節。
+	#
+	# ★ x **跟著底欄實際的右緣走**，不是一個寫死的 520（B2.9）。原本是寫死的，
+	#   而 B2.9 給按鈕套上美術 token（`content_margin` 12/8）之後每一顆鈕都變寬了
+	#   ——七顆鈕加起來超過 520，提示文字當場被壓在「說明」那顆鈕上面。
+	#   寫死的座標就是這樣壞的：它記的是**當時**那七顆鈕有多寬。
+	#   （這也是手機預留條款 P1「不硬編碼像素位置」在這一行的兌現。）
+	hint = UiKit.label("", 13, Palette.TEXT_SECONDARY, false)
+	hint.position = Vector2(520, 666)
+	hint.size = Vector2(755, 50)
+	scr.add_child(hint)
+	bar.resized.connect(place_hint.bind(bar))
+	place_hint.call_deferred(bar)
+	refresh_hint()
+
+
 func refresh_hint() -> void:
 	# ⚠ **UI 還沒建完就可能被呼叫**（B3.7.1）：`_build_ui()` 裡設建造鈕的
 	#   `button_pressed = true` 會當場送出 `toggled`，而那時提示列還沒建出來。

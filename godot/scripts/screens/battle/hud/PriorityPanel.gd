@@ -22,7 +22,19 @@ var prio_panel: Control = null
 var prio_labels: Dictionary = {}
 
 
-func build_priority_panel() -> void:
+## 底欄的抽屜開關。
+func make_toggle() -> Button:
+	# 抽屜開關本來就是一個開關：做成 toggle，按下狀態才**真的**等於「抽屜開著」。
+	# 之前是普通按鈕，它拿到焦點時的外框看起來就像被選中，玩家會以為抽屜開了。
+	var prio := Button.new()
+	prio.text = "優先權"  # 底欄六個鈕，字都壓到最短——提示列要留得下兩行字
+
+	prio.toggle_mode = true
+	prio.toggled.connect(on_toggle_priority)
+	return prio
+
+
+func build_panel() -> void:
 	var box := UiKit.panel()
 	# B1.1 起 9 列：單欄 × 44px 觸控高度（手機移植前提，不能縮）放不進一屏，
 	# 改**雙欄**——左生產、右防線（`NodeDefs.PRIORITY_SPLIT`），而那個分界
