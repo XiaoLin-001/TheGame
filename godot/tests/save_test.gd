@@ -12,7 +12,7 @@ const Difficulty := preload("res://data/Difficulty.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("save_test", 98)
+	var t := T.new("save_test", 105)
 
 	# ── 空存檔 → 補完整 schema ──
 	var fresh: Dictionary = Save.normalize({})
@@ -57,6 +57,8 @@ func _initialize() -> void:
 
 	# ── 磁碟往返：原子寫入 → 讀回 → 一致 ──
 	_disk_round_trip(t)
+	_interrupted_swap(t)
+	_newer_version(t)
 
 	_migration_sv1_to_sv2(t)
 	_hostile_saves(t)
@@ -159,6 +161,57 @@ func _disk_round_trip(t: RefCounted) -> void:
 		dir.remove(svc.tmp_path.get_file())
 	t.ok(not FileAccess.file_exists(svc.path), "測試結束後未留下檔案")
 	svc.free()
+
+
+## ★ 換檔被打斷（RG-181）。**只剩 `.tmp` 的時候讀回它**，不是退回預設值。
+##
+## `_write_atomic()` 的兩步（刪主檔、改名）之間被打斷——這裡直接造出那個狀態：
+## 一份完整的 `.tmp`、沒有主檔。紅得起來：把 `_read_raw()` 改回只認主檔，這條與下一條同時倒。
+func _interrupted_swap(t: RefCounted) -> void:
+	var svc: Node = Save.new()
+	svc.path = "user://save_swap_test.json"
+	svc.tmp_path = "user://save_swap_test.json.tmp"
+	svc.persist = true
+	var dir := DirAccess.open("user://")
+	dir.remove(svc.path.get_file())
+	var f := FileAccess.open(svc.tmp_path, FileAccess.WRITE)
+	f.store_string(JSON.stringify({"sv": Save.SAVE_VERSION, "tech": {"data": 42}}))
+	f.close()
+	var back := {}
+	svc.load_into(back)
+	t.eq(int(back["tech"]["data"]), 42, "★ 主檔不在、只剩完整的 .tmp：讀回它（換檔被打斷不丟進度）")
+
+	# 主檔壞掉（半寫）而 .tmp 完整：同樣讀 .tmp。
+	var broken := FileAccess.open(svc.path, FileAccess.WRITE)
+	broken.store_string('{"tech": {"data": 7')
+	broken.close()
+	var back2 := {}
+	svc.load_into(back2)
+	t.eq(int(back2["tech"]["data"]), 42, "★ 主檔壞掉而 .tmp 完整：讀 .tmp")
+
+	# 主檔好好的：永遠讀主檔（.tmp 是殘骸時不能反過來蓋過它）。
+	var good := FileAccess.open(svc.path, FileAccess.WRITE)
+	good.store_string(JSON.stringify({"sv": Save.SAVE_VERSION, "tech": {"data": 9}}))
+	good.close()
+	var back3 := {}
+	svc.load_into(back3)
+	t.eq(int(back3["tech"]["data"]), 9, "主檔讀得出來就讀主檔，不被 .tmp 蓋過")
+
+	dir.remove(svc.path.get_file())
+	dir.remove(svc.tmp_path.get_file())
+	svc.free()
+
+
+## ★ 比自己新的存檔**不動版號**（RG-180）。`migrate()` 早就是這樣（B3.10），但真正的路徑
+## （`load_into`／`save_from` 都走 `normalize()`）會把 `sv` 蓋回當前版本——降級開檔就把新版的資料
+## 標成舊版存回去。這條斷言走**真的路徑**，不是只驗 `migrate()`。
+func _newer_version(t: RefCounted) -> void:
+	var future := Save.SAVE_VERSION + 1
+	var out := Save.normalize({"sv": future, "tech": {"data": 5}})
+	t.eq(int(out["sv"]), future, "★ 比自己新的檔：normalize 後版號不動")
+	t.eq(int(out["tech"]["data"]), 5, "比自己新的檔：資料原樣保留")
+	t.eq(int(Save.normalize({"sv": Save.SAVE_VERSION - 1})["sv"]), Save.SAVE_VERSION, "舊檔：照舊遷移到當前版本")
+	t.eq(int(Save.normalize({})["sv"]), Save.SAVE_VERSION, "沒有 sv 的檔：當成舊檔")
 
 
 ## ★ 惡意／壞掉的存檔（B2.8 L5 找碴、RG-159）。
