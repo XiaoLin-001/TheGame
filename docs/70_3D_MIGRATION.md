@@ -1,6 +1,7 @@
 # 《潮與線》2D → 3D 轉換準備
 
-> 狀態：**準備完成（B3.14），轉換本身尚未開始。** 分支 `3D-project`。
+> 狀態：**準備完成（B3.14）；B4.0 脊椎已用一個粗糙的 `Stage3D` 證明契約成立**（實驗性、預設關閉，`TL_STAGE=3d`）。
+> 真正的 3D 轉換**尚未開始**——D1–D7 還沒拍板。分支 `3D-project`。
 > 上位文件：`00_CONCEPT.md`、`10_GDD.md`、`20_ART_DIRECTION.md`（現行是 **2D 平面向量語言**，轉 3D 要改寫，見 §1 D2）。
 > 配套：`60_CODE_MAP.md`（哪些程式碼與維度無關）。
 
@@ -8,12 +9,29 @@
 
 ## 0. 一句話
 
-**模擬、資料、存檔、HUD、輸入邏輯全部與維度無關**（約 84% 的程式碼，且都有測試鎖住）。
+**模擬、資料、存檔、HUD、輸入邏輯全部與維度無關**（約 84% 的程式碼——runtime 64 檔、約 19,000 行裡，2D 專屬的只有約 3,000 行——且都有測試鎖住）。
 只有「**舞台**」是 2D 專屬：`Stage2D`（約 1400 行）＋ `render/2d/` 的四支美術生成器（約 1400 行）。
 B3.14 把這兩塊從 5316 行的 `Battle.gd` 裡切了出來，並在它們前面立了一份**契約**（`screens/battle/Stage.gd`）：
 換成 3D＝**照契約另寫一個 `Stage3D.gd`**，局內畫面與全部 HUD 不必動。
 
-驗證過的事實（不是推測）：重構前後 **32 張截圖逐像素 0 差**、11 條 clicktest 全過、20 支 headless 測試全過
+**B4.0 脊椎（已做，粗糙）**：`screens/battle/Stage3D.gd`（約 450 行）——地面＋格線 shader、路徑格、礦點、橋、
+節點（方塊）、導管（長條，顏色＝負載）、敵人（球）、游標與選取標記、正交相機（俯角 55°）、縮放平移。
+**`Battle.gd`、覆蓋層、全部 HUD 一個字沒改**就跑得起來——蓋節點、拉導管、選取、縮放、小地圖都走原本的輸入路由：
+
+```bash
+TL_STAGE=3d TL_SHOT="C:/tmp/stage3d.png" TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> --path godot --rendering-driver opengl3
+TL_STAGE=3d TL_CLICKTEST=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3      # smoke：真的合成點擊蓋出節點
+python qa/check.py tests stage3d                                                         # headless 契約測試（29 條）
+```
+
+- `tests/stage3d_test.gd` 把契約的每一條寫成斷言（往返、框住全圖、縮放錨點不動、上下限、平移夾限、`center_view_on`、
+  每幀同步節點／導管／敵人、`view_moved`）。**它是之後任何舞台實作的驗收尺**，也守住 `Stage3D` 不引用 autoload。
+  紅得起來（把 `cell_at` 改歪 → 兩條同時倒，已驗）。
+- 3D 截圖**同機器逐像素確定**（重拍兩次 0 像素差）——D7 的「同機器仍可逐像素」成立。
+- **刻意沒做**的：每種節點的造型、徽章、流動珠、特效、地貌、大圖的 fit 下限（2D 的可讀性地板）、`SelfTest` 裡讀 `Stage2D`
+  內部的探針。這些全是 B4.1 之後的事，而且要先等 D1–D7。
+
+驗證過的事實（不是推測）：重構前後 **32 張截圖逐像素 0 差**、11 條 clicktest 全過、21 支 headless 測試全過
 ——也就是說這個接縫是真的接縫，不是紙上畫的。
 
 ---
@@ -38,11 +56,11 @@ B3.14 把這兩塊從 5316 行的 `Battle.gd` 裡切了出來，並在它們前�
 
 | 層 | 行數（約） | 與維度的關係 | 3D 時 |
 |---|---:|---|---|
-| `data/`、`scripts/sim/`、`scripts/meta/`、`scripts/game/` | 7,500 | **完全無關**（純函式；格座標是 `Vector2i`） | 不動 |
+| `data/`、`scripts/sim/`、`scripts/meta/`、`scripts/game/` | 6,800 | **完全無關**（純函式；格座標是 `Vector2i`） | 不動 |
 | `scripts/core/`（autoload、存檔） | 1,100 | 無關 | 不動 |
-| `scripts/screens/`（除 `Battle`）、`ui/UiKit` | 3,500 | 無關（2D `Control`） | 不動 |
+| `scripts/screens/`（除 `Battle`）、`ui/UiKit` | 3,050 | 無關（2D `Control`） | 不動 |
 | `screens/Battle.gd`（指揮者） | 700 | **只透過 `Stage` 契約**碰舞台 | 不動 |
-| `screens/battle/hud/*`（11 個面板）、`Overlay2D`、`Feedback` | 2,600 | 無關（螢幕座標的 `Control`；問視野一律走 `stage.*`） | 不動 |
+| `screens/battle/hud/*`（11 個面板）、`Overlay2D`、`Feedback` | 2,360 | 無關（螢幕座標的 `Control`；問視野一律走 `stage.*`） | 不動 |
 | **`screens/battle/Stage2D.gd`** | **1,420** | **2D 專屬** | **重寫成 `Stage3D.gd`** |
 | **`render/2d/`**：`Glyphs`、`Foes`、`Terrain`、`TitleBackdrop` | **1,400** | **2D 專屬**（輸出 2D 多邊形與線） | 寫 3D 網格生成器 |
 | `render/`：`Palette`、`Motion`、`Shapes` | 550 | 色值與時長階無關；`Shapes` 裡的繪圖 helper 是 2D 的，`GRID`／`fit_zoom` 不是 | 色值與時長階沿用 |
@@ -69,7 +87,8 @@ B3.14 把這兩塊從 5316 行的 `Battle.gd` 裡切了出來，並在它們前�
 2. **舞台只讀 `s`**（`SessionState`），不改局面、不擁有規則。
 3. **它是滿版 `Control`、`mouse_filter = IGNORE`**——點擊一律落到 `Battle._gui_input`（B0.7.2 的教訓：命中區與繪圖是兩件事）。3D 版把一個 `SubViewportContainer`（同樣 IGNORE）放在裡面。
 
-**`Battle._build_modules()` 目前寫死 `Stage2D.new()`**——轉換時改成讀設定（D5），這是主畫面裡**唯一**需要知道「哪一種舞台」的一行。
+**`Battle._build_modules()` 是主畫面裡唯一知道「哪一種舞台」的地方**：`Stage3D.new() if Hooks.stage3d else Stage2D.new()`。
+要把它做成玩家的設定（D5），改的就只有這一行判斷。
 
 ---
 
@@ -119,7 +138,7 @@ Stage2D 的 `_draw()` 依序畫下面這些層（都讀 `s`，不改 `s`）。3D
 
 | 項目 | 3D 時 |
 |---|---|
-| 20 支 headless 測試 | **完全不受影響**（沒有一支載入舞台） |
+| 21 支 headless 測試 | **完全不受影響**（沒有一支載入舞台） |
 | `determinism_test`／`perf_test` | 不受影響（`sim/` 不碰渲染） |
 | 10 條 clicktest | 走 HUD ＋ 合成滑鼠事件 → **原封不動可以跑**（它們問的是 `stage.cell_at`／`to_screen`，不是 2D 專屬）。例外：`SelfTest` 裡讀 `Stage2D` 內部的幾條探針（見 §2 最後一列） |
 | 截圖矩陣（32 張） | 2D 版不變；3D 版另拍一份基準。HUD 部分兩者應相同 |
@@ -132,7 +151,7 @@ Stage2D 的 `_draw()` 依序畫下面這些層（都讀 `s`，不改 `s`）。3D
 
 | 批次 | 內容 | DoD |
 |---|---|---|
-| **B4.0 脊椎** | `Stage3D.gd`：地面＋路徑＋節點（方塊）＋敵人（球）＋相機（D3）＋拾取。設定開關 `stage = 3d`（預設 2D）。 | HUD 與輸入**不改一行**就能在 3D 舞台上蓋東西、拉線、選取；clicktest 全過；`TL_STRESS` 有數字 |
+| **B4.0 脊椎** ✅（B3.14，粗糙版） | `Stage3D.gd`：地面＋路徑＋節點（方塊）＋敵人（球）＋相機（D3）＋拾取。開關 `TL_STAGE=3d`（預設 2D）。 | ✅ HUD 與輸入**不改一行**就能在 3D 舞台上蓋東西、拉線、選取（`stage_smoke`）；✅ 契約測試 29 條；⬜ 效能基準（`TL_STRESS` 在 3D 舞台上的數字）；⬜ 設定裡的開關（D5） |
 | **B4.1 導管** | 管狀網格＋ per-instance 寬度／顏色＋流動珠 shader | `TL_NAKED` 截圖裡瓶頸仍然看得出（人判） |
 | **B4.2 節點與敵人** | 13＋6 種程序網格，吃 `Glyphs`／`Foes` 的零件清單 | 每種節點都有網格（`no_glyph` 探針的 3D 版） |
 | **B4.3 特效與地貌** | 開火兩端、碎片爆、屏障；八種地貌 | `reduce_motion` 全覆蓋 |

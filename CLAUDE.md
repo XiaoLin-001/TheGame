@@ -96,7 +96,7 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（20 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress / difficulty / m2 / fuzz）
+# 自動化測試（21 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress / difficulty / m2 / fuzz / stage3d）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -173,6 +173,10 @@ TL_SHOT="C:/tmp/endless.png" TL_PANEL=endless TL_SEED=42 <godot> --path godot --
 # 要拍它得配 TL_CLICKTEST，而且要有示範佈局（合照那一排沒有導管，答不出「電從哪來」）。
 # TL_PICK=wire 改成選一條導管（挑本 tick 流量最大的那條）；不給就是選一座塔。
 TL_CLICKTEST=1 TL_SHOT="C:/tmp/wire.png" TL_MUTE=1 TL_PICK=wire TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> --path godot --rendering-driver opengl3
+
+# ★ 3D 舞台（B4.0 脊椎，**實驗性**，預設 2D）：TL_STAGE=3d 讓局內畫面用 `Stage3D`——HUD、輸入、小地圖一個字不改。
+# `TL_STAGE=3d TL_CLICKTEST=1` 跑只問契約的 smoke；舞台契約的 headless 驗收是 `tests/stage3d_test.gd`。
+TL_STAGE=3d TL_SHOT="C:/tmp/stage3d.png" TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> --path godot --rendering-driver opengl3
 
 # ★ 拍特效近照（B1.6）：TL_FOCUS="x,y,zoom" 把鏡頭對到某一格並放大。
 # 特效是 0.2 秒、十幾個像素的東西——在 fit 倍率的全圖截圖上判不出好壞，

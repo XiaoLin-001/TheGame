@@ -50,7 +50,7 @@
 > `python qa/gd_graph.py --cut data/Achievements.gd` 會報「遊戲開不起來」——那只是說 `Main.gd` 與
 > `SaveService.gd` 還引用著它，**不是**說成就是脊椎。要真的拿掉一個 T2 功能，照 §2.3 的接點表改。
 
-### 2.1 T0 脊椎（52 個 runtime 檔裡真正承重的）
+### 2.1 T0 脊椎（64 個 runtime 檔、約 19,000 行裡真正承重的）
 
 | 檔案 | 行 | 角色 | 為什麼砍不得 |
 |---|---:|---|---|
@@ -66,7 +66,7 @@
 | `scripts/sim/FlowNetwork.gd` | 644 | 流量網路解算器 | 全案的心臟（見 §2.2 ①②） |
 | `scripts/sim/Combat.gd` `Tide.gd` `Build.gd` `Clock.gd` `Score.gd` | 189／113／272／17／66 | 戰鬥計算、敵潮、建造規則、固定時間步、結算數學 | 純函式；每一支都有 headless 測試鎖住 |
 | `data/NodeDefs.gd` `Enemies.gd` `Maps.gd` | 301／421／292 | 節點、敵人、地圖的**資料表** | 數值唯一來源是 `10_GDD.md` §7，這裡是它的實作 |
-| `scripts/screens/Battle.gd` ＋ `screens/battle/*` | 約 700 ＋ 約 5000 | 局內畫面 | 玩家的唯一操作介面（舞台 `Stage2D` 是 T3，但沒有它看不見局面） |
+| `scripts/screens/Battle.gd` ＋ `screens/battle/*` | 693 ＋ 約 5,300 | 局內畫面 | 玩家的唯一操作介面（舞台 `Stage2D` 是 T3，但沒有它看不見局面） |
 | `scripts/render/Palette.gd` `scripts/ui/UiKit.gd` | 166／306 | 色值唯一來源、CJK 字型與主題 | 拿掉就是豆腐字與錯色（`Color(` 字面量是缺陷） |
 
 ### 2.2 T1 核心規則：設計鎖在哪幾行
@@ -114,6 +114,7 @@
 | 區段 | 檔案 | 說明 |
 |---|---|---|
 | **舞台（2D）** | `screens/battle/Stage.gd`（契約）、`Stage2D.gd`（約 1400 行：視野、拾取、全部 `_draw_*`） | **2D→3D 要換掉的就是這一塊**；見 `70_3D_MIGRATION.md` |
+| 舞台（3D，**實驗**） | `screens/battle/Stage3D.gd`（約 450 行，B4.0 脊椎）；開關 `TL_STAGE=3d`，預設關閉 | 證明契約成立：HUD 與輸入不改一行就能跑；`tests/stage3d_test.gd` 是它的驗收尺 |
 | 覆蓋層 | `screens/battle/Overlay2D.gd` | 能量列、小地圖、邊緣箭頭——螢幕座標，3D 之後原封不動 |
 | HUD | `screens/battle/hud/*.gd`（11 個面板） | 全是 2D `Control`；3D 之後原封不動 |
 | 2D 美術生成器 | `render/2d/`：`Glyphs`（節點幾何）、`Foes`（敵人幾何）、`Terrain`（地貌）、`TitleBackdrop` | 純函式，輸出幾何；3D 要寫對應的網格生成器 |
@@ -123,7 +124,7 @@
 ### 2.5 T4 開發輔助（一般遊玩閒置）
 
 `screens/battle/SelfTest.gd`（約 1400 行：`TL_CLICKTEST`／`TL_STRESS`／示範佈局）、`core/Hooks.gd` 的 `TL_SIM`／`TL_SHOT`、
-`tests/`（20 支 headless ＋ 輔助）、`qa/`、`dev/`、`assetgen/`。匯出時 `exclude_filter="tests/*"`——
+`tests/`（21 支 headless ＋ 輔助）、`qa/`、`dev/`、`assetgen/`。匯出時 `exclude_filter="tests/*"`——
 **所以 headless 測試在 exe 上跑不到**，exe 上唯一還在的驗證是 `clicktest` 與 `TL_SHOT`（見 `CLAUDE.md` 每批收尾）。
 
 ---

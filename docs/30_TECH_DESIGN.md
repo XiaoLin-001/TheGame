@@ -82,7 +82,7 @@ TheGame/
     │   ├── ui/                 UiKit.gd（共用 UI helpers，static）
     │   └── screens/            各畫面；局內畫面見 §2.6
     ├── data/                   節點、敵人、地圖、戰役、科技、等級軸、成就、難度層、名冊的資料表（GDScript 表 ＋ 讀它的純函式）
-    ├── tests/                  20 支 headless 測試 ＋ 輔助
+    ├── tests/                  21 支 headless 測試 ＋ 輔助
     └── assets/audio/           bgm 3 首、sfx 14 支（程序生成）
 ```
 

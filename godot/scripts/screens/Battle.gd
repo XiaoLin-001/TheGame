@@ -26,6 +26,7 @@ const Daily := preload("res://scripts/sim/Daily.gd")
 const RosterData := preload("res://data/Roster.gd")
 const Stage := preload("res://scripts/screens/battle/Stage.gd")
 const Stage2D := preload("res://scripts/screens/battle/Stage2D.gd")
+const Stage3D := preload("res://scripts/screens/battle/Stage3D.gd")
 const Overlay2D := preload("res://scripts/screens/battle/Overlay2D.gd")
 const Feedback := preload("res://scripts/screens/battle/Feedback.gd")
 const SelfTest := preload("res://scripts/screens/battle/SelfTest.gd")
@@ -196,7 +197,12 @@ func _ready() -> void:
 	if Hooks.panel in ["battle", "sandbox", "campaign"] and Hooks.demo_ticks > 0:
 		selftest.demo_layout()
 	if Hooks.click_test:
-		selftest.click_selftest.call_deferred()
+		# 完整的 clicktest 裡有幾條探針讀 `Stage2D` 的內部（`no_glyph`、`pan` 夾限）；
+		# 3D 舞台走只問契約的 smoke（`SelfTest.stage_smoke()`）。
+		if Hooks.stage3d:
+			selftest.stage_smoke.call_deferred()
+		else:
+			selftest.click_selftest.call_deferred()
 
 
 ## 建立並接上全部模組（`screens/battle/`）。
@@ -205,7 +211,8 @@ func _ready() -> void:
 ## HUD 的 widget（`_build_ui()` 之後才加）在最上面。`restart()` 只重建 HUD 的 widget，
 ## 不動這些模組。
 func _build_modules() -> void:
-	stage = Stage2D.new()
+	# 唯一知道「哪一種舞台」的地方：其餘一律只認 `Stage.gd` 的契約。
+	stage = Stage3D.new() if Hooks.stage3d else Stage2D.new()
 	overlay = Overlay2D.new()
 	feedback = Feedback.new()
 	selftest = SelfTest.new()

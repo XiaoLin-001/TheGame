@@ -15,7 +15,7 @@ extends Node
 ## 自檢的探針與斷言會讀寫畫面層的私有狀態，所以這個模組是畫面層的「友軍」：
 ## 它直接用 `scr._xxx` 的原名，不要求那些成員公開。
 
-const Stage2D := preload("res://scripts/screens/battle/Stage2D.gd")
+const Stage := preload("res://scripts/screens/battle/Stage.gd")
 const Overlay2D := preload("res://scripts/screens/battle/Overlay2D.gd")
 const Feedback := preload("res://scripts/screens/battle/Feedback.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
@@ -34,8 +34,9 @@ var s: RefCounted = null
 var feedback: Feedback = null
 ## 同伴模組（Overlay2D）。
 var overlay: Overlay2D = null
-## 同伴模組（Stage2D）。
-var stage: Stage2D = null
+## 舞台。型別是**契約**（`Stage.gd`）；完整的 clicktest 讀到的幾條 2D 內部欄位是動態存取，
+## 只有 2D 舞台撐得住——3D 舞台走 `stage_smoke()`。
+var stage: Stage = null
 
 
 ## `TL_STRESS`：丟掉的暖身幀數與實際量測幀數。
@@ -1431,3 +1432,62 @@ func demo_layout() -> void:
 	# （自然開波）對不起來。現在 `TL_DEMO_TICKS=N` 與 `TL_SIM=N` 是同一個局面。
 	for _i in Hooks.demo_ticks:
 		BattleController.step(s)
+
+
+## ★ 舞台契約的 smoke（`TL_STAGE=3d TL_CLICKTEST=1`，B4.0）。**只問契約，不讀任何 2D 內部。**
+##
+## 驗的是 `Battle`／HUD **一個字沒改**就能跑在別的舞台上這件事本身：投影往返、全圖在視野內、
+## 縮放後仍往返，以及一次**真的合成點擊**（走完整輸入路由）蓋出一個節點。
+## 拿「不在地圖上的東西」當探針沒有意義，所以第 ④ 條用 `Build.can_place()` 找一個真的蓋得下去的格。
+func stage_smoke() -> void:
+	await _frames(3)
+	var m := Vector2i(s.map["size"])
+	var probes: Array[Vector2i] = [
+		Vector2i(0, 0), Vector2i(m.x - 1, 0), Vector2i(0, m.y - 1), Vector2i(m.x - 1, m.y - 1),
+		Vector2i(m.x / 2, m.y / 2),
+	]
+	# ① 投影往返：格 → 螢幕 → 同一格（拾取與投影是同一組反變換）。
+	var round_trip := true
+	for c: Vector2i in probes:
+		round_trip = round_trip and stage.cell_at(stage.to_screen(stage.center(c))) == c
+	# ② 進場視野框住整張圖（鎖定的設計：戰役關卡一屏可見）。
+	var vr := stage.view_world_rect()
+	var mpx := Vector2(m) * Shapes.GRID
+	var covers: bool = (
+		vr.position.x <= 0.5 and vr.position.y <= 0.5 and vr.end.x >= mpx.x - 0.5 and vr.end.y >= mpx.y - 0.5
+	)
+	var at_fit: bool = is_equal_approx(stage.zoom, stage.fit) and not stage.oversized()
+	# ③ 放大：倍率變大、視野變小、往返仍成立（錨點底下那格不動由 zoom_by 負責）。
+	stage.zoom_by(Stage.ZOOM_STEP, Stage.FRAME.position + Stage.FRAME.size * 0.5)
+	await _frames(2)
+	var zoomed: bool = stage.zoom > stage.fit
+	var zr := stage.view_world_rect()
+	var smaller: bool = zr.size.x < vr.size.x - 0.5
+	var mid := Vector2i(m.x / 2, m.y / 2)
+	var round_trip_zoomed: bool = stage.cell_at(stage.to_screen(stage.center(mid))) == mid
+	scr._on_zoom_reset()
+	await _frames(2)
+	var reset_ok: bool = is_equal_approx(stage.zoom, stage.fit)
+	# ④ 真的點：選「中繼」，點一個蓋得下去的空格 → 節點多一個。
+	var free := Vector2i(-1, -1)
+	var occ: Dictionary = s.occupied()
+	for y in m.y:
+		for x in m.x:
+			if Build.can_place(s.sets, occ, "relay", Vector2i(x, y)) == Build.OK:
+				free = Vector2i(x, y)
+				break
+		if free.x >= 0:
+			break
+	var before: int = s.nodes.size()
+	_press(scr.buildbar.build_buttons["relay"])
+	await _frames(2)
+	_click(free)
+	await _frames(3)
+	var placed: bool = free.x >= 0 and s.nodes.size() == before + 1
+	var ok: bool = round_trip and covers and at_fit and zoomed and smaller and round_trip_zoomed and reset_ok and placed
+	print("[TL_CLICKTEST/stage] 往返=%s 框住全圖=%s 縮放=%s 視野變小=%s 縮放後往返=%s 全景還原=%s 真的點擊蓋出節點=%s（%s）→ %s" % [
+		round_trip, covers, zoomed, smaller, round_trip_zoomed, reset_ok, placed, free,
+		"PASS" if ok else "FAIL"
+	])
+	if Hooks.shot_path == "":
+		get_tree().quit(0 if ok else 1)

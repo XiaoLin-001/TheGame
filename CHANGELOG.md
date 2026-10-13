@@ -4,6 +4,82 @@
 
 ---
 
+## [0.43.0] — 2026-10-13 — 重構與 3D 準備（B3.14）
+
+使用者要求五件事：**①環境能跑 ②找出砍了會讓遊戲無法運作的核心 ③重構成好維護的結構
+④開 `3D-project` 分支為 2D→3D 做準備 ⑤檢查現階段的問題與 bug。** 分支 `3D-project`（從 B3.13 的 `0621b0b` 切出，**未 push**）。
+**玩法一個數字都沒動**：21 支 headless 測試全過、12 條 clicktest 全過、**舊的 32 張截圖逐像素 0 差**。
+
+### ① 環境
+
+這台機器上 Godot 4.7、Windows 匯出範本、`export_presets.cfg` 本來就在（B3.13 時裝的），
+`python dev/setup.py --check` 全綠。新增**可重現**的環境腳本，下一台機器不必再靠記憶：
+
+- `dev/setup.py`：冪等地補齊 Godot／匯出範本（只解出 Windows 要用的兩個）／`export_presets.cfg`／專案匯入／lint
+- `dev/play.bat`（開遊戲）、`dev/export.bat`（匯出 exe）、`README.md`（給人看的入口）
+- `qa/check.py`：把 CLAUDE.md 二十幾條指令收成一個入口——`lint｜tests｜click｜shots｜all`。
+  逾時會連子行程一起結束（`*_console.exe` 只是轉接殼，`subprocess.run(timeout)` 只殺殼，視窗會留在桌面上）
+
+### ② 砍了會怎樣
+
+`docs/60_CODE_MAP.md`：資料流、**T0–T4 分級**、15 條鎖定設計各自住在哪個函式、各功能的砍除接點、
+「想做某件事去哪裡」。`qa/gd_graph.py`：`--why FILE`（誰依賴它）、`--cut FILE`（砍掉會壞誰）、
+`--layers`（`sim／data／meta` 不得往上依賴——目前 0 條違規）。
+
+### ③ 重構：`Battle.gd` 5316 → 693 行
+
+全專案唯一的神類別（占 runtime 的 29%）。成員交叉分析顯示**繪圖層是葉節點**（UI 與輸入從不呼叫它），
+所以可以無痛切開。**搬運是機械的**（跨模組引用改寫、函式本體不動），三步，每一步都驗 0 像素差：
+
+| 步驟 | 結果 |
+|---|---|
+| 1 舞台 | `Stage`（契約）／`Stage2D`（視野、拾取、全部 `_draw_*`，1419）、`Overlay2D`（能量列、小地圖、箭頭）、`Feedback`（音效與死因）、`SelfTest`（`TL_*` 鉤子，1434） |
+| 2 HUD | `screens/battle/hud/` 11 個面板（共 1960 行），各自擁有 widget、狀態、更新與事件；`Battle._build_ui()` 只剩版面（加入順序＝繪圖順序＝命中順序，一項不動） |
+| 3 render | `render/2d/`：`Glyphs`／`Foes`／`Terrain`（`git mv`，保留歷史）＋ 從 `Main.gd` 抽出的 `TitleBackdrop`（628 → 433 行） |
+
+模組靠**同名欄位**接線（`Battle._wire_modules()`）；新增跨模組呼叫不必改接線。詳見 `30_TECH_DESIGN.md` §2.6。
+
+### ④ 3D 準備
+
+`Stage.gd` 是**舞台契約**：投影／拾取（`cell_at`／`point_at`／`center`／`to_screen`）、視野（`reset_view`／`zoom_by`／
+`pan_by`／`center_view_on`）、讀值、`view_moved` 訊號。換 3D＝**照契約另寫 `Stage3D.gd`**，主畫面與 HUD 不必動。
+`docs/70_3D_MIGRATION.md`：**要使用者拍板的 7 個決定（D1–D7，各有影響與建議）**、2D 每一層的 3D 對應、分批、風險。
+
+**B4.0 脊椎（粗糙但真的能跑）**：`screens/battle/Stage3D.gd`（約 450 行）——地面＋格線 shader、路徑、節點（方塊）、
+導管（長條，顏色＝負載）、敵人（球）、正交相機、縮放平移。**`Battle.gd`、覆蓋層、全部 HUD 一個字沒改**就跑得起來：
+蓋節點、拉導管、選取、縮放、小地圖都走原本的輸入路由。**預設關閉**，`TL_STAGE=3d` 才啟用。
+
+- `tests/stage3d_test.gd`（第 21 支，29 條）：契約的每一條寫成斷言——往返、框住全圖、縮放錨點不動、上下限、平移夾限、
+  `center_view_on`、每幀同步節點／導管／敵人、`view_moved`。**這是之後任何舞台實作的驗收尺**；紅得起來（把 `cell_at` 改歪 → 兩條同時倒）。
+- `TL_STAGE=3d TL_CLICKTEST=1`：smoke 走完整輸入路由蓋出一個節點（第 12 條 clicktest）。
+- 3D 截圖**同機器逐像素確定**（重拍兩次 0 像素差）——3D 版也能用截圖矩陣當回歸網。
+- **刻意沒做**：每種節點的造型、徽章、流動珠、特效、地貌——那些要先等 D1–D7。
+
+### ⑤ 找到並修掉的缺陷
+
+| 編號 | 缺陷 | 怎麼找到 |
+|---|---|---|
+| **RG-178** | 「立刻重來」之後**地貌整層消失**（`_restart()` 把地貌層一起 `queue_free()`） | 重構時讀到；在 master 上驗證（截圖前後有差，修後逐像素相同）；clicktest 新增 `restart` 段落 |
+| **RG-179** | `Env.HOOKS` 漏列 `TL_PICK`（單獨使用時存檔不受保護；RG-61 的同一個錯第三次） | 讀 `Hooks.gd`；`gd_lint` 規則 8 防再犯 |
+| **RG-180** | 比自己新的存檔被 `normalize()` **蓋回舊版號**（B3.10 只修了 `migrate()`，真正的路徑沒生效）。目前只有 sv3，所以潛伏 | 寫探針驗證 |
+| **RG-181** | **換檔被打斷會丟進度**：先刪主檔再改名，兩步之間斷電只剩完整的 `.tmp`，讀檔卻只認主檔 → 進度歸零（R1） | 讀 `SaveService._write_atomic` |
+| **RG-183** | `TL_STRESS` 量的是被夾住的 `delta`（RG-177 的根因）：Godot 把 `delta` 夾在 8/60 s ＝ 133.3 ms，所以四個版本「都是 133.3」。修好後壓力情境實測 **220 ms／幀（約 5 FPS）** | 對照 `_draw` 的 CPU 時間（189 ms）大於「幀時間」（133 ms） |
+| **RG-184** | 戰役關卡渲染貼著 45 FPS 底線：第 1／5／10 關 **138／55／47 FPS**（只有 7／25／29 個節點）；`_draw_path` 3.3 ms 是靜態內容卻每幀重算 | `TL_STRESS` 現在可併用 `TL_DEMO_TICKS`＋逐層計時。**只量化、不處理** |
+| RG-182 | 機械搬運的兩個陷阱（成員改名後同名參數遮蔽它；外部畫面讀內部欄位只 grep 了 `tests/`） | 重構時 clicktest 抓到 |
+
+另新增 `tests/fuzz_test.gd`（第 20 支）：**亂序操作 × 12 張地圖**（含界外／路徑格／沒錢／不存在的索引／藍圖／提前召喚）
+逐步檢查不變量，同組操作跑兩次 `state_hash` 必須相同。**深度跑了 574 局：零執行期錯誤、零不變量破口**——模擬層在亂序下是穩的。
+`qa/check.py tests` 現在把 stderr 的 `SCRIPT ERROR` 當失敗（執行期錯誤會中止函式而不是讓斷言變紅，RG-164）。
+
+### 沒做的、以及要使用者決定的
+
+- **沒有 push**（公開 repo）。要不要推 `3D-project` 由使用者決定。
+- **沒有開始 3D 的正式實作**：只有上面那個預設關閉的脊椎。D1–D7 沒拍板之前不該繼續（`docs/70_3D_MIGRATION.md` §1）。
+- **效能債（RG-8／RG-184）只量化不處理**：第 10 關已貼著 45 FPS 底線，手機移植前必須處理。
+- CLAUDE.md 要求開工前載入的 `game-studio` skill **在這台機器上不存在**（`~/.claude/skills/` 只有 `electronics-circuit-design`）。
+
+---
+
 ## [0.42.0] — 2026-09-19 — 地貌（B3.13）
 
 使用者指定：「接下來處理地圖美術，我希望有不同地圖，然後多一些裝飾或是主題性」。

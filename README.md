@@ -19,7 +19,7 @@ dev\play.bat               # 直接從原始碼樹開遊戲
 
 ```bash
 python qa/check.py lint            # 靜態地雷掃描（不需要 Godot，1 秒）
-python qa/check.py tests --fast    # 20 支 headless 測試，跳過最慢的 campaign（約 2 分鐘）
+python qa/check.py tests --fast    # 21 支 headless 測試，跳過最慢的 campaign（約 2 分鐘）
 python qa/check.py tests           # 全部（約 5 分鐘）
 python qa/check.py click           # 輸入層自檢：用合成滑鼠事件真的點畫面（會開視窗，約 1 分鐘）
 python qa/check.py all             # lint ＋ 文案稽核 ＋ 測試 ＋ clicktest
@@ -56,7 +56,7 @@ godot/
 │   └── screens/           各畫面
 │       ├── Battle.gd      局內畫面：指揮者（局的建立、節拍、輸入、HUD 版面）
 │       └── battle/        局內畫面的模組：Stage（2D→3D 的接縫）、Overlay2D、Feedback、SelfTest、hud/*
-├── tests/                 20 支 headless 測試 ＋ 輔助（含 fuzz：亂序操作 × 多張地圖）
+├── tests/                 21 支 headless 測試 ＋ 輔助（含 fuzz：亂序操作 × 多張地圖；stage3d：舞台契約）
 └── assets/audio/          程序生成的音源（assetgen/gen_audio.py）
 docs/                      概念、GDD、美術、技術、生產計畫、QA；60 程式碼地圖、70 3D 轉換準備
 qa/                        check.py（統一入口）、gd_lint.py（靜態掃描）、gd_graph.py（依賴圖）、文案稽核

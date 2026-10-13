@@ -5,7 +5,7 @@ CLAUDE.md「跑與測」列了二十幾條各自獨立的指令。這支把它�
 讓接手的人不必先讀完 CLAUDE.md 才知道「改完要跑什麼」。
 
     python qa/check.py lint                 靜態地雷掃描（不需要 Godot，約 1 秒）
-    python qa/check.py tests                headless 單元／整合測試（20 支，約 5 分鐘）
+    python qa/check.py tests                headless 單元／整合測試（21 支，約 5 分鐘）
     python qa/check.py tests flow save      只跑指定幾支
     python qa/check.py tests --fast         跳過最慢的 campaign_test（約 3 分鐘）
     python qa/check.py click                輸入層自檢（需要視窗；每條約 6 秒）
@@ -36,16 +36,18 @@ GODOT = Path(os.environ.get("TL_GODOT", ROOT / "tools" / "godot" / "Godot_v4.7-s
 # 跑的順序 ＝ 從快到慢，壞掉的地基先紅。campaign 最慢（五關參考解實跑）。
 TESTS = [
     "flow", "build", "combat", "tide", "save", "determinism", "hud", "tech", "audio",
-    "perf", "fuzz", "endless", "daily", "blueprint", "roster", "tycoon", "progress",
+    "perf", "fuzz", "stage3d", "endless", "daily", "blueprint", "roster", "tycoon", "progress",
     "difficulty", "m2", "campaign",
 ]
 
 # 輸入層自檢：(名稱, TL_PANEL)。空字串 ＝ 預設的局內畫面。
 # ⚠ 這是唯一不能 --headless 的檢查（dummy display server 不做 GUI 命中測試）。
-CLICKTESTS = [
-    ("battle", ""), ("endless", "endless"), ("campaign", "campaign"), ("tech", "tech"), ("achievements", "achievements"),
-    ("tiers", "tiers"), ("daily", "daily"), ("roster", "roster"), ("tycoon", "tycoon"),
-    ("settings", "settings"), ("title", "title"),
+CLICKTESTS: list[tuple[str, str, dict[str, str]]] = [
+    ("battle", "", {}), ("endless", "endless", {}), ("campaign", "campaign", {}), ("tech", "tech", {}), ("achievements", "achievements", {}),
+    ("tiers", "tiers", {}), ("daily", "daily", {}), ("roster", "roster", {}), ("tycoon", "tycoon", {}),
+    ("settings", "settings", {}), ("title", "title", {}),
+    # 3D 舞台的 smoke（B4.0 脊椎）：只問 `Stage.gd` 的契約，走完整輸入路由蓋出一個節點。
+    ("stage3d", "", {"TL_STAGE": "3d"}),
 ]
 
 # 截圖矩陣：名稱 → 環境變數。涵蓋每個畫面、局內的幾種互動狀態與十關。
@@ -75,6 +77,8 @@ SHOTS: dict[str, dict[str, str]] = {
     "tech": {"TL_CLICKTEST": "1", "TL_PANEL": "tech"},
     "achievements": {"TL_CLICKTEST": "1", "TL_PANEL": "achievements"},
     "settings": {"TL_PANEL": "settings"},
+    # 3D 舞台（B4.0 脊椎，實驗性）：同一關、同一個局面，換舞台。HUD 部分應與 campaign_L4 完全相同。
+    "stage3d_L4": {"TL_STAGE": "3d", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO},
 }
 
 
@@ -137,10 +141,10 @@ def cmd_tests(a: argparse.Namespace) -> int:
 
 def cmd_click(a: argparse.Namespace) -> int:
     bad = 0
-    for name, panel in CLICKTESTS:
+    for name, panel, extra in CLICKTESTS:
         if a.names and name not in a.names:
             continue
-        env = {"TL_CLICKTEST": "1", "TL_MUTE": "1"}
+        env = {"TL_CLICKTEST": "1", "TL_MUTE": "1", **extra}
         if panel:
             env["TL_PANEL"] = panel
         rc, out, dt = _godot(["--path", "godot", "--rendering-driver", "opengl3"], env, 180)
