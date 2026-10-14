@@ -25,6 +25,10 @@ var click_test: bool = false
 ## **模擬凍結**、只量渲染，跑完 `STRESS_FRAMES` 幀印出幀時間後退出（B1.7、RG-8）。
 ## 模擬那一半量不到這裡（它每 tick 要好幾秒，會把幀時間整個吃掉），走 `perf_test.gd`。
 var stress: bool = false
+## ★ `TL_STRESS` 配 `TL_DEMO_TICKS`（真實關卡）時**模擬照常跑**（B3.15）：量的是玩家真正會碰到的渲染——
+## 敵人進出、血量與流量每個 tick 在變——而不是「凍結的一格＋假裝每個 tick 全部都變」。
+## 合成的壓力場景（沒給 `TL_DEMO_TICKS`）仍然凍結：它單 tick 要 30 秒。
+var stress_live: bool = false
 ## `TL_LEVEL=1..5`：`TL_PANEL=campaign` 時直接進那一關（1-based，0 ＝ 停在關卡選擇）。
 ## 截圖與 `TL_SIM` 要指定關卡都走這裡。
 var level: int = 0
@@ -40,6 +44,8 @@ var focus_zoom: float = 1.0
 ## 同 `TL_FOCUS` 的理由：檢視面板是**純互動狀態**，沒有鉤子就拍不到，
 ## 於是「導管面板做好了」只能用宣稱的。預設（空字串）選一座塔，維持 B3.6 那張圖。
 var pick: String = ""
+## ★ `TL_PROF=1`：逐段計時（B3.15，`core/Prof.gd`）。要配 `TL_STRESS`——它在量測結束時印報表。
+var prof: bool = false
 
 
 func _ready() -> void:
@@ -53,6 +59,7 @@ func _ready() -> void:
 	stress = Env.flag("TL_STRESS")
 	level = Env.int_of("TL_LEVEL", 0)
 	pick = Env.str_of("TL_PICK")
+	prof = Env.flag("TL_PROF")
 	var f := Env.str_of("TL_FOCUS")
 	if f != "":
 		var parts := f.split(",")
@@ -67,6 +74,7 @@ func _ready() -> void:
 	# ★ 但**明寫 `TL_DEMO_TICKS` 時尊重它**（B3.14）：`TL_STRESS=1 TL_PANEL=campaign TL_LEVEL=10
 	#   TL_DEMO_TICKS=3000` 量的是**真實關卡**跑到第 3000 tick 時的渲染幀時間（模擬凍結在那一格）——
 	#   「壓力情境很慢」不等於「玩家玩到的很慢」，兩者要分開量。
+	stress_live = stress and Env.str_of("TL_DEMO_TICKS") != ""
 	if stress:
 		if panel == "":
 			panel = "battle"
@@ -77,6 +85,14 @@ func _ready() -> void:
 		# 那是「我要的是示範佈局跑到第 N tick 的畫面，只是需要有人幫我開浮層」。
 		if Env.str_of("TL_DEMO_TICKS") == "":
 			demo_ticks = 0
+
+	# ★ 自動化開出來的視窗盡量**不接實體滑鼠**（B3.15，盡力而為）：整個視窗設成滑鼠穿透（只留左上角一個 1 像素的三角形）。
+	#   兩個理由：① 截圖要確定性——游標剛好停在視窗上會多出一個落點預覽或按鈕的 hover（campaign_L7 因此差了 5299 個像素、
+	#   campaign_L8 差了 4572 個，而那是桌面上的滑鼠，不是程式碼）；② 使用者可能正在工作，自動化的視窗不該吃掉他的點擊
+	#   （CLAUDE.md 鐵律 3 的同一個精神）。合成的滑鼠事件走 `Input.parse_input_event()`，不經過作業系統的視窗命中，
+	#   所以 `TL_CLICKTEST` 不受影響。⚠ 沒有證明它能 100% 擋住：截圖不相符時先重拍一次，同一處再差才是程式碼。
+	if (shot_path != "" or click_test or stress) and DisplayServer.get_name() != "headless":
+		DisplayServer.window_set_mouse_passthrough(PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(0, 1)]))
 
 	if Env.any_hook():
 		print("[TL] hooks: %s" % Env.active(true))

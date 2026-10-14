@@ -85,6 +85,7 @@ static func upgrade(s: RefCounted, index: int) -> String:
 	s.ore -= float(cost)
 	s.alloy -= float(alloy)
 	c["level"] = level + 1
+	s.rev += 1
 	return Build.OK
 
 
@@ -112,6 +113,7 @@ static func upgrade_node(s: RefCounted, cell: Vector2i) -> String:
 		return Build.NO_ORE
 	s.ore -= float(cost)
 	n["level"] = level + 1
+	s.rev += 1
 	return Build.OK
 
 

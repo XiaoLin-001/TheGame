@@ -16,6 +16,8 @@ extends Node
 ## 它直接用 `scr._xxx` 的原名，不要求那些成員公開。
 
 const Stage := preload("res://scripts/screens/battle/Stage.gd")
+const Prof := preload("res://scripts/core/Prof.gd")
+const Motion := preload("res://scripts/render/Motion.gd")
 const Overlay2D := preload("res://scripts/screens/battle/Overlay2D.gd")
 const Feedback := preload("res://scripts/screens/battle/Feedback.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
@@ -53,6 +55,19 @@ var _stress_total: float = 0.0
 
 var _stress_worst: float = 0.0
 
+## 每一幀的耗時（秒）。平均會藏住卡頓：玩家感覺得到的是**超出預算的那幾幀**。
+var _stress_times: PackedFloat32Array = PackedFloat32Array()
+
+## 量測開始時的 tick（真實關卡跑的是活的模擬，要看得出量到的是哪一段）。
+var _stress_tick0: int = 0
+
+## `TL_PROF` 下累計的引擎側數字（渲染 CPU／GPU 毫秒、每幀 draw call）。
+var _rs_cpu: float = 0.0
+
+var _rs_gpu: float = 0.0
+
+var _rs_calls: int = 0
+
 
 ## ★ 輸入層自檢（`TL_CLICKTEST=1`）。**用合成的滑鼠事件真的走一次 Godot 的
 ## 輸入路由**——不是直接呼叫 `_act()`，那樣測不到 `mouse_filter` 這一層，
@@ -73,7 +88,7 @@ var _stress_worst: float = 0.0
 ## 三隻招募塔的資料表、戰鬥、耗電、存檔、招募全部正確，只是在地圖上是透明的。
 ##
 ## 手法：把每一種 `BUILDABLE` 直接塞進 `s.nodes`（`add_node` 不走成本與放置規則），
-## 逼 `_draw_nodes()` 跑過每一個分支，再看 `_no_glyph` 有沒有東西。測完立刻移除，
+## 逼 `_sync_nodes()` 為每一種節點建一次幾何，再看 `_no_glyph` 有沒有東西。測完立刻移除，
 ## 所以它對後面每一條斷言都是不可見的。
 ##
 ## 探針格 `(-9, -9)` 在地圖外：任何實際格都可能被後面的建造斷言用到。
@@ -935,6 +950,10 @@ func click_selftest() -> void:
 		menu_open, menu_blocks, settings_open, settings_back, menu_closed, buildable_after,
 		menu_by_button, menu_fits
 	])
+	# ★ 快取層（B3.15）。同樣只在不拍照時跑：它蓋一座節點再拆掉。
+	var cache_ok := true
+	if Hooks.shot_path == "":
+		cache_ok = await _cache_selftest()
 	# ★ 重來（RG-178）。**放在最後，而且只在不拍照時跑**：它把整個 HUD 砍掉重建，
 	#   之前持有的 widget 參照全部作廢，也會改掉要交給截圖鉤子的畫面。
 	#   B3.13 的缺陷：`_restart()` 對 `get_children()` 全部 `queue_free()`，連地貌層一起砍掉，
@@ -957,7 +976,221 @@ func click_selftest() -> void:
 	# 同時給 `TL_SHOT` 時不退出，把畫面交給截圖鉤子——**有些狀態只有互動才到得了**
 	# （浮層要按鈕才會開、簡介要 hover 才會浮），沒有這條就永遠拍不到它們。
 	if Hooks.shot_path == "":
-		get_tree().quit(0 if ok and restart_ok else 1)
+		get_tree().quit(0 if ok and restart_ok and cache_ok else 1)
+
+
+## ★ 快取層自檢（B3.15，`render_cache_test.gd` 的實機那一半）。
+##
+## `Stage2D` 把畫面拆成快取層，其中導管與節點**逐件**只在自己的簽章變了才重畫，所以要證明三件事：
+##   ① **該靜的時候是靜的**：什麼都沒換時，地貌層與網格路徑層一幀都不重畫（這是優化本身）。
+##   ② **該動的時候馬上動**：蓋、拆、縮放之後**兩幀之內**畫面就跟上了——不是等下一個 tick。
+##      漏掉的症狀是「蓋了塔卻看不見它」，而沒有別的斷言看得到。
+##   ③ **逐件累積出來的畫面，和整張重畫的畫面逐像素相同**（`_coherence_selftest()`）。
+##      簽章少收了任何一個輸入，兩張圖就會不一樣——這是簽章完備性唯一的實機證明。
+func _cache_selftest() -> bool:
+	await _frames(3)
+	var static_before: int = stage._static_layer.redraws
+	var terrain_before: int = stage.terrain_layer.redraws
+	await _frames(30)
+	var quiet: bool = (
+		stage._static_layer.redraws == static_before and stage.terrain_layer.redraws == terrain_before
+	)
+	# 蓋：找一格真的蓋得下去的空格。
+	var m := Vector2i(s.map["size"])
+	var occ: Dictionary = s.occupied()
+	var free := Vector2i(-1, -1)
+	for y in m.y:
+		for x in m.x:
+			if free.x < 0 and Build.can_place(s.sets, occ, "relay", Vector2i(x, y)) == Build.OK:
+				free = Vector2i(x, y)
+	BuildController.place(s, "relay", free)
+	var new_id: int = int(s.node_at(free).get("id", -1))
+	await _frames(2)
+	var rec: Variant = stage._node_recs.get(new_id)
+	var saw_place: bool = free.x >= 0 and rec != null and not rec.parts.is_empty() and rec.body.redraws >= 1
+	BuildController.demolish(s, free)
+	await _frames(2)
+	var saw_demolish: bool = not stage._node_recs.has(new_id)
+	# 縮放：各層的 transform 與導管的簽章（刻度與描邊跟著倍率）都跟上。
+	scr._on_zoom(stage.ZOOM_STEP)
+	await _frames(2)
+	var wires_zoomed := true
+	for c_rec: Variant in stage._conduit_recs.values():
+		wires_zoomed = wires_zoomed and is_equal_approx(float(c_rec.sig[4]), stage.zoom)
+	var saw_zoom: bool = (
+		is_equal_approx(stage._node_body_group.scale.x, stage.zoom)
+		and is_equal_approx(stage.terrain_layer.scale.x, stage.zoom)
+		and stage.terrain_layer.position.is_equal_approx(stage._map_origin())
+		and wires_zoomed
+	)
+	scr._on_zoom_reset()
+	await _frames(2)
+	var saw_reset: bool = is_equal_approx(stage._node_body_group.scale.x, stage.zoom)
+	var sensitive: bool = await _signature_selftest()
+	var coherent: bool = await _coherence_selftest()
+	var passed: bool = quiet and saw_place and saw_demolish and saw_zoom and saw_reset and sensitive and coherent
+	print("[TL_CLICKTEST/cache] 沒換東西時靜態層不重畫=%s 蓋了兩幀內跟上=%s 拆了兩幀內跟上=%s 縮放跟上=%s 全景還原跟上=%s 每個輸入都讓那一件重畫=%s 逐件累積＝整張重畫=%s → %s" % [
+		quiet, saw_place, saw_demolish, saw_zoom, saw_reset, sensitive, coherent, "PASS" if passed else "FAIL"
+	])
+	return passed
+
+
+## 簽章的**逐項敏感度**：每一個被列進簽章的輸入，單獨改它一個，那一件就必須重畫；什麼都沒改，一個指令都不重發。
+##
+## 為什麼不靠 `_coherence_selftest()` 一支就好：它的情境是真的模擬，而「某個輸入單獨變、其他都不動」在真的模擬裡
+## 很少剛好發生（變血量的那一刻通常也換了徽章）——簽章少收一個輸入，那一支可能照樣是綠的。這裡直接改輸入。
+## （改完全部還原；`TL_CLICKTEST` 的畫面不拍照時才跑。）
+func _signature_selftest() -> bool:
+	scr.set_process(false)
+	await _frames(2)
+	stage.invalidate()
+	await _frames(2)
+	var tower: Dictionary = {}
+	for n: Dictionary in s.nodes:
+		if tower.is_empty() and not ["core", "silo"].has(String(n["type"])):
+			tower = n
+	var core: Dictionary = s.core()
+	if tower.is_empty() or s.conduits.is_empty() or core.is_empty():
+		scr.set_process(true)
+		print("[TL_CLICKTEST/cache] ⚠ 簽章敏感度：場上缺塔／導管／核心，這一段沒有東西可量")
+		return false
+	var wire: Dictionary = s.conduits[0]
+	var tid := int(tower["id"])
+	var wid := int(wire["id"])
+	var to_id := int(s.node_at(wire["b"]).get("id", -1))
+	var rates: Dictionary = s.rates
+	var fails: Array = []
+	stage._sync_conduits()
+	stage._sync_nodes()
+	# ① 什麼都沒改：不重畫。
+	var t_rec: Variant = stage._node_recs[tid]
+	var c_rec: Variant = stage._conduit_recs[wid]
+	var t0: int = t_rec.body.redraws
+	var c0: int = c_rec.item.redraws
+	stage._sync_conduits()
+	stage._sync_nodes()
+	if t_rec.body.redraws != t0 or t_rec.shadow.redraws != t_rec.body.redraws or c_rec.item.redraws != c0:
+		fails.append("沒改也重畫了")
+	# ② 逐項：[名稱, 改, 還原, 看哪一件（node／wire）]
+	var old_level: int = int(tower.get("level", 0))
+	var old_hp: float = float(tower["hp"])
+	var old_flow: float = float(rates["conduit_flow"].get(wid, 0.0))
+	var old_sat: float = float(rates["satisfaction"].get(to_id, 1.0))
+	var old_state: int = int(rates["node_state"].get(tid, 0))
+	var old_eng: bool = bool(stage.engaged.get(tid, false))
+	var old_wlevel: int = int(wire["level"])
+	var old_whp: float = float(wire["hp"])
+	var old_zoom: float = stage.zoom
+	var old_reduce: bool = Motion.reduce
+	var starve := func() -> void:
+		rates["conduit_flow"][wid] = 5.0
+		rates["satisfaction"][to_id] = 0.2
+	var unstarve := func() -> void:
+		rates["conduit_flow"][wid] = old_flow
+		rates["satisfaction"][to_id] = old_sat
+	var cases: Array = [
+		["塔：級數", "node", func() -> void: tower["level"] = old_level + 1, func() -> void: tower["level"] = old_level],
+		["塔：血量", "node", func() -> void: tower["hp"] = old_hp - 5.0, func() -> void: tower["hp"] = old_hp],
+		["塔：三態徽章", "node", func() -> void: rates["node_state"][tid] = old_state + 1, func() -> void: rates["node_state"][tid] = old_state],
+		["塔：交戰", "node", func() -> void: stage.engaged[tid] = not old_eng, func() -> void: stage.engaged[tid] = old_eng],
+		["塔：受威脅", "node", func() -> void: stage.threat[tower["cell"]] = true, func() -> void: stage.threat.erase(tower["cell"])],
+		["導管：級數", "wire", func() -> void: wire["level"] = old_wlevel + 1, func() -> void: wire["level"] = old_wlevel],
+		["導管：流量", "wire", func() -> void: rates["conduit_flow"][wid] = old_flow + 1.0, func() -> void: rates["conduit_flow"][wid] = old_flow],
+		["導管：受損", "wire", func() -> void: wire["hp"] = 10.0, func() -> void: wire["hp"] = old_whp],
+		["導管：縮放", "wire", func() -> void: stage.zoom = old_zoom * 1.1, func() -> void: stage.zoom = old_zoom],
+		["導管：終點缺電", "wire", starve, unstarve],
+	]
+	for cs: Array in cases:
+		stage._sync_conduits()
+		stage._sync_nodes()
+		var item: Variant = t_rec.body if String(cs[1]) == "node" else c_rec.item
+		var before: int = item.redraws
+		(cs[2] as Callable).call()
+		stage._sync_conduits()
+		stage._sync_nodes()
+		if item.redraws <= before:
+			fails.append(String(cs[0]))
+		(cs[3] as Callable).call()
+		stage._sync_conduits()
+		stage._sync_nodes()
+	# ③ tick：只有核心（心跳）與受威脅的塔會因為 tick 重畫——其餘的塔每個 tick 白畫一次就是浪費。
+	var core_rec: Variant = stage._node_recs[int(core["id"])]
+	var tb: int = t_rec.body.redraws
+	var cb: int = core_rec.body.redraws
+	s.tick_count += 1
+	stage._sync_nodes()
+	s.tick_count -= 1
+	if core_rec.body.redraws <= cb:
+		fails.append("核心：tick（心跳）")
+	if t_rec.body.redraws != tb:
+		fails.append("一般的塔不該因為 tick 重畫")
+	# ④ 減少動態：脈動變靜止，核心與受威脅的塔要跟著。
+	var cb2: int = core_rec.body.redraws
+	Motion.reduce = not old_reduce
+	stage._sync_nodes()
+	Motion.reduce = old_reduce
+	if core_rec.body.redraws <= cb2:
+		fails.append("減少動態")
+	stage.invalidate()
+	await _frames(2)
+	scr.set_process(true)
+	if not fails.is_empty():
+		print("[TL_CLICKTEST/cache] ⚠ 簽章漏收的輸入：%s" % ", ".join(PackedStringArray(fails)))
+	return fails.is_empty()
+
+
+## 一致性：讓模擬走幾十個 tick（敵人進場、塔交戰、有東西受傷、中途還蓋一座升一級），
+## 每走一段就給舞台兩幀去同步——此時畫面是**逐件累積**出來的。截圖 A；然後 `invalidate()`
+## 把每一件都重畫一遍，截圖 B。兩張必須逐像素相同。
+##
+## 先停掉畫面層的 `_process`：它負責推模擬與幀內插值，不停的話兩張截圖之間模擬會多走一格，
+## 差異就來自遊戲而不是快取。舞台自己的 `_process`（同步快取）不受影響。
+func _coherence_selftest() -> bool:
+	scr.set_process(false)
+	for r in 8:
+		for _i in 7:
+			BattleController.step(s)
+		# 受傷：模擬層裡這是 `step()` 在做的事（血量只在 tick 裡變）；這裡直接做，才保證兩種受傷都落在畫面上看得出來的範圍。
+		if r == 2:
+			for n: Dictionary in s.nodes:
+				if String(n["type"]) != "core":
+					n["hp"] = float(n["hp"]) * 0.5
+					break
+			if not s.conduits.is_empty():
+				s.conduits[0]["hp"] = 12.0
+		if r == 3:
+			var cell := Vector2i(-1, -1)
+			var occ: Dictionary = s.occupied()
+			for y in Vector2i(s.map["size"]).y:
+				for x in Vector2i(s.map["size"]).x:
+					if cell.x < 0 and Build.can_place(s.sets, occ, "anchor", Vector2i(x, y)) == Build.OK:
+						cell = Vector2i(x, y)
+			if cell.x >= 0:
+				BuildController.place(s, "anchor", cell)
+				BuildController.upgrade_node(s, cell)
+		await _frames(2)
+	scr.redraw()
+	await _frames(3)
+	var a: Image = get_viewport().get_texture().get_image()
+	stage.invalidate()
+	scr.redraw()
+	await _frames(3)
+	var b: Image = get_viewport().get_texture().get_image()
+	scr.set_process(true)
+	var same: bool = a.get_size() == b.get_size() and a.get_data() == b.get_data()
+	if not same:
+		var da := a.get_data()
+		var db := b.get_data()
+		var n := 0
+		var first := -1
+		for i in mini(da.size(), db.size()):
+			if da[i] != db[i]:
+				n += 1
+				if first < 0:
+					first = i / 4
+		var w := a.get_width()
+		print("[TL_CLICKTEST/cache] ⚠ 逐件累積與整張重畫不同：%d 個位元組，第一處在 (%d, %d)" % [n, first % w, first / w])
+	return same
 
 
 ## ★ 視野自檢（B1.2.2）。回傳全部通過與否，並**把畫面留在放大＋推到角落的
@@ -1180,6 +1413,22 @@ func _move_at(at: Vector2) -> void:
 # ── 音訊（B1.5）────────────────────────────────────────────────────────
 
 
+## 壓力場景的模擬是凍結的，快取層的簽章永遠不變——量到的會是「全部都在快取裡」的假數字。
+## 真實遊戲裡 tick 每 0.1 秒（約 6 幀）走一次，而一個 tick 裡約一成的節點與導管會變（受傷、流量改了、徽章換了）。
+## 這裡每 6 幀模擬一次：tick ＋ 1，每十座節點的血量與每十條導管的流量各動一點點（輪流換人）。
+func _stress_churn() -> void:
+	s.tick_count += 1
+	var phase: int = (_stress_frames / 6) % 10
+	for i in s.nodes.size():
+		if i % 10 == phase:
+			s.nodes[i]["hp"] = maxf(1.0, float(s.nodes[i]["hp"]) - 0.01)
+	var flows: Dictionary = s.rates["conduit_flow"]
+	for i in s.conduits.size():
+		if i % 10 == phase:
+			var id: int = int(s.conduits[i]["id"])
+			flows[id] = float(flows.get(id, 0.0)) + 0.01
+
+
 ## ★ 渲染壓力量測（`TL_STRESS=1`，B1.7）。
 ##
 ## **模擬是凍結的**，所以這裡量到的是純粹的「畫 547 個節點 ＋ 2045 條導管 ＋
@@ -1196,10 +1445,23 @@ func stress_frame(_delta: float) -> void:
 	var delta := 0.0 if _stress_last_us == 0 else float(now_us - _stress_last_us) / 1.0e6
 	_stress_last_us = now_us
 	_stress_frames += 1
+	if _stress_frames % 6 == 0 and not Hooks.stress_live:
+		_stress_churn()
+	var vp := get_viewport().get_viewport_rid()
+	if Prof.on and _stress_frames == 1:
+		RenderingServer.viewport_set_measure_render_time(vp, true)
 	if _stress_frames <= STRESS_WARMUP:
+		Prof.reset()
 		return
+	if Prof.on:
+		_rs_cpu += RenderingServer.viewport_get_measured_render_time_cpu(vp)
+		_rs_gpu += RenderingServer.viewport_get_measured_render_time_gpu(vp)
+		_rs_calls += RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
+	if _stress_frames == STRESS_WARMUP + 1:
+		_stress_tick0 = s.tick_count
 	_stress_total += delta
 	_stress_worst = maxf(_stress_worst, delta)
+	_stress_times.append(delta)
 	var n := _stress_frames - STRESS_WARMUP
 	if n < STRESS_FRAMES:
 		return
@@ -1207,6 +1469,25 @@ func stress_frame(_delta: float) -> void:
 	print("[TL_STRESS] 節點 %d／導管 %d／敵人 %d　→　平均 %.2f ms（%.0f FPS）／最壞 %.2f ms　量了 %d 幀" % [
 		s.nodes.size(), s.conduits.size(), s.enemies.size(),
 		avg * 1000.0, 1.0 / maxf(avg, 0.000001), _stress_worst * 1000.0, n
+	])
+	if Hooks.stress_live:
+		print("[TL_STRESS] 活的模擬：tick %d → %d，階段 %s，第 %d 波，場上敵人 %d" % [
+			_stress_tick0, s.tick_count, s.phase, s.wave_index, s.enemies.size()
+		])
+	Prof.report(n)
+	if Prof.on:
+		print("[TL_PROF] 引擎側每幀：渲染 CPU %.2f ms／GPU %.2f ms／draw call %d　（vsync 模式 %d，螢幕 %.0f Hz）" % [
+			_rs_cpu / float(n), _rs_gpu / float(n), _rs_calls / n,
+			DisplayServer.window_get_vsync_mode(), DisplayServer.screen_get_refresh_rate()
+		])
+	_stress_times.sort()
+	var over := 0
+	for dt in _stress_times:
+		if dt > 0.01667:
+			over += 1
+	print("[TL_STRESS] 分位數：中位 %.2f／p95 %.2f／p99 %.2f ms；超出 16.7 ms 的有 %d／%d 幀（%.1f%%）" % [
+		_stress_times[n / 2] * 1000.0, _stress_times[int(n * 0.95)] * 1000.0,
+		_stress_times[int(n * 0.99)] * 1000.0, over, n, 100.0 * float(over) / float(n)
 	])
 	# 60 FPS ＝ 16.7ms；45 FPS（§5 的最低可接受）＝ 22.2ms。
 	print("[TL_STRESS] 60FPS 目標 16.67ms／45FPS 底線 22.22ms → %s" % (

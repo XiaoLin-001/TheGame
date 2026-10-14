@@ -114,3 +114,9 @@ func in_map(_c: Vector2i) -> bool:
 ## 每幀的視野緩動（只動畫面，不碰模擬）。
 func tick_view(_delta: float) -> void:
 	pass
+
+
+## 讓下一幀整個重畫（有快取的實作用它丟掉所有快取；沒有快取的實作什麼都不用做）。
+func invalidate() -> void:
+	pass
+

@@ -14,6 +14,7 @@ extends Control
 ## 外界（`Campaign`／`Tiers`／`DailyScreen`／`Main`）只做三件事：`new()`、指派下面這幾個欄位
 ## （`level`／`endless_seed`／`difficulty`／`daily_board`／`daily_date`／`on_exit`）、`add_child()`。
 
+const Prof := preload("res://scripts/core/Prof.gd")
 const Loadout := preload("res://scripts/sim/Loadout.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
@@ -166,11 +167,16 @@ var sel_wire: int = -1
 var hover_p: Vector2 = Vector2(-999, -999)
 
 var accum: float = 0.0
+## 頂欄／提示列上一次重組時的內容簽章（`_process()`）。
+var _state_key: Array = []
+
+var _hint_key: Array = []
 
 var message: String = ""
 
 
 func _ready() -> void:
+	Prof.on = Hooks.prof
 	theme = UiKit.theme()
 	# ★ **`set_anchors_and_offsets_preset`，不是 `set_anchors_preset`。**
 	# 後者只設錨點不動 offset，本節點的 `size` 一直是 **(0, 0)**——而
@@ -339,15 +345,17 @@ func refresh_zoom() -> void:
 
 func _process(delta: float) -> void:
 	# 視野緩動與小地圖倒數：都只動畫面，不碰模擬（細節在各自的函式）。
+	Prof.mark()
 	stage.tick_view(delta)
 	overlay.tick(delta)
+	Prof.lap("proc.view")
 
 	# ★ `TL_SHOT` 下模擬凍結在 `_demo_layout()` 推完的那一格。否則截圖落在第幾
 	# tick 取決於這台機器 3 秒內跑了幾幀——同一份佈局在不同機器上會拍出不同
 	# 數字，截圖就不能拿來做回歸比對，也對不上 `TL_SIM=<同一個 N>` 的輸出。
 	if Hooks.stress:
 		selftest.stress_frame(delta)
-	if Hooks.shot_path == "" and not Hooks.stress:
+	if Hooks.shot_path == "" and (not Hooks.stress or Hooks.stress_live):
 		accum += delta
 		# 快進＝**多跑幾個 tick**，不是把 tick 拉長。固定時間步不能動，
 		# 否則同一組操作在不同倍率下會跑出不同結果（§2.4 確定性）。
@@ -358,15 +366,32 @@ func _process(delta: float) -> void:
 				BattleController.step(s)
 			accum -= BattleController.TICK
 			guard += mult
-	topbar.refresh_top()
-	# 提示列每幀重算：它講的是**當前狀態**下的下一步，而狀態每 tick 都在變。
+	Prof.lap("proc.sim")
+	# ★ B3.15：頂欄與提示列講的是**狀態**，而狀態只隨 tick、建造、階段與快進改變——
+	#   不必每幀重組十幾條字串（第 10 關每幀約 0.8 ms，壓力場景 3 ms）。
+	#   簽章沒變就跳過；事件路徑（滑鼠移動、點擊、換模式）原本就各自直接呼叫 `refresh_*`，不經這裡。
+	#   提示列的簽章多收了它讀的幾個輸入（模式、拖曳、藍圖、游標、手上的東西、訊息）：
+	#   少收一個，症狀就是那個輸入改了而字沒跟上。
+	# 提示列講的是**當前狀態**下的下一步，而狀態每 tick 都在變。
 	# B0.7 之前它只在滑鼠移動時更新，於是「礦砂開始入帳了」「波次開打了」這類
 	# 轉折要等玩家碰一下滑鼠才會反映——手不動的那幾秒，提示列是在說謊。
-	hintbar.refresh_hint()
+	var state_key: Array = [s.get_instance_id(), s.tick_count, s.rev, s.phase, s.speed_mult]
+	if state_key != _state_key:
+		_state_key = state_key
+		topbar.refresh_top()
+	Prof.lap("proc.topbar")
+	var hint_key: Array = state_key + [mode, drag_from, bp_index, hover, hover_p, build_type, message]
+	if hint_key != _hint_key:
+		_hint_key = hint_key
+		hintbar.refresh_hint()
+	Prof.lap("proc.hint")
 	energypanel.refresh_energy()
+	Prof.lap("proc.energy")
 	# 檢視面板講的是**當下這個 tick** 的耗能與供電來源，所以它也要每幀重算。
 	inspector.refresh_inspect()
+	Prof.lap("proc.inspect")
 	resultpanel.refresh_over()
+	Prof.lap("proc.result")
 	# ★ 一個 tick 邊緣偵測，兩個消費者（音訊、死因診斷）。
 	#   兩邊各記一份「上一幀的 tick」的那一天，就會有一邊記錯（B1.5.1 的教訓）。
 	var advanced: bool = s.tick_count != feedback.last_tick
@@ -374,6 +399,7 @@ func _process(delta: float) -> void:
 	feedback.audio_tick(advanced)
 	if advanced:
 		feedback.diag_tick()
+	Prof.lap("proc.feedback")
 	redraw()
 
 

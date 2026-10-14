@@ -9,6 +9,7 @@ extends Control
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const Stage := preload("res://scripts/screens/battle/Stage.gd")
+const Prof := preload("res://scripts/core/Prof.gd")
 
 ## 擁有這個模組的局內畫面（`screens/Battle.gd`）。由它在建立時指派。
 var scr: Control = null
@@ -57,9 +58,11 @@ func _ready() -> void:
 ## 畫的順序：箭頭 → 小地圖 → 能量列。**這一層是 `Stage2D` 的後一個子節點**，
 ## 所以整層都蓋在遮罩（`_draw_frame_matte`）之上。
 func _draw() -> void:
+	Prof.mark()
 	_draw_arrows()
 	_draw_minimap()
 	_draw_energy_bar()
+	Prof.lap("overlay")
 
 
 ## ★ 小地圖倒數。`TL_SHOT` 下**不倒數**——截圖落在第幾秒取決於這台機器

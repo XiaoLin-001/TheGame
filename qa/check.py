@@ -12,6 +12,9 @@ CLAUDE.md「跑與測」列了二十幾條各自獨立的指令。這支把它�
     python qa/check.py shots OUT_DIR        截圖矩陣存進 OUT_DIR
     python qa/check.py shots NEW --against OLD
                                             截圖矩陣，並與 OLD 逐像素比對
+    python qa/check.py perf                 渲染幀時間（戰役第 1／5／10 關與壓力場景；需要視窗，約 1 分鐘）
+    python qa/check.py perf --base DIR      同上，並與另一份工作樹（例如舊版的 `git worktree`）用同一把尺對比
+    python qa/check.py perf --runs 3        每個場景跑三次取中位數（桌面上別的程式會讓單次量測漂 30–50%）
     python qa/check.py all                  lint ＋ tests ＋ click ＋ 文案稽核
 
 截圖比對是**重構的安全網**：TL_SHOT 下模擬凍結、動效不走，同參數在同一台機器上
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -36,7 +40,7 @@ GODOT = Path(os.environ.get("TL_GODOT", ROOT / "tools" / "godot" / "Godot_v4.7-s
 # 跑的順序 ＝ 從快到慢，壞掉的地基先紅。campaign 最慢（五關參考解實跑）。
 TESTS = [
     "flow", "build", "combat", "tide", "save", "determinism", "hud", "tech", "audio",
-    "perf", "fuzz", "endless", "daily", "blueprint", "roster", "tycoon", "progress",
+    "perf", "fuzz", "render_cache", "endless", "daily", "blueprint", "roster", "tycoon", "progress",
     "difficulty", "m2", "campaign",
 ]
 
@@ -66,7 +70,7 @@ SHOTS: dict[str, dict[str, str]] = {
     "inspect_wire": {"TL_CLICKTEST": "1", "TL_PICK": "wire", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO},
     "panels": {"TL_CLICKTEST": "1"},
     "tiers": {"TL_PANEL": "tiers"},
-    "tiers_open": {"TL_CLICKTEST": "1", "TL_PANEL": "tiers"},
+    "tiers_open": {"TL_CLICKTEST": "1", "TL_PANEL": "tiers", "TL_SEED": "42"},
     "daily": {"TL_PANEL": "daily"},
     "roster": {"TL_PANEL": "roster"},
     "roster_open": {"TL_CLICKTEST": "1", "TL_PANEL": "roster"},
@@ -78,7 +82,15 @@ SHOTS: dict[str, dict[str, str]] = {
 }
 
 
-def _godot(args: list[str], env_extra: dict[str, str], timeout: int) -> tuple[int, str, float]:
+# 渲染量測矩陣：名稱 → 環境變數。戰役關卡跑**活的模擬**（`TL_DEMO_TICKS` ＝ 參考解跑完之後；敵人進出、血量與流量在變）——
+# 那是玩家真正會碰到的負載。壓力場景是規模哨兵：模擬凍結，而且每 6 幀模擬一個 tick（一成的元素變一次）。
+PERF: dict[str, dict[str, str]] = {
+    **{f"campaign_L{n}": {"TL_PANEL": "campaign", "TL_LEVEL": str(n), "TL_DEMO_TICKS": "1600"} for n in (1, 5, 10)},
+    "stress（547 節點／2045 導管／200 敵人）": {},
+}
+
+
+def _godot(args: list[str], env_extra: dict[str, str], timeout: int, project: Path | None = None) -> tuple[int, str, float]:
     if not GODOT.exists():
         sys.exit(f"找不到 Godot：{GODOT}\n先跑 `python dev/setup.py`，或設環境變數 TL_GODOT。")
     env = {k: v for k, v in os.environ.items() if not k.startswith("TL_") or k == "TL_GODOT"}
@@ -87,7 +99,7 @@ def _godot(args: list[str], env_extra: dict[str, str], timeout: int) -> tuple[in
     # Popen 而不是 run：`*_console.exe` 只是個轉接殼，真正的遊戲是它的子行程。
     # `subprocess.run(timeout=)` 逾時只殺殼，**視窗會一直留在使用者的桌面上**（B3.14 踩到）。
     p = subprocess.Popen(
-        [str(GODOT), *args], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        [str(GODOT), *args], cwd=project or ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", errors="replace",
     )
     try:
@@ -158,14 +170,17 @@ def _compare(new: Path, old: Path) -> tuple[bool, str]:
     """逐像素比對。回傳 (相同, 說明)。"""
     from PIL import Image, ImageChops  # 只有 shots --against 才需要
 
-    a, b = Image.open(new).convert("RGBA"), Image.open(old).convert("RGBA")
+    # ⚠ 一律轉 RGB 再比：Pillow 新版的 `getbbox()` 對 RGBA **只看 alpha 通道**——截圖的 alpha 恆為 255，
+    #   差值的 alpha 恆為 0，於是任何兩張圖都會被判成「0 像素差」（B3.15 發現：整個截圖比對曾經是空的）。
+    a, b = Image.open(new).convert("RGB"), Image.open(old).convert("RGB")
     if a.size != b.size:
         return False, f"尺寸不同 {a.size} vs {b.size}"
     diff = ImageChops.difference(a, b)
     box = diff.getbbox()
     if box is None:
         return True, "0 像素差"
-    n = sum(1 for px in diff.getdata() if px != (0, 0, 0, 0))
+    r, g, bl = diff.split()  # `getdata()` 在 Pillow 14 會移除；逐通道取最大再數非零的像素
+    n = ImageChops.lighter(ImageChops.lighter(r, g), bl).point(lambda v: 255 if v else 0).histogram()[255]
     return False, f"{n} 像素不同，範圍 {box}"
 
 
@@ -198,6 +213,56 @@ def cmd_shots(a: argparse.Namespace) -> int:
     return worst
 
 
+_STRESS_RE = re.compile(r"\[TL_STRESS\] 節點 (\d+)／導管 (\d+)／敵人 (\d+)\s+→\s+平均 ([\d.]+) ms.*?最壞 ([\d.]+) ms")
+_QUANT_RE = re.compile(r"中位 ([\d.]+)／p95 ([\d.]+)／p99 ([\d.]+) ms；超出 16\.7 ms 的有 (\d+)／(\d+) 幀")
+
+
+def _perf_one(env: dict[str, str], project: Path | None) -> dict[str, float | str]:
+    """回傳 avg／worst／p95／over（超出 16.7 ms 的幀占比 %）與 TL_PROF 報表。**關掉 vsync**：開著的話幀時間會被
+    釘在螢幕週期的倍數（240 Hz 螢幕上是 4.17 ms 的倍數），量不出 4 ms 以下的任何差別。
+    舊版（沒有分位數輸出）只回平均與最壞。"""
+    nan = float("nan")
+    e = {"TL_STRESS": "1", "TL_MUTE": "1", "TL_PROF": "1", **env}
+    rc, out, _ = _godot(["--disable-vsync", "--path", "godot", "--rendering-driver", "opengl3"], e, 300, project)
+    m = _STRESS_RE.search(out)
+    if rc != 0 or m is None:
+        return {"avg": nan, "worst": nan, "p95": nan, "over": nan, "prof": out[-600:]}
+    q = _QUANT_RE.search(out)
+    prof = "\n".join(ln.split("] ", 1)[1] for ln in out.splitlines() if "[TL_PROF]" in ln and "ms" in ln)
+    return {
+        "avg": float(m.group(4)), "worst": float(m.group(5)), "prof": prof,
+        "p95": float(q.group(2)) if q else nan,
+        "over": 100.0 * int(q.group(4)) / int(q.group(5)) if q else nan,
+    }
+
+
+def _median_run(env: dict[str, str], project: Path | None, runs: int) -> dict[str, float | str]:
+    """同一個場景跑 `runs` 次，每個指標取中位數——桌面上別的程式（瀏覽器、通訊軟體）會讓單次量測漂 30–50%。"""
+    rs = [_perf_one(env, project) for _ in range(max(1, runs))]
+    out: dict[str, float | str] = dict(rs[0])
+    for k in ("avg", "worst", "p95", "over"):
+        vals = sorted(float(r[k]) for r in rs)
+        out[k] = vals[len(vals) // 2]
+    return out
+
+
+def cmd_perf(a: argparse.Namespace) -> int:
+    """渲染幀時間（牆上時鐘，RG-183）。`--base DIR`：同一把尺量另一份工作樹，並列出倍數。
+    60 FPS ＝ 16.67 ms；45 FPS（底線）＝ 22.22 ms。"""
+    base = Path(a.base).resolve() if a.base else None
+    print(f"{'場景':<34}{'平均 ms':>9}{'p95':>8}{'最壞':>8}{'超16.7ms':>10}" + (f"{'舊版平均':>10}{'舊版最壞':>10}{'倍數':>7}" if base else ""))
+    for name, env in PERF.items():
+        r = _median_run(env, None, a.runs)
+        line = f"{name:<34}{r['avg']:9.2f}{r['p95']:8.2f}{r['worst']:8.2f}{r['over']:9.1f}%"
+        if base:
+            b = _median_run(env, base, a.runs)
+            line += f"{b['avg']:10.2f}{b['worst']:10.2f}{(b['avg'] / r['avg'] if r['avg'] else float('nan')):6.1f}×"
+        print(line)
+        if a.prof:
+            print("\n".join("      " + ln for ln in str(r["prof"]).splitlines()[:12]))
+    return 0
+
+
 def cmd_all(a: argparse.Namespace) -> int:
     a.names, a.fast = [], False
     rc = 0
@@ -224,6 +289,11 @@ def main() -> int:
     p.add_argument("names", nargs="*")
     p.add_argument("--against", help="與這個資料夾裡同名的 png 逐像素比對")
     p.set_defaults(fn=cmd_shots)
+    p = sub.add_parser("perf")
+    p.add_argument("--base", help="另一份工作樹（含 godot/ 的資料夾），用同一把尺量並對比")
+    p.add_argument("--runs", type=int, default=1, help="每個場景跑幾次、取中位數（桌面有別的程式在跑時建議 3）")
+    p.add_argument("--prof", action="store_true", help="逐段列出 TL_PROF 的報表（GDScript 側每一段每幀花多少）")
+    p.set_defaults(fn=cmd_perf)
     sub.add_parser("all").set_defaults(fn=cmd_all)
     a = ap.parse_args()
     return a.fn(a)

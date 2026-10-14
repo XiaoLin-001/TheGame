@@ -7,6 +7,13 @@ extends "res://scripts/screens/battle/Stage.gd"
 ##
 ## 舞台**不擁有任何遊戲規則，也不改局面**——它只讀 `s`。所有繪圖都在**格為單位的地圖座標**裡做，
 ## 縮放與平移交給最前面那一個 `draw_set_transform`，所以每一支 `_draw_*` 都不知道縮放存在。
+##
+## ★ **結構（B3.15，RG-184）**：這個節點自己只畫**會隨幀變**的東西——敵人、彈丸與特效、選取、游標、階段色調。
+##   其餘都是它的子節點（`StageLayer`，`show_behind_parent`，座標同為地圖座標），**加入的順序就是繪圖順序**：
+##   地貌 → 網格與路徑 → 礦點與場 → 導管（每條一個畫布項）→ 流動珠（一個 `MultiMesh`）→ 節點落影 → 節點塔身（每座一個畫布項）。
+##   每一件**只在自己的簽章變了才重畫**（`_process()` 裡的 `_sync_*()`）；沒變的那一件引擎直接重播上次記下的指令。
+##   ⚠ **簽章要收齊畫它會讀的每一個輸入**——`TL_CLICKTEST` 的 `cache` 段落逐項驗，
+##   並拿「逐件累積的畫面」對「整張重畫的畫面」逐像素比。新增一個會改動畫面的建造動作，要在 `SessionState.rev` 加一。
 
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const BattleController := preload("res://scripts/game/BattleController.gd")
@@ -22,6 +29,9 @@ const Motion := preload("res://scripts/render/Motion.gd")
 const Glyphs := preload("res://scripts/render/2d/Glyphs.gd")
 const Foes := preload("res://scripts/render/2d/Foes.gd")
 const Terrain := preload("res://scripts/render/2d/Terrain.gd")
+const StageLayer := preload("res://scripts/screens/battle/StageLayer.gd")
+const Batch := preload("res://scripts/render/2d/Batch.gd")
+const Prof := preload("res://scripts/core/Prof.gd")
 
 
 ## ★ 開打漣漪的壽命（秒，B3.11）。號令音 `wave_start` 有 1.7 秒，漣漪比它短——
@@ -60,6 +70,11 @@ const BEAD_SPEED := 6.0
 
 const BEAD_MIN_RATE := 0.05
 
+## 珠子 `MultiMesh` 一個實例的 float 數：2D 變換 8 ＋ 顏色 4。
+const BEAD_FLOATS := 12
+
+const BEAD_SEGMENTS := 64
+
 ## 每秒收斂比率。14 在 60fps 下約 4 幀走完八成——快到不覺得延遲，
 ## 又慢到看得出是「滑過去」而不是「跳過去」（使用者要的是後者的反面）。
 const PAN_EASE := 14.0
@@ -91,13 +106,86 @@ var _hit_ids: Dictionary = {}
 ## 重畫一次；之後每幀只改那一層的位置與縮放。十二張手作圖一張是 300–900 件，
 ## 64×40 的無盡圖上千件——每幀從 GDScript 重發一次 draw call，就是在 RG-8
 ## （渲染 23 FPS）那一筆帳上再加一筆。零件本身是純函式（`Terrain.build()`）。
-var terrain_layer: Node2D = null
+var terrain_layer: StageLayer = null
+
+## ★ 其餘的快取層（B3.15）。簽章與重畫時機見 `_process()`。
+var _static_layer: StageLayer = null
+
+var _flow_layer: StageLayer = null
+
+## ★ 逐件快取（B3.15）：每座節點兩個畫布項（落影、塔身）、每條導管一個，**各自**只在自己的簽章變了才重畫。
+## 一個 tick 裡通常只有少數幾件真的變了（受傷、換徽章、流量改了），其餘零成本。
+var _conduit_group: StageLayer = null
+
+var _node_shadow_group: StageLayer = null
+
+var _node_body_group: StageLayer = null
+
+## 節點 id → `NodeRec`、導管 id → `ConduitRec`。
+var _node_recs: Dictionary = {}
+
+var _conduit_recs: Dictionary = {}
+
+## 上一次同步逐件快取時的簽章；`_elem_sid` ＝ 那些畫布項屬於哪一局（換局就整批丟掉）。
+var _world_key: Array = []
+
+var _elem_sid: int = 0
+
+var _bead_layer: StageLayer = null
+
+## 流動珠：一個 `MultiMesh`（每顆兩個實例）與它的緩衝區，見 `_update_beads()`。
+var _bead_mm: MultiMesh = null
+
+var _bead_buf: PackedFloat32Array = PackedFloat32Array()
+
+
+var _layers: Array[StageLayer] = []
+
+## 本 tick 的流動珠規格（`_bead_specs()`）。
+var _bead_specs_cache: Array = []
+
+## 上一次推導 `engaged`／`threat`／`_auras` 的內容簽章。
+var _derived_key: Array = []
+
+## 選取與游標底下的東西**每幀**都要畫，但它們問的問題（誰在餵這座塔電、游標壓在哪條線上、落點預覽）
+## 只隨 tick、建造與游標改變——算一次留著（B3.15）。
+var _chain_key: Array = []
+
+var _chain: Dictionary = {}
+
+var _hover_key: Array = []
+
+var _hover_wire: int = -1
+
+var _preview_key: Array = []
+
+var _preview: Dictionary = {}
+
+
+## 一座節點在逐件快取裡的紀錄：它的兩個畫布項、上一次畫的簽章，與那一次建好的幾何。
+class NodeRec extends RefCounted:
+	var node: Dictionary = {}
+	var shadow = null
+	var body = null
+	var sig: Array = []
+	var parts: Array = []
+	var at: Vector2 = Vector2.ZERO
+	var sc: float = 1.0
+
+
+## 一條導管的紀錄：畫布項、簽章，與畫它所需要的兩個推導值（流量、終點缺不缺電）。
+class ConduitRec extends RefCounted:
+	var c: Dictionary = {}
+	var item = null
+	var sig: Array = []
+	var flow: float = 0.0
+	var starving: bool = false
 
 var _terrain_parts: Array = []
 
 var _terrain_id: String = "<none>"
 
-## ★ 本幀「畫不出圖形」的節點類型（B2.4.6）。`_draw_nodes()` 的 match 每漏一種
+## ★ 本幀「畫不出圖形」的節點類型（B2.4.6）。`_node_geometry()` 每漏一種
 ## 就往這裡記一筆，`TL_CLICKTEST` 拿它當斷言。**這不是防禦性程式碼，是一支感測器**
 ## ——漏掉一種的後果是那座塔在地圖上完全隱形（蓋得下去、會開火、會吃電、會被
 ## 打壞，就是看不見），而十五支測試沒有一支會紅：它們驗數值與流量，沒有一支看畫面。
@@ -109,11 +197,24 @@ func _ready() -> void:
 	# 少了這一行，這個滿版的 `Control` 會把整張地圖的點擊吃掉（B0.7.2 的缺陷換了個地方重演）。
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# 地貌層要是**第一個**子節點，而且畫在本體之後面：網格、路徑、節點、遮罩全在它上面。
-	terrain_layer = Node2D.new()
-	terrain_layer.show_behind_parent = true
-	terrain_layer.draw.connect(_paint_terrain)
-	add_child(terrain_layer)
+	# ★ 快取層（B3.13 起地貌、B3.15 起其餘）：**加入的順序就是繪圖順序**，全部畫在本體之後面——
+	#   本體只畫會隨**幀**變的東西（敵人、特效、選取、遮罩）。
+	#   地貌 → 網格與路徑 → 礦點與場 → 導管 → 流動珠 → 節點落影 → 節點塔身
+	#   （落影全部在塔身之前：B3.11 的兩趟規則，一座塔的影子不准壓在鄰居的塔身上）。
+	terrain_layer = _add_layer(_paint_terrain)
+	_static_layer = _add_layer(_paint_static)
+	_flow_layer = _add_layer(_paint_flow)
+	_conduit_group = _add_layer(Callable())
+	_bead_layer = _add_layer(Callable())
+	_bead_mm = MultiMesh.new()
+	_bead_mm.transform_format = MultiMesh.TRANSFORM_2D
+	_bead_mm.use_colors = true
+	_bead_mm.mesh = _unit_circle()
+	var beads := MultiMeshInstance2D.new()
+	beads.multimesh = _bead_mm
+	_bead_layer.add_child(beads)
+	_node_shadow_group = _add_layer(Callable())
+	_node_body_group = _add_layer(Callable())
 
 
 ## ★ 視野緩動（B2.1d）。指數收斂與幀率無關——`1-exp(-k*dt)` 在 30fps 與
@@ -254,44 +355,34 @@ func in_map(c: Vector2i) -> bool:
 # ── 繪圖 ──────────────────────────────────────────────────────────────
 
 func _draw() -> void:
+	Prof.mark()
 	var size: Vector2i = s.map["size"]
 	var rect := Rect2(Vector2.ZERO, Vector2(size) * Shapes.GRID)
 
-	# ★ 全部的地圖繪圖都在**格為單位的地圖座標**裡做，縮放與平移交給這一個
+	# ★ 這裡只剩**會隨幀變**的東西，而且全部在**格為單位的地圖座標**裡做，縮放與平移交給這一個
 	#   變換（B1.2.2）。所以底下每一支 `_draw_*` 都不知道縮放存在——
 	#   縮放要是滲進 9 支繪圖函式裡，每加一種圖形就要記得乘一次倍率。
 	#   文字不受影響：`_draw()` 裡沒有任何 `draw_string`，HUD 全是 Control 子節點。
+	#
+	# ★ B3.15：地貌、網格、路徑、礦點、導管、節點、流動珠都**不在這裡畫**了——它們各是一個快取層
+	#   （`StageLayer`），簽章沒變就不重畫。`_process()` 負責把那幾層與 `engaged`／`threat` 對到本 tick。
 	draw_set_transform(_map_origin(), 0.0, Vector2(zoom, zoom))
-	# ★ 地貌（B3.13，§1.6c）：每張圖自己的地 ＋ 靜態裝飾，畫在網格線**之下**。
-	#   本體只負責把那一層對到同一個視野；換圖才重建零件、重畫那一層。
-	_sync_terrain()
-
-	# 網格只畫在地圖範圍內：畫到浮層底下會讓「哪裡可以蓋」變得曖昧。
-	Shapes.draw_grid(self, rect)
-
-	# 敵人的格算一次給三個人用（交戰、光環、被啃判定）——同一幀各算一次的那一天，
-	# 就會有一個用到的是上一幀的位置。
-	var cells := Combat.enemy_cells(s.enemies, s.path)
-	engaged = Combat.engaged(s.nodes, cells)
-	_auras = Combat.auras(s.nodes, cells, s.rates["satisfaction"])
-	threat = _threat_cells(cells)
-	# ★ B3.11：敵人的格與「這一 tick 被打中的格」留給 `_draw_enemies()` 讀
-	#   （受擊一閃是純渲染推導：剛生出來那幾發的落點）。
-	_enemy_cells = cells
+	_place_layers()
+	Prof.lap("stage.layers")
+	# 這兩份要看**本幀**的敵人與彈丸（受擊一閃、彈丸落點），而不是上一個 tick 的。
 	_enemy_index = _index_enemies()
 	_hit_ids = _hit_ids_of()
-	_draw_path()
-	_draw_ore_cells()
-	_draw_fields()
-	_draw_conduits()
-	_draw_nodes()
+	Prof.lap("stage.derive")
 	_draw_enemies()
+	Prof.lap("stage.enemies")
 	_draw_ripple()
 	_draw_shots()
 	_draw_bursts()
 	_draw_shields()
+	Prof.lap("stage.fx")
 	_draw_selection()
 	_draw_hover()
+	Prof.lap("stage.sel_hover")
 	# 階段色調（`10_GDD.md` §6.2 硬性要求 4）：**不看計時器也知道自己在哪個階段**。
 	# 蓋在最上層而不是墊在底下——墊底的話節點與敵人會把它整片蓋掉。
 	draw_rect(rect, Palette.alpha(
@@ -304,6 +395,114 @@ func _draw() -> void:
 	# 等於整個功能不存在）——所以它們在 `Overlay2D`，那一層是這一層的後一個子節點。
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_draw_frame_matte()
+	Prof.lap("stage.tint_matte")
+
+
+# ── 快取層（B3.15）────────────────────────────────────────────────────
+
+func _add_layer(painter: Callable) -> StageLayer:
+	var layer := StageLayer.new()
+	layer.painter = painter
+	layer.show_behind_parent = true
+	add_child(layer)
+	_layers.append(layer)
+	return layer
+
+
+## 每幀（在任何一層重畫之前）：把「本 tick 的推導值」與各層的簽章對好。
+##
+## ★ **為什麼是 `_process` 而不是 `_draw`**：各層的 `_draw` 與本體的 `_draw` 在同一次排程裡跑，
+##   順序不保證——節點讀 `engaged`／`threat`，如果它們在本體的 `_draw` 裡才算，
+##   節點可能讀到上一個 tick 的值（`TL_SHOT` 凍結時就會永遠停在空的）。`_process` 一定先於所有 `_draw`。
+##
+## 簽章：
+##   · 靜態層（網格、路徑）  ＝ 局 ＋ 地圖。換圖或重來才重畫。
+##   · 導管、節點（逐件）    ＝ **每一件自己的簽章**：節點＝（級數、血量、充能、交戰、受威脅、三態徽章）；
+##                             導管＝（級數、流量、終點缺不缺電、受損程度、縮放——刻度與描邊跟著倍率）。
+##                             `_sync_*()` 只在 tick／建造／縮放有變時逐件對一遍，簽章沒變的那一件一個指令都不重發。
+##   · 流動珠                ＝ 每幀推位置（位置是 tick ＋ 幀內插值的函式），規格（哪幾條線、什麼色、多大）隨 tick。
+func _process(_delta: float) -> void:
+	if s == null:
+		return
+	Prof.mark()
+	_derive()
+	_place_layers()
+	var sid: int = s.get_instance_id()
+	var map_id := String(s.map.get("id", ""))
+	if map_id != _terrain_id:
+		_terrain_id = map_id
+		_terrain_parts = Terrain.build(s.map, Shapes.GRID, 1)
+		terrain_layer.invalidate()
+	terrain_layer.refresh([sid, map_id])
+	_static_layer.refresh([sid, map_id])
+	Prof.lap("proc.stage_layers")
+	# 導管與節點的簽章在**每一件**身上，這裡只決定「要不要去逐件對一遍」——tick、建造、縮放有變才對。
+	var world_key := [sid, s.tick_count, s.rev, zoom, Motion.reduce]
+	if world_key != _world_key:
+		_world_key = world_key
+		if sid != _elem_sid:
+			_clear_elements()
+			_elem_sid = sid
+		_flow_layer.repaint()
+		_sync_conduits()
+		Prof.lap("proc.sync_conduits")
+		_sync_nodes()
+		Prof.lap("proc.sync_nodes")
+		_bead_specs_cache = _bead_specs()
+		_size_beads()
+		Prof.lap("proc.bead_specs")
+	_update_beads()
+	Prof.lap("stage.beads")
+
+
+## 把各層對到目前的視野。
+func _place_layers() -> void:
+	var origin := _map_origin()
+	for layer: StageLayer in _layers:
+		layer.place(origin, zoom)
+
+
+## 本 tick 的推導值：敵人所在的格、交戰、光環、受威脅的格。
+## 敵人的格算一次給三個人用（交戰、光環、被啃判定）——同一幀各算一次的那一天，
+## 就會有一個用到的是上一幀的位置。它們只隨 tick 與建造改變，所以簽章沒變就不重算。
+func _derive() -> void:
+	var key := [s.get_instance_id(), s.tick_count, s.rev]
+	if key == _derived_key:
+		return
+	_derived_key = key
+	var cells := Combat.enemy_cells(s.enemies, s.path)
+	engaged = Combat.engaged(s.nodes, cells)
+	_auras = Combat.auras(s.nodes, cells, s.rates["satisfaction"])
+	threat = _threat_cells(cells)
+	# ★ B3.11：敵人的格留給 `_draw_enemies()` 讀（受擊一閃是純渲染推導：剛生出來那幾發的落點）。
+	_enemy_cells = cells
+
+
+## 丟掉所有快取：下一幀整個重畫。
+func invalidate() -> void:
+	for layer: StageLayer in _layers:
+		layer.invalidate()
+	_derived_key = []
+	_world_key = []
+	_forget_signatures()
+
+
+## 靜態層：網格與敵人路徑。**只在換圖時重畫。**
+func _paint_static(ci: CanvasItem) -> void:
+	Prof.mark()
+	var size: Vector2i = s.map["size"]
+	# 網格只畫在地圖範圍內：畫到浮層底下會讓「哪裡可以蓋」變得曖昧。
+	Shapes.draw_grid(ci, Rect2(Vector2.ZERO, Vector2(size) * Shapes.GRID))
+	_draw_path(ci)
+	Prof.lap("layer.static")
+
+
+## 礦點與場：隨 tick 與建造重畫（礦點被佔住就不畫；場的脈動由 tick 決定）。導管與節點是逐件的，見 `_sync_*()`。
+func _paint_flow(ci: CanvasItem) -> void:
+	Prof.mark()
+	_draw_ore_cells(ci)
+	_draw_fields(ci)
+	Prof.lap("layer.flow")
 
 
 ## 目前看得到的世界座標矩形。小地圖的視野框與「這個問題在不在畫面內」
@@ -351,7 +550,7 @@ func _draw_frame_matte() -> void:
 ##     · 路徑帶講**氣氛**（潮＝混沌，§0 的視覺論題）→ 抖動。
 ##     · 侵蝕暈講**規則**（我的建築要退開幾格）→ 一條抖動的線量不出格數。
 ##   規則層走格線是對的：它讓玩家用格子數邊界，而格子正是他放建築的單位。
-func _draw_path() -> void:
+func _draw_path(ci: CanvasItem) -> void:
 	var pathset: Dictionary = s.sets["path"]
 	# 暈這一層的實心區 ＝ 暈 ∪ 路徑。
 	var solid: Dictionary = _danger_cells(pathset)
@@ -368,40 +567,36 @@ func _draw_path() -> void:
 	#   「危險到哪裡為止」，而後者才是玩家要下的那個決定（建築要退開幾格）。
 	#   線只描**最外圈**，所以它是一條輪廓不是第二條帶子。
 	var edge := Palette.alpha(Palette.TIDE_DEEP, 0.5)
+	# ★ B3.15：這一層整局不變，所以**併成幾個指令**（`Batch`）而不是每格一個——暈的格子互不相疊、
+	#   外緣線只貼在暈的邊上，先畫完全部的暈再畫全部的線，畫面逐像素相同。
+	var halo_cells: Array = []
+	var edges := PackedVector2Array()
 	for c: Vector2i in solid:
 		var quad := _cell_quad(c)
-		draw_colored_polygon(quad, halo)
+		halo_cells.append(quad)
 		# 這一邊的鄰居不在實心區 ＝ 它是最外圈。
 		for i in 4:
 			if not solid.has(c + SIDES[i]):
-				draw_line(quad[i], quad[(i + 1) % 4], edge, 1.0)
+				edges.append(quad[i])
+				edges.append(quad[(i + 1) % 4])
+	Batch.fills(ci, halo_cells, halo)
+	Batch.lines(ci, edges, edge, 1.0)
 	# ② 路徑帶本身，疊在暈上面。0.45 疊在 0.13 上 ≈ 0.52。
 	var band := Palette.alpha(Palette.TIDE_DEEP, 0.45)
+	var band_cells: Array = []
 	for c: Vector2i in s.path:
-		draw_colored_polygon(_band_quad(c, pathset), band)
-	_draw_incoming()
+		band_cells.append(_band_quad(c, pathset))
+	Batch.fills(ci, band_cells, band)
+	_draw_incoming(ci)
 	for c: Vector2i in s.map.get("crossings", []):
-		_draw_crossing(c)
-
-
-## 地貌層跟著視野走；換圖（地圖 id 變了）才重建零件並重畫那一層。
-func _sync_terrain() -> void:
-	if terrain_layer == null:
-		return
-	terrain_layer.position = _map_origin()
-	terrain_layer.scale = Vector2(zoom, zoom)
-	var map_id := String(s.map.get("id", ""))
-	if map_id != _terrain_id:
-		_terrain_id = map_id
-		_terrain_parts = Terrain.build(s.map, Shapes.GRID, 1)
-		terrain_layer.queue_redraw()
+		_draw_crossing(ci, c)
 
 
 ## 地貌層的 `draw`：地的底色 ＋ 裝飾（地圖座標，縮放由那一層自己的 transform 帶）。
-func _paint_terrain() -> void:
+func _paint_terrain(ci: CanvasItem) -> void:
 	var size: Vector2i = s.map["size"]
-	terrain_layer.draw_rect(Rect2(Vector2.ZERO, Vector2(size) * Shapes.GRID), Terrain.ground(s.map))
-	Terrain.paint(terrain_layer, _terrain_parts)
+	ci.draw_rect(Rect2(Vector2.ZERO, Vector2(size) * Shapes.GRID), Terrain.ground(s.map))
+	Terrain.paint(ci, _terrain_parts)
 
 
 ## 路徑外一格（Chebyshev 距離 1），**不含路徑本身**。回傳的是**集合**不是陣列。
@@ -521,8 +716,9 @@ func _interior_vertex(g: Vector2i, solid: Dictionary) -> bool:
 ## ★ 來襲方向（`20_ART_DIRECTION.md` §1.6）。一條帶子只說「這裡是路」，
 ## **沒說潮從哪邊來**——而那是新玩家的第一個問題，也決定所有擺位。
 ## 順著箭羽走就找得到核心，一個元素答兩題（`50_QA_PLAN.md` §4.4）。
-func _draw_incoming() -> void:
+func _draw_incoming(ci: CanvasItem) -> void:
 	var col := Palette.alpha(Palette.TIDE_MAGENTA, 0.35)
+	var strokes := PackedVector2Array()
 	var i := 2
 	while i < s.path.size() - 1:
 		var here: Vector2i = s.path[i]
@@ -530,9 +726,12 @@ func _draw_incoming() -> void:
 		var back := -dir * 5.0
 		var wing := dir.orthogonal() * 5.0
 		var tip := center(here) + dir * 4.0
-		draw_line(tip, tip + back + wing, col, 2.0)
-		draw_line(tip, tip + back - wing, col, 2.0)
+		strokes.append(tip)
+		strokes.append(tip + back + wing)
+		strokes.append(tip)
+		strokes.append(tip + back - wing)
 		i += 4
+	Batch.lines(ci, strokes, col, 2.0)
 
 
 ## 跨越點（橋）：**「架高」必須用畫的說清楚**——它是「橋上導管不受攻擊」
@@ -543,7 +742,7 @@ func _draw_incoming() -> void:
 ##      投影偏移才是「這東西浮在上面」的視覺線索（一圈等距的暗邊只是描邊）。
 ##   ② 引道是**直線延長 6px**，不是 §1.6 寫的 45°。而 45° 是秩序側的既有語彙
 ##      （導管只走 90°/45°，§7.2）——用它，橋才接得回玩家自己的線。
-func _draw_crossing(cell: Vector2i) -> void:
+func _draw_crossing(ci: CanvasItem, cell: Vector2i) -> void:
 	var p := _world(cell)
 	var g := Shapes.GRID
 	var path: Dictionary = s.sets["path"]
@@ -553,43 +752,43 @@ func _draw_crossing(cell: Vector2i) -> void:
 	var drop := Vector2(0, 4) if horizontal else Vector2(4, 0)
 	# alpha 0.55 而不是 0.7：§1.6 要的是「橋下留**可見的**路徑帶陰影」——
 	# 陰影要看得見，但帶子也要還在。真正讓它讀成「架高」的是**偏移**不是深度。
-	draw_rect(
+	ci.draw_rect(
 		Rect2(p + drop, Vector2(g, g)), Palette.alpha(Palette.BG_DEEP, 0.55)
 	)
 	if horizontal:
 		# 橋面沿垂直方向（導管要南北橫越）。
 		for dx: float in [7.0, g - 7.0]:
-			draw_line(p + Vector2(dx, -6), p + Vector2(dx, g + 6), c, 3.0)
+			ci.draw_line(p + Vector2(dx, -6), p + Vector2(dx, g + 6), c, 3.0)
 		for dy: float in [-6.0, g + 6.0]:
-			draw_line(p + Vector2(4, dy), p + Vector2(g - 4, dy), c, 2.0)
+			ci.draw_line(p + Vector2(4, dy), p + Vector2(g - 4, dy), c, 2.0)
 		# ★ 45° 引道：橋頭往外張開，把橋面接回地面高度。
 		for dy: float in [-6.0, g + 6.0]:
 			var away := signf(dy)
 			for dx: float in [7.0, g - 7.0]:
 				var out_x := -6.0 if dx < g * 0.5 else 6.0
-				draw_line(
+				ci.draw_line(
 					p + Vector2(dx, dy), p + Vector2(dx + out_x, dy + away * 6.0), c, 2.0
 				)
 	else:
 		for dy: float in [7.0, g - 7.0]:
-			draw_line(p + Vector2(-6, dy), p + Vector2(g + 6, dy), c, 3.0)
+			ci.draw_line(p + Vector2(-6, dy), p + Vector2(g + 6, dy), c, 3.0)
 		for dx: float in [-6.0, g + 6.0]:
-			draw_line(p + Vector2(dx, 4), p + Vector2(dx, g - 4), c, 2.0)
+			ci.draw_line(p + Vector2(dx, 4), p + Vector2(dx, g - 4), c, 2.0)
 		for dx: float in [-6.0, g + 6.0]:
 			var away := signf(dx)
 			for dy: float in [7.0, g - 7.0]:
 				var out_y := -6.0 if dy < g * 0.5 else 6.0
-				draw_line(
+				ci.draw_line(
 					p + Vector2(dx, dy), p + Vector2(dx + away * 6.0, dy + out_y), c, 2.0
 				)
 
 
-func _draw_ore_cells() -> void:
+func _draw_ore_cells(ci: CanvasItem) -> void:
 	var occupied: Dictionary = s.occupied()
 	for c: Vector2i in s.map.get("ore", []):
 		if occupied.has(c):
 			continue  # 蓋上採集器後由節點填實
-		draw_arc(center(c), 10.0, 0.0, TAU, 24, Palette.ORDER_DIM, 2.0)
+		ci.draw_arc(center(c), 10.0, 0.0, TAU, 24, Palette.ORDER_DIM, 2.0)
 
 
 ## ★ 潮鳴的場（B1.8，`20_ART_DIRECTION.md` §1.6）。
@@ -605,7 +804,7 @@ func _draw_ore_cells() -> void:
 ##      圈跟著淡下去，因果就在同一個畫面上。
 ##   ③ 半徑是**實際射程**（5 格＝160px），和交戰環的 15px 差一個數量級——
 ##      「同一個位置上的兩個訊息，換顏色不夠，要換形狀」（§4.3b）。
-func _draw_fields() -> void:
+func _draw_fields(ci: CanvasItem) -> void:
 	for n: Dictionary in s.nodes:
 		var def := NodeDefs.of(String(n["type"]))
 		if not def.has("slow") or not engaged.get(int(n["id"]), false):
@@ -621,59 +820,69 @@ func _draw_fields() -> void:
 		#     tick 決定——驗收截圖剛好落在波谷（tick 1556 → alpha 0.48）。
 		#     谷底讀得出來，整條曲線就都讀得出來；只拉振幅會讓它一半時間是隱形的。
 		var a := Motion.pulse01(s.tick_count, Motion.AMBIENT, 0.72) * 0.92 * k
-		draw_arc(
+		ci.draw_arc(
 			center(n["cell"]), float(def.get("range", 0.0)) * Shapes.GRID, 0.0, TAU, 64,
 			Palette.alpha(Palette.ORDER_CYAN, a), 2.0
 		)
 
 
-func _draw_conduits() -> void:
-	var flows: Dictionary = s.rates["conduit_flow"]
-	var sat: Dictionary = s.rates["satisfaction"]
-	for c: Dictionary in s.conduits:
-		var bonus := float(s.mods["cap_bonus"])
-		var cap := Build.conduit_cap(int(c["level"]), bonus)
-		var flow := float(flows.get(c["id"], 0.0))
-		var to_node: Dictionary = s.node_at(c["b"])
-		var starving := (
-			not to_node.is_empty() and float(sat.get(to_node["id"], 1.0)) < 0.95 and flow > 0.0
+## 一條導管：受損光暈、線本體、等級刻度。`flow`／`starving` 是這一 tick 的推導值（`_sync_conduits()` 算好給它）。
+func _draw_conduit(ci: CanvasItem, c: Dictionary, flow: float, starving: bool) -> void:
+	var bonus := float(s.mods["cap_bonus"])
+	var cap := Build.conduit_cap(int(c["level"]), bonus)
+	# 線寬的分母是**全遊戲的最大 cap**，不是這條線自己的——粗細因此在
+	# 全圖上可以互相比較，而且加粗一條線之後它會真的變粗（B1.1 使用者回報）。
+	var w := Shapes.conduit_width(flow, Build.conduit_cap(Build.CAP_MAX_LEVEL, bonus))
+	# 受損：先鋪一圈 warn.orange 光暈。**線被打斷之前要先看得出它在挨打**，
+	# 否則產能中斷對玩家來說會是憑空發生的。
+	if float(c["hp"]) < 40.0:
+		var hurt := 1.0 - float(c["hp"]) / 40.0
+		ci.draw_line(
+			center(c["a"]), center(c["b"]),
+			Palette.alpha(Palette.WARN_ORANGE, 0.25 + 0.55 * hurt), w + 6.0
 		)
-		# 線寬的分母是**全遊戲的最大 cap**，不是這條線自己的——粗細因此在
-		# 全圖上可以互相比較，而且加粗一條線之後它會真的變粗（B1.1 使用者回報）。
-		var w := Shapes.conduit_width(flow, Build.conduit_cap(Build.CAP_MAX_LEVEL, bonus))
-		# 受損：先鋪一圈 warn.orange 光暈。**線被打斷之前要先看得出它在挨打**，
-		# 否則產能中斷對玩家來說會是憑空發生的。
-		if float(c["hp"]) < 40.0:
-			var hurt := 1.0 - float(c["hp"]) / 40.0
-			draw_line(
-				center(c["a"]), center(c["b"]),
-				Palette.alpha(Palette.WARN_ORANGE, 0.25 + 0.55 * hurt), w + 6.0
-			)
-		draw_line(center(c["a"]), center(c["b"]), Palette.conduit(flow, cap, starving), w)
-		# 升級過的幹線在端點加刻度，讓「我升過這條」在無數值下也看得見。
-		# **垂直短刻線，不是圓點**：圓點會和流動珠混成同一個東西，而兩者語意相反
-		# （固定的線材等級 vs 變動的流量）——`20_ART_DIRECTION.md` §1.4a。
-		var pa := center(c["a"])
-		var pb := center(c["b"])
-		var perp := (pb - pa).normalized().orthogonal()
-		# ★ B1.6.1：刻度必須**明確伸出管緣**。原本固定 ±5px，而滿載的管子
-		#   本身就有 8px 寬——刻度只比它寬一點點，畫成近白青之後讀起來是
-		#   「管子這裡破了一個洞」（使用者回報「有破圖」）。
-		#   現在長度跟著線寬走並固定外露 3px，而且貼在起點端而不是線長 12%
-		#   那個沒有意義的位置：等級是這條線的屬性，標在接頭上才讀得出來。
-		var reach := w * 0.5 + 3.0
-		var tick_w := maxf(1.5, 2.0 / maxf(0.2, zoom))
-		var step := maxf(3.0, 4.0 / maxf(0.2, zoom))
-		# 起點要**閃過節點自己的圖形**：節點最大到半徑 13（碎浪的外框），
-		# 貼太近就被畫在它底下看不見（第一版貼 6px，截圖當場抓到）。
-		# 短線上再夾一次，免得刻度跑過中點看起來像掛在另一端。
-		var span := pa.distance_to(pb)
-		var head := minf(17.0, span * 0.32)
-		for i in range(int(c["level"])):
-			var at := pa + (pb - pa).normalized() * (head + step * float(i))
-			draw_line(at - perp * reach, at + perp * reach, Palette.ORDER_BRIGHT, tick_w)
+	ci.draw_line(center(c["a"]), center(c["b"]), Palette.conduit(flow, cap, starving), w)
+	# 升級過的幹線在端點加刻度，讓「我升過這條」在無數值下也看得見。
+	# **垂直短刻線，不是圓點**：圓點會和流動珠混成同一個東西，而兩者語意相反
+	# （固定的線材等級 vs 變動的流量）——`20_ART_DIRECTION.md` §1.4a。
+	var pa := center(c["a"])
+	var pb := center(c["b"])
+	var perp := (pb - pa).normalized().orthogonal()
+	# ★ B1.6.1：刻度必須**明確伸出管緣**。原本固定 ±5px，而滿載的管子
+	#   本身就有 8px 寬——刻度只比它寬一點點，畫成近白青之後讀起來是
+	#   「管子這裡破了一個洞」（使用者回報「有破圖」）。
+	#   現在長度跟著線寬走並固定外露 3px，而且貼在起點端而不是線長 12%
+	#   那個沒有意義的位置：等級是這條線的屬性，標在接頭上才讀得出來。
+	var reach := w * 0.5 + 3.0
+	var tick_w := maxf(1.5, 2.0 / maxf(0.2, zoom))
+	var step := maxf(3.0, 4.0 / maxf(0.2, zoom))
+	# 起點要**閃過節點自己的圖形**：節點最大到半徑 13（碎浪的外框），
+	# 貼太近就被畫在它底下看不見（第一版貼 6px，截圖當場抓到）。
+	# 短線上再夾一次，免得刻度跑過中點看起來像掛在另一端。
+	var span := pa.distance_to(pb)
+	var head := minf(17.0, span * 0.32)
+	for i in range(int(c["level"])):
+		var at := pa + (pb - pa).normalized() * (head + step * float(i))
+		ci.draw_line(at - perp * reach, at + perp * reach, Palette.ORDER_BRIGHT, tick_w)
+
+
+## ★ 本 tick 的流動珠規格（B3.15）：每一列 `[起點, 單位方向, 線長, 半徑, 描邊半徑, 淨流量, 相位偏移, 顏色]`。
+##
+## 珠子**每幀都在動**，但「哪幾條線上有珠子、什麼顏色、多寬」只隨 tick 與建造改變——
+## 所以規格在快取層失效時算一次（`_process()`），每幀只拿它推位置（`_update_beads()`）。
+func _bead_specs() -> Array:
+	var specs: Array = []
+	var flows: Dictionary = s.rates["conduit_flow"]
+	var nets: Dictionary = s.rates["conduit_net"]
+	var bonus := float(s.mods["cap_bonus"])
+	var cap_max := Build.conduit_cap(Build.CAP_MAX_LEVEL, bonus)
+	# ★ 描邊是**螢幕固定粗細**（B1.6.1）。原本是固定 +1.2 地圖 px：在 r=1.4 的
+	#   細線上，光暈佔了直徑的 46%，讀起來是「管子上的洞」而不是「在跑的東西」；
+	#   而放大到 300% 時它又變成一圈很粗的黑框。1px 螢幕在任何倍率下都只是描邊。
+	var edge := 1.0 / maxf(0.2, zoom)
+	for c: Dictionary in s.conduits:
 		# ★ 流動珠：礦砂／能量／合金各一列，各自往自己的淨流向跑（§1.4a）。
-		var net: Vector3 = (s.rates["conduit_net"] as Dictionary).get(c["id"], Vector3.ZERO)
+		var net: Vector3 = (nets as Dictionary).get(c["id"], Vector3.ZERO)
 		# 只有一種資源在跑時**走線的正中央**：多數導管都是這種，
 		# 硬要分排會讓珠子懸在細線外面，看起來像掉出來的東西。
 		# 三種同時跑的線（熔爐那條）中間讓給合金，礦砂與能量各退一邊。
@@ -693,14 +902,26 @@ func _draw_conduits() -> void:
 		]:
 			if absf(float(pair[0])) >= BEAD_MIN_RATE:
 				lanes.append(pair)
+		if lanes.is_empty():
+			continue
+		var w := Shapes.conduit_width(float(flows.get(c["id"], 0.0)), cap_max)
+		var pa := center(c["a"])
+		var pb := center(c["b"])
+		var span := pa.distance_to(pb)
+		if span < 1.0:
+			continue
+		var u := (pb - pa) / span
+		# 珠子大小跟著線寬走：這樣它**強化**「線寬＝流量」而不是把線戳成虛線。
+		# 固定大小的珠子在 2px 的細線上會蓋掉整條線，粗細那條資訊就沒了（R-3）。
+		# ★ 上限收到半寬：珠子不得比管子胖，否則它就是「管子上的腫塊」。
+		var r := clampf(w * 0.30, 1.4, w * 0.5)
 		# 礦砂珠用 `text.primary`（近白）而不是 `order.bright`：導管本身就是亮青，
 		# 亮青珠子在亮青線上只讀得出「這裡有個洞」，讀不出「有東西在跑」。
 		# 能量珠的琥珀、合金珠的紫本來就與線色分屬不同色相，維持配色紀律 2。
 		for i in lanes.size():
-			_draw_beads(
-				pa, pb, float(lanes[i][0]), lanes[i][1], w,
-				float(i) / float(lanes.size())
-			)
+			var lane_phase := float(i) / float(lanes.size())
+			specs.append([pa, u, span, r, r + edge, float(lanes[i][0]), lane_phase * BEAD_GAP, lanes[i][1]])
+	return specs
 
 
 ## ★ 流動珠（`20_ART_DIRECTION.md` §1.4a）。線寬與顏色說的是「這條線有多滿」，
@@ -711,86 +932,284 @@ func _draw_conduits() -> void:
 ## 一旦它變成有位置有狀態的實體，`O(物品數)` 的效能與確定性負債就回來了。
 ##
 ## `amount` 帶號：正＝沿 a→b、負＝反向。速度 ∝ 流率，間距固定。
-##
-## ponytail: 每顆珠子兩個 `draw_circle` ＝ 每幀約 `導管數 × 線長/20 × 2` 次繪製。
-## M0 一屏（13 條導管）約 500 次，無感；`30_TECH_DESIGN.md` §5 的壓力情境
-## （2000 條導管）會爆到六位數。到那時改成單一 `draw_multiline` 批繪或
-## 用 shader 把相位推進 GPU——**在量到之前不要先做**。
-## `lane_phase` 是 0..1 的相位偏移：多種資源在同一條線上時用它錯開，
+## 相位偏移（規格的 `off`）：多種資源在同一條線上時用它錯開，
 ## 於是白、琥珀、紫依序前進而不是疊在一起（B1.6.1）。
-func _draw_beads(
-	a: Vector2, b: Vector2, amount: float, col: Color, width: float,
-	lane_phase: float = 0.0
-) -> void:
-	if absf(amount) < BEAD_MIN_RATE:
-		return  # 沒在流動的線必須是靜止的——這是「哪裡斷了」最快的讀法
-	var span := a.distance_to(b)
-	if span < 1.0:
+##
+## ★ B3.15：**整個珠子層是一個 `MultiMesh`**。原本每顆珠子兩次 `draw_circle`
+##   （RG-184：第 10 關約 600 次、每幀 4 ms 的 GDScript 與近千個 draw call）；
+##   現在每顆是**兩個實例**（先深色描邊、再本色，順序與原本逐顆交錯的畫法相同），
+##   GDScript 只把位置寫進一塊緩衝區，一次交給引擎，一個 draw call。圓是同一個 64 邊扇形。
+func _update_beads() -> void:
+	var specs := _bead_specs_cache
+	if specs.is_empty():
+		if _bead_mm.visible_instance_count != 0:
+			_bead_mm.visible_instance_count = 0
 		return
-	var u := (b - a) / span
 	# 相位用模擬秒數推（tick 數 ＋ 幀內插值），不用系統時間：
 	# 渲染可以不確定，但別引入新的亂數源。`TL_SHOT` 下模擬凍結 → 珠子也凍結。
 	var t: float = (float(s.tick_count) + scr.accum / BattleController.TICK) * BattleController.TICK
-	# 珠子大小跟著線寬走：這樣它**強化**「線寬＝流量」而不是把線戳成虛線。
-	# 固定大小的珠子在 2px 的細線上會蓋掉整條線，粗細那條資訊就沒了（R-3）。
-	# ★ 上限收到半寬：珠子不得比管子胖，否則它就是「管子上的腫塊」。
-	var r := clampf(width * 0.30, 1.4, width * 0.5)
-	# ★ 描邊是**螢幕固定粗細**（B1.6.1）。原本是固定 +1.2 地圖 px：在 r=1.4 的
-	#   細線上，光暈佔了直徑的 46%，讀起來是「管子上的洞」而不是「在跑的東西」；
-	#   而放大到 300% 時它又變成一圈很粗的黑框。1px 螢幕在任何倍率下都只是描邊。
-	var edge := 1.0 / maxf(0.2, zoom)
-	var x := fposmod(t * amount * BEAD_SPEED + lane_phase * BEAD_GAP, BEAD_GAP)
-	while x < span:
-		var p := a + u * x
-		# **深色描邊是這個元素能被看見的唯一原因**：導管本身就是亮青，
-		# 亮青珠子畫在亮青線上等於沒畫（使用者實看 B0.6 時反映的正是這件事）。
-		draw_circle(p, r + edge, Palette.BG_DEEP)
-		draw_circle(p, r, col)
-		x += BEAD_GAP
+	var buf := _bead_buf
+	var n := 0
+	for sp: Array in specs:
+		var a: Vector2 = sp[0]
+		var u: Vector2 = sp[1]
+		var span: float = sp[2]
+		var r: float = sp[3]
+		var ro: float = sp[4]
+		var oc: Color = Palette.BG_DEEP
+		var col: Color = sp[7]
+		var x := fposmod(t * float(sp[5]) * BEAD_SPEED + float(sp[6]), BEAD_GAP)
+		while x < span:
+			var px := a.x + u.x * x
+			var py := a.y + u.y * x
+			# **深色描邊是這個元素能被看見的唯一原因**：導管本身就是亮青，
+			# 亮青珠子畫在亮青線上等於沒畫（使用者實看 B0.6 時反映的正是這件事）。
+			var o := n * BEAD_FLOATS
+			buf[o] = ro
+			buf[o + 1] = 0.0
+			buf[o + 2] = 0.0
+			buf[o + 3] = px
+			buf[o + 4] = 0.0
+			buf[o + 5] = ro
+			buf[o + 6] = 0.0
+			buf[o + 7] = py
+			buf[o + 8] = oc.r
+			buf[o + 9] = oc.g
+			buf[o + 10] = oc.b
+			buf[o + 11] = oc.a
+			o += BEAD_FLOATS
+			buf[o] = r
+			buf[o + 1] = 0.0
+			buf[o + 2] = 0.0
+			buf[o + 3] = px
+			buf[o + 4] = 0.0
+			buf[o + 5] = r
+			buf[o + 6] = 0.0
+			buf[o + 7] = py
+			buf[o + 8] = col.r
+			buf[o + 9] = col.g
+			buf[o + 10] = col.b
+			buf[o + 11] = col.a
+			n += 2
+			x += BEAD_GAP
+	_bead_mm.visible_instance_count = n
+	_bead_mm.buffer = buf
 
 
-func _draw_nodes() -> void:
-	# ★ B3.11：**兩趟**。落影全部先畫、塔身全部後畫——一座塔的影子偏出格線那兩個
-	#   像素只准壓在背景與導管上，不准壓在鄰居已經畫好的血條與徽章上
-	#   （`Shapes.SHADOW_OFF` 的原註；`body_extent()` 守的正是那一格）。
-	#   幾何每幀建一次（`Glyphs.build_for()`），兩趟共用同一份。
-	var rows: Array = []
+## 規格換了之後，把緩衝區與 `MultiMesh` 的容量對到最壞情況（每條線每個相位都塞滿）。只增不減。
+func _size_beads() -> void:
+	var need := 0
+	for sp: Array in _bead_specs_cache:
+		need += 2 * (int(float(sp[2]) / BEAD_GAP) + 1)
+	if need <= _bead_mm.instance_count:
+		return
+	var cap := maxi(64, _bead_mm.instance_count)
+	while cap < need:
+		cap *= 2
+	_bead_mm.instance_count = cap
+	_bead_buf.resize(cap * BEAD_FLOATS)
+
+
+## 單位圓（半徑 1 的 64 邊扇形）。`draw_circle` 用的是同一種分割，所以珠子與原本幾乎逐像素相同（32 張截圖裡只有兩張各差圓邊緣 1 個像素——實例變換在 GPU 上算）。
+func _unit_circle() -> ArrayMesh:
+	var mesh := ArrayMesh.new()
+	var pts := PackedVector2Array()
+	var idx := PackedInt32Array()
+	pts.resize(BEAD_SEGMENTS + 1)
+	for i in BEAD_SEGMENTS:
+		var ang := TAU * float(i) / float(BEAD_SEGMENTS)
+		pts[i] = Vector2(cos(ang), sin(ang))
+		idx.append(i)
+		idx.append((i + 1) % BEAD_SEGMENTS)
+		idx.append(BEAD_SEGMENTS)
+	pts[BEAD_SEGMENTS] = Vector2.ZERO
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = pts
+	arrays[Mesh.ARRAY_INDEX] = idx
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## ★ 逐件快取的同步（B3.15）：**只在 tick、建造或縮放有變時跑**，把每一件的簽章對一遍，
+## 簽章變了的那幾件才重畫。簽章要**收齊畫它會讀的每一個輸入**——少收一個，症狀就是那個輸入改了而畫面沒跟上
+## （`TL_CLICKTEST` 的 `cache` 段落拿「逐件累積出來的畫面」對「全部重畫的畫面」逐像素比，守的就是這件事）。
+func _sync_nodes() -> void:
+	var node_state: Dictionary = s.rates["node_state"]
+	var seen := 0
 	for n: Dictionary in s.nodes:
-		var at := center(n["cell"])
-		var parts: Array = Glyphs.build_for(n, at, s.tick_count)
-		if parts.is_empty():
-			# 對不到的型別＝隱形的塔。記下來讓 `_glyph_selftest` 變紅（B2.4.6）。
-			_no_glyph[String(n["type"])] = true
+		var id := int(n["id"])
+		var rec: NodeRec = _node_recs.get(id)
+		if rec == null:
+			rec = _new_node_rec(n)
+			_node_recs[id] = rec
+		seen += 1
+		var type := String(n["type"])
+		var hot: bool = threat.has(n["cell"])
+		# 圖形只讀（級數、血量、儲槽的充能、tick）；**tick 只有核心的心跳與受威脅的括號在用**，
+		# 其餘的塔把 tick 放進簽章只會讓它每個 tick 白畫一次。
+		var sig: Array = [
+			int(n.get("level", 0)), float(n["hp"]),
+			float(n.get("charge", 0.0)) if type == "silo" else 0.0,
+			bool(engaged.get(int(n["id"]), false)), hot,
+			int(node_state.get(id, SessionState.NORMAL)),
+			s.tick_count if (hot or type == "core") else 0, Motion.reduce,
+		]
+		if sig == rec.sig:
 			continue
-		rows.append([n, at, Glyphs.scale_for(n), parts])
-	for row: Array in rows:
-		_scaled(row[1], float(row[2]), true)
-		Glyphs.paint_shadows(self, row[3])
-		_scaled(row[1], float(row[2]), false)
-	for row: Array in rows:
-		var nd: Dictionary = row[0]
-		var p: Vector2 = row[1]
-		var full := NodeDefs.hp(String(nd["type"]))
-		var lv := int(nd.get("level", 0))
-		# ★ B3.10：血條也夾在半格內——它畫在塔身下緣，跟著沒有上限的體積通道長
-		#   就會落進下面那一格（塔身本身由 `Shapes.fit_scale()` 夾住）。
-		var bar_sc := minf(Shapes.level_scale(lv), Shapes.GRID * 0.5 / 15.0)
-		if float(nd["hp"]) < full:
-			# **血條不是圓環**：儲槽的充能也是琥珀色圓弧，兩個圓弧疊在同一顆
-			# 12px 的節點上肉眼分不出來。形狀不同才分得開。
-			var frac := clampf(float(nd["hp"]) / full, 0.0, 1.0)
-			var bar := Vector2(24.0, 3.0)
-			var bar_at := p + Vector2(-bar.x * 0.5, 15.0 * bar_sc)
-			draw_rect(Rect2(bar_at, bar), Palette.alpha(Palette.BG_DEEP, 0.8))
-			draw_rect(Rect2(bar_at, Vector2(bar.x * frac, bar.y)), Palette.WARN_ORANGE)
-		_scaled(p, float(row[2]), true)
-		Glyphs.paint_bodies(self, row[3], p)
-		_scaled(p, float(row[2]), false)
-		_draw_threat(nd["cell"], p)
-		_draw_engaged(nd, p)
-		# ★ B3.9.3：零件長在塔身周圍而不是頭上那一條帶子，所以缺料徽章（y −16 起）
-		#   不必再讓位——它是**地圖上唯一指出瓶頸的元素**。
-		_draw_badge(nd, p)
+		rec.sig = sig
+		_node_geometry(rec)
+		rec.shadow.repaint()
+		rec.body.repaint()
+	if seen != _node_recs.size():
+		var live: Dictionary = {}
+		for n: Dictionary in s.nodes:
+			live[int(n["id"])] = true
+		for id: int in _node_recs.keys():
+			if not live.has(id):
+				var rec: NodeRec = _node_recs[id]
+				rec.shadow.queue_free()
+				rec.body.queue_free()
+				_node_recs.erase(id)
+
+
+func _sync_conduits() -> void:
+	var flows: Dictionary = s.rates["conduit_flow"]
+	var sat: Dictionary = s.rates["satisfaction"]
+	# 「這條線的終點是哪個節點」建一次索引：每條線各掃一次節點是 O(導管 × 節點)——
+	# 壓力場景（2045 條 × 547 座）光這一項就是每幀約 50 ms。
+	var node_at: Dictionary = {}
+	for n: Dictionary in s.nodes:
+		node_at[n["cell"]] = int(n["id"])
+	for c: Dictionary in s.conduits:
+		var id := int(c["id"])
+		var rec: ConduitRec = _conduit_recs.get(id)
+		if rec == null:
+			rec = _new_conduit_rec(c)
+			_conduit_recs[id] = rec
+		var flow := float(flows.get(id, 0.0))
+		var to_id: int = node_at.get(c["b"], -1)
+		var starving: bool = to_id >= 0 and float(sat.get(to_id, 1.0)) < 0.95 and flow > 0.0
+		# 受損光暈只在血量低於 40 時畫，所以簽章裡的血量在 40 以上一律當 40。
+		var sig: Array = [int(c["level"]), flow, starving, minf(float(c["hp"]), 40.0), zoom]
+		if sig == rec.sig:
+			continue
+		rec.sig = sig
+		rec.flow = flow
+		rec.starving = starving
+		rec.item.repaint()
+	if _conduit_recs.size() != s.conduits.size():
+		var live: Dictionary = {}
+		for c: Dictionary in s.conduits:
+			live[int(c["id"])] = true
+		for id: int in _conduit_recs.keys():
+			if not live.has(id):
+				var rec: ConduitRec = _conduit_recs[id]
+				rec.item.queue_free()
+				_conduit_recs.erase(id)
+
+
+## 新增一件：畫布項**接在群組最後面**，所以樹的順序永遠等於 `s.nodes`／`s.conduits` 的順序
+## （節點只會尾端新增、原地移除），也就是原本逐件呼叫的繪圖順序。
+func _new_node_rec(n: Dictionary) -> NodeRec:
+	var rec := NodeRec.new()
+	rec.node = n
+	rec.shadow = StageLayer.new()
+	rec.shadow.painter = _paint_node_shadow.bind(rec)
+	_node_shadow_group.add_child(rec.shadow)
+	rec.body = StageLayer.new()
+	rec.body.painter = _paint_node_body.bind(rec)
+	_node_body_group.add_child(rec.body)
+	return rec
+
+
+func _new_conduit_rec(c: Dictionary) -> ConduitRec:
+	var rec := ConduitRec.new()
+	rec.c = c
+	rec.item = StageLayer.new()
+	rec.item.painter = _paint_conduit.bind(rec)
+	_conduit_group.add_child(rec.item)
+	return rec
+
+
+## 簽章變了就重建這一座的幾何（建一次，落影與塔身兩個畫布項共用）。
+func _node_geometry(rec: NodeRec) -> void:
+	var n := rec.node
+	rec.at = center(n["cell"])
+	rec.parts = Glyphs.build_for(n, rec.at, s.tick_count)
+	if rec.parts.is_empty():
+		# 對不到的型別＝隱形的塔。記下來讓 `_glyph_selftest` 變紅（B2.4.6）。
+		_no_glyph[String(n["type"])] = true
+		return
+	rec.sc = Glyphs.scale_for(n)
+
+
+## 換局、或要整批重畫時，丟掉所有逐件的畫布項。
+func _clear_elements() -> void:
+	for rec: NodeRec in _node_recs.values():
+		rec.shadow.queue_free()
+		rec.body.queue_free()
+	for rec: ConduitRec in _conduit_recs.values():
+		rec.item.queue_free()
+	_node_recs.clear()
+	_conduit_recs.clear()
+
+
+## 讓下一次同步把每一件都重畫一遍（只清簽章，畫布項留著）。
+func _forget_signatures() -> void:
+	for rec: NodeRec in _node_recs.values():
+		rec.sig = []
+	for rec: ConduitRec in _conduit_recs.values():
+		rec.sig = []
+
+
+func _paint_conduit(ci: CanvasItem, rec: ConduitRec) -> void:
+	Prof.mark()
+	_draw_conduit(ci, rec.c, rec.flow, rec.starving)
+	Prof.lap("paint.conduit")
+
+
+## 落影：**全部節點的落影在全部塔身之前**（B3.11）——一座塔的影子偏出格線那兩個像素只准壓在背景與導管上，
+## 不准壓在鄰居已經畫好的血條與徽章上（`Shapes.SHADOW_OFF` 的原註；`body_extent()` 守的正是那一格）。
+## 兩個群組各是一層，所以這條順序是結構保證的，不是靠呼叫順序。
+func _paint_node_shadow(ci: CanvasItem, rec: NodeRec) -> void:
+	if rec.parts.is_empty():
+		return
+	Prof.mark()
+	_scaled(ci, rec.at, rec.sc, true)
+	Glyphs.paint_shadows(ci, rec.parts)
+	_scaled(ci, rec.at, rec.sc, false)
+	Prof.lap("paint.node")
+
+
+func _paint_node_body(ci: CanvasItem, rec: NodeRec) -> void:
+	if rec.parts.is_empty():
+		return
+	Prof.mark()
+	var nd := rec.node
+	var p := rec.at
+	var full := NodeDefs.hp(String(nd["type"]))
+	var lv := int(nd.get("level", 0))
+	# ★ B3.10：血條也夾在半格內——它畫在塔身下緣，跟著沒有上限的體積通道長
+	#   就會落進下面那一格（塔身本身由 `Shapes.fit_scale()` 夾住）。
+	var bar_sc := minf(Shapes.level_scale(lv), Shapes.GRID * 0.5 / 15.0)
+	if float(nd["hp"]) < full:
+		# **血條不是圓環**：儲槽的充能也是琥珀色圓弧，兩個圓弧疊在同一顆
+		# 12px 的節點上肉眼分不出來。形狀不同才分得開。
+		var frac := clampf(float(nd["hp"]) / full, 0.0, 1.0)
+		var bar := Vector2(24.0, 3.0)
+		var bar_at := p + Vector2(-bar.x * 0.5, 15.0 * bar_sc)
+		ci.draw_rect(Rect2(bar_at, bar), Palette.alpha(Palette.BG_DEEP, 0.8))
+		ci.draw_rect(Rect2(bar_at, Vector2(bar.x * frac, bar.y)), Palette.WARN_ORANGE)
+	_scaled(ci, p, rec.sc, true)
+	Glyphs.paint_bodies(ci, rec.parts, p)
+	_scaled(ci, p, rec.sc, false)
+	_draw_threat(ci, nd["cell"], p)
+	_draw_engaged(ci, nd, p)
+	# ★ B3.9.3：零件長在塔身周圍而不是頭上那一條帶子，所以缺料徽章（y −16 起）
+	#   不必再讓位——它是**地圖上唯一指出瓶頸的元素**。
+	_draw_badge(ci, nd, p)
+	Prof.lap("paint.node")
 
 
 ## ★ 「以某一格為中心放大 `sc` 倍」的畫布變換，開／關（B3.9.2a）。
@@ -802,13 +1221,20 @@ func _draw_nodes() -> void:
 ##   算式收在 `Shapes.level_xform()`（`hud_test` 釘著），這裡只負責開與關——
 ##   而**關一定要關回地圖那一層**，不是關回單位矩陣。
 ##   `sc == 1.0`（0 級、預覽）時兩邊都是空操作。
-func _scaled(p: Vector2, sc: float, on: bool) -> void:
+func _scaled(ci: CanvasItem, p: Vector2, sc: float, on: bool) -> void:
 	if sc == 1.0:
 		return
-	if on:
-		draw_set_transform_matrix(Shapes.level_xform(_map_origin(), zoom, p, sc))
+	# ★ B3.15：圖層（`StageLayer`）自己的 transform 已經帶著原點與縮放，所以這裡只剩「以 p 為中心放大 sc 倍」；
+	#   本體（`ci == self`，擺放預覽走這條）的地圖變換則在 `_draw()` 開頭，要連同原點一起重組。
+	if ci == self:
+		if on:
+			draw_set_transform_matrix(Shapes.level_xform(_map_origin(), zoom, p, sc))
+		else:
+			draw_set_transform(_map_origin(), 0.0, Vector2(zoom, zoom))
+	elif on:
+		ci.draw_set_transform_matrix(Shapes.level_xform(Vector2.ZERO, 1.0, p, sc))
 	else:
-		draw_set_transform(_map_origin(), 0.0, Vector2(zoom, zoom))
+		ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 ## ★ 一座節點**畫成什麼樣子**——只看型別，不看它蓋起來沒有（B3.4）。
@@ -825,20 +1251,20 @@ func _draw_node_body(n: Dictionary, p: Vector2) -> void:
 		_no_glyph[String(n["type"])] = true
 		return
 	var sc := Glyphs.scale_for(n)
-	_scaled(p, sc, true)
+	_scaled(self, p, sc, true)
 	Glyphs.paint(self, parts, p)
-	_scaled(p, sc, false)
+	_scaled(self, p, sc, false)
 
 
 ## ★ 交戰指示：**琥珀＝能量**（配色紀律 2）。有環＝這座塔本 tick 正在吃電。
 ## 它只講「在不在吃電」；「吃不吃得飽」由三態徽章講（B0.6 前這裡還多畫一段
 ## 橙色缺口弧，那和 `缺料` 徽章編碼的是同一件事，留一個就好）。
-func _draw_engaged(n: Dictionary, p: Vector2) -> void:
+func _draw_engaged(ci: CanvasItem, n: Dictionary, p: Vector2) -> void:
 	if engaged.get(int(n["id"]), false):
 		# ★ B3.9：半徑跟著級數長，否則滿級的塔會把環頂穿。
 		# ★ B3.10：但夾在半格內——它是交戰指示不是射程圈，越過格線就變成
 		#   「這一格和隔壁那一格都在吃電」。
-		draw_arc(p, minf(15.0 * Shapes.level_scale(int(n.get("level", 0))), Shapes.GRID * 0.5),
+		ci.draw_arc(p, minf(15.0 * Shapes.level_scale(int(n.get("level", 0))), Shapes.GRID * 0.5),
 			0.0, TAU, 32, Palette.ENERGY_AMBER, 2.0)
 
 
@@ -852,20 +1278,20 @@ func _draw_engaged(n: Dictionary, p: Vector2) -> void:
 ##   形狀與顏色**同時**不同（§1.6 說換顏色不夠、要換形狀，這裡兩個都換）：
 ##   閃電走 `energy.amber`，因為 §1.1 配色紀律 2 說琥珀專屬於能量——
 ##   這一次那條紀律是在幫忙，不是在擋路。
-func _draw_badge(n: Dictionary, p: Vector2) -> void:
+func _draw_badge(ci: CanvasItem, n: Dictionary, p: Vector2) -> void:
 	match int((s.rates["node_state"] as Dictionary).get(int(n["id"]), SessionState.NORMAL)):
 		SessionState.STARVED:
-			draw_colored_polygon(PackedVector2Array([
+			ci.draw_colored_polygon(PackedVector2Array([
 				p + Vector2(-7, -25), p + Vector2(7, -25), p + Vector2(0, -16)
 			]), Palette.WARN_ORANGE)
 		SessionState.STARVED_POWER:
 			# 五點折線的閃電。**不用描邊**：14px 高的東西加外框只會糊掉。
-			draw_colored_polygon(PackedVector2Array([
+			ci.draw_colored_polygon(PackedVector2Array([
 				p + Vector2(2, -27), p + Vector2(-6, -19), p + Vector2(-1, -19),
 				p + Vector2(-3, -13), p + Vector2(6, -22), p + Vector2(1, -22),
 			]), Palette.ENERGY_AMBER)
 		SessionState.OVERFLOW:
-			draw_colored_polygon(PackedVector2Array([
+			ci.draw_colored_polygon(PackedVector2Array([
 				p + Vector2(0, -25), p + Vector2(7, -16), p + Vector2(-7, -16)
 			]), Palette.ORDER_BRIGHT)
 
@@ -1007,10 +1433,15 @@ func _shot_reclaim(a: Vector2, b: Vector2, t: float) -> void:
 ##   ——三者各答一題、形狀各不相同（§4.3b）。
 func _draw_enemies() -> void:
 	var now := _time_s()
+	# ★ B3.15：視野外的敵人不畫（放大看大圖時，其餘的敵人白白建幾何、白白發指令）。
+	#   邊距收得比最大的敵人（半徑約 14）加血量弧寬鬆；一屏可見的戰役關卡這條永遠為真。
+	var view := view_world_rect().grow(48.0)
 	for i in s.enemies.size():
 		var e: Dictionary = s.enemies[i]
 		var def := Enemies.of(String(e["type"]))
 		var p := _enemy_pos(e, i)
+		if not view.has_point(p):
+			continue
 		var r := float(def.get("radius", 9.0))
 		# ★ 受擊一閃（B3.11）：這一 tick 有彈落在它身上，本體往亮階推 0.2 秒。
 		#   純渲染推導（`_hit_ids`），仍在品紅色相內、不動用橙（§1.7）。
@@ -1090,7 +1521,7 @@ func _threat_cells(cells: Array) -> Dictionary:
 ## 分不出來）。這是這個專案第二次踩同一個坑：B0.6 的「血條不是圓環」也是
 ## 因為儲槽充能弧與血條弧撞在一起。**同一個位置上的兩個訊息，換顏色不夠，
 ## 要換形狀。**
-func _draw_threat(cell: Vector2i, p: Vector2) -> void:
+func _draw_threat(ci: CanvasItem, cell: Vector2i, p: Vector2) -> void:
 	if not threat.has(cell):
 		return
 	var a := Motion.pulse01(s.tick_count, Motion.BASE * 2.0, 0.3)
@@ -1100,8 +1531,8 @@ func _draw_threat(cell: Vector2i, p: Vector2) -> void:
 	for sx: float in [-1.0, 1.0]:
 		for sy: float in [-1.0, 1.0]:
 			var corner := p + Vector2(sx * h, sy * h)
-			draw_line(corner, corner - Vector2(sx * arm, 0.0), col, 2.0)
-			draw_line(corner, corner - Vector2(0.0, sy * arm), col, 2.0)
+			ci.draw_line(corner, corner - Vector2(sx * arm, 0.0), col, 2.0)
+			ci.draw_line(corner, corner - Vector2(0.0, sy * arm), col, 2.0)
 
 
 ## ★ 碎片爆（B1.6）。規格直接來自 `20_ART_DIRECTION.md` §161 的反模式清單：
@@ -1254,7 +1685,7 @@ func _draw_selection() -> void:
 		var b := center(sc["b"])
 		# ⚠ **外框要明確伸出管緣**，而管緣的位置隨流量走（2–8px）。
 		#   第一版寫死 ±7px，於是選一條滿載的幹線時外框正好壓在它自己的邊上——
-		#   截圖當場看不出哪一條被選中。`_draw_conduits()` 的刻度在 B1.6.1 踩過
+		#   截圖當場看不出哪一條被選中。`_draw_conduit()` 的刻度在 B1.6.1 踩過
 		#   一模一樣的坑，那裡的解法是 `w * 0.5 + 3`，這裡照抄。
 		var bonus := float(s.mods["cap_bonus"])
 		var w := Shapes.conduit_width(
@@ -1284,7 +1715,11 @@ func _draw_selection() -> void:
 		draw_circle(c, rng * Shapes.GRID, Palette.alpha(Palette.ORDER_CYAN, 0.07))
 		draw_arc(c, rng * Shapes.GRID, 0.0, TAU, 64, Palette.alpha(Palette.ORDER_BRIGHT, 0.7), 2.0)
 
-	var chain := FlowNetwork.upstream_power(s.conduits, scr.energypanel.energy_net(), scr.selected, scr.energypanel.power_sources())
+	var chain_key: Array = [s.get_instance_id(), s.tick_count, s.rev, scr.selected]
+	if chain_key != _chain_key:
+		_chain_key = chain_key
+		_chain = FlowNetwork.upstream_power(s.conduits, scr.energypanel.energy_net(), scr.selected, scr.energypanel.power_sources())
+	var chain: Dictionary = _chain
 	var lit: Dictionary = chain["conduits"]
 	for ci in s.conduits.size():
 		var cd: Dictionary = s.conduits[ci]
@@ -1311,7 +1746,11 @@ func _draw_hover() -> void:
 	#   做成「畫那隻角色本人」，若它在會被導管攔下的地方照樣現身，那是畫面在說謊。
 	var hover_wire: int = -1
 	if scr.mode == scr.Mode.BUILD and scr.bp_index < 0 and scr.drag_from.x < 0:
-		hover_wire = s.conduit_near(scr.hover_p, scr.WIRE_PICK)
+		var hover_key: Array = [s.get_instance_id(), s.rev, scr.hover_p]
+		if hover_key != _hover_key:
+			_hover_key = hover_key
+			_hover_wire = s.conduit_near(scr.hover_p, scr.WIRE_PICK)
+		hover_wire = _hover_wire
 	if hover_wire >= 0:
 		var hc: Dictionary = s.conduits[hover_wire]
 		draw_line(center(hc["a"]), center(hc["b"]),
@@ -1321,7 +1760,11 @@ func _draw_hover() -> void:
 		#   而這一刻不會。淡框仍然畫，游標在哪一格還是要看得見。
 		draw_rect(Rect2(p, g), Palette.BORDER_STRONG, false, 2.0)
 	elif scr.mode == scr.Mode.BUILD:
-		var pv := BuildController.preview_place(s, scr.build_type, scr.hover)
+		var preview_key: Array = [s.get_instance_id(), s.tick_count, s.rev, scr.build_type, scr.hover]
+		if preview_key != _preview_key:
+			_preview_key = preview_key
+			_preview = BuildController.preview_place(s, scr.build_type, scr.hover)
+		var pv: Dictionary = _preview
 		var col: Color = Palette.OK_GREEN if pv["ok"] else Palette.WARN_ORANGE
 		draw_rect(Rect2(p, g), Palette.alpha(col, 0.18))
 		draw_rect(Rect2(p, g), col, false, 2.0)
