@@ -113,18 +113,19 @@
 
 | 區段 | 檔案 | 說明 |
 |---|---|---|
-| **舞台（2D）** | `screens/battle/Stage.gd`（契約）、`Stage2D.gd`（約 1400 行：視野、拾取、全部 `_draw_*`） | **2D→3D 要換掉的就是這一塊**；見 `70_3D_MIGRATION.md` |
+| **舞台（2D）** | `screens/battle/Stage.gd`（契約）、`Stage2D.gd`（視野、拾取、繪圖）、`StageLayer.gd`（快取圖層） | 畫面層只認 `Stage.gd` 的契約；**2D→3D 要換掉的就是這一塊**（見 `70_3D_MIGRATION.md`）。**繪圖拆成快取層**：路徑與網格整局不重畫、導管與節點逐件只在簽章變了才重畫（`30_TECH_DESIGN.md` §5.4）——**新增一個會改動畫面的建造動作要在 `SessionState.rev` 加一** |
 | 舞台（3D，**實驗**） | `screens/battle/Stage3D.gd`（約 450 行，B4.0 脊椎）；開關 `TL_STAGE=3d`，預設關閉 | 證明契約成立：HUD 與輸入不改一行就能跑；`tests/stage3d_test.gd` 是它的驗收尺 |
-| 覆蓋層 | `screens/battle/Overlay2D.gd` | 能量列、小地圖、邊緣箭頭——螢幕座標，3D 之後原封不動 |
-| HUD | `screens/battle/hud/*.gd`（11 個面板） | 全是 2D `Control`；3D 之後原封不動 |
-| 2D 美術生成器 | `render/2d/`：`Glyphs`（節點幾何）、`Foes`（敵人幾何）、`Terrain`（地貌）、`TitleBackdrop` | 純函式，輸出幾何；3D 要寫對應的網格生成器 |
+| 覆蓋層 | `screens/battle/Overlay2D.gd` | 能量列、小地圖、邊緣箭頭——螢幕座標，只問舞台契約 |
+| HUD | `screens/battle/hud/*.gd`（11 個面板） | 全是 2D `Control` |
+| 2D 美術生成器 | `render/2d/`：`Glyphs`（節點幾何）、`Foes`（敵人幾何）、`Terrain`（地貌）、`TitleBackdrop`、`Batch`（同色圖形併成一個指令） | 純函式，輸出幾何；3D 要寫對應的網格生成器 |
+| 效能量測 | `core/Prof.gd`（`TL_PROF`）、`qa/check.py perf`、`SelfTest.stress_frame()` | 逐段計時、引擎渲染 CPU／GPU、draw call；T4，一般遊玩閒置 |
 | 共用美術 token | `render/Palette.gd`（色值）、`Motion.gd`（時長階、`reduce_motion`）、`Shapes.gd`（格大小 `GRID`、`fit_zoom`、線形 helper） | 維度無關（`Shapes` 的繪圖 helper 是 2D 的，`GRID`／`fit_zoom` 不是） |
 | 音訊 | `core/AudioBus.gd`、`screens/battle/Feedback.gd`、`assets/audio/`（`assetgen/gen_audio.py` 生成） | 音源是**程序生成的**：改音色改腳本，**不要修 wav** |
 
 ### 2.5 T4 開發輔助（一般遊玩閒置）
 
 `screens/battle/SelfTest.gd`（約 1400 行：`TL_CLICKTEST`／`TL_STRESS`／示範佈局）、`core/Hooks.gd` 的 `TL_SIM`／`TL_SHOT`、
-`tests/`（21 支 headless ＋ 輔助）、`qa/`、`dev/`、`assetgen/`。匯出時 `exclude_filter="tests/*"`——
+`tests/`（22 支 headless ＋ 輔助）、`qa/`、`dev/`、`assetgen/`。匯出時 `exclude_filter="tests/*"`——
 **所以 headless 測試在 exe 上跑不到**，exe 上唯一還在的驗證是 `clicktest` 與 `TL_SHOT`（見 `CLAUDE.md` 每批收尾）。
 
 ---

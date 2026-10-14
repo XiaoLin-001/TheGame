@@ -51,6 +51,12 @@ var conduits: Array[Dictionary] = []
 var priorities: Dictionary = {}
 
 var tick_count: int = 0
+## ★ 渲染快取的失效計數（B3.15）：**tick 之外**改動了「畫面上畫得出來的東西」就加一——
+## 節點、導管、敵人的增減，與建築升級。`Stage2D` 的快取層以（tick, rev）當內容簽章。
+## 不進 `state_hash()`：它只回答「畫面要不要重畫」，不是遊戲狀態。
+## ⚠ **新增一個會改動畫面的建造動作，就要在這裡加一**——漏掉的症狀是畫面停在上一個 tick
+##   （最多 0.1 秒），`tests/render_cache_test.gd` 對每一支 `BuildController` 動詞釘著。
+var rev: int = 0
 var core_id: int = -1
 
 # ── 戰鬥累計（B0.5）──────────────────────────────────────────────────
@@ -165,6 +171,7 @@ func setup(map_def: Dictionary, unlocked: Array = [], meta: Dictionary = {}) -> 
 	path = Maps.path_of(map_def)
 	ore = float(map_def.get("start_ore", 0))
 	priorities = NodeDefs.DEFAULT_PRIORITY.duplicate()
+	rev += 1
 	core_id = add_node("core", map_def.get("core", Vector2i.ZERO))
 
 
@@ -188,6 +195,7 @@ func prep_time() -> float:
 func add_node(type: String, cell: Vector2i) -> int:
 	var id := _next_id
 	_next_id += 1
+	rev += 1
 	nodes.append({
 		"id": id,
 		"type": type,
@@ -207,6 +215,7 @@ func add_node(type: String, cell: Vector2i) -> int:
 func add_conduit(a: Vector2i, b: Vector2i) -> int:
 	var id := _next_id
 	_next_id += 1
+	rev += 1
 	# `cells` 在建造時算一次就存著：敵潮每 tick 要拿它做破壞判定，
 	# 每次重算等於把 O(敵人 × 導管) 再乘上一個長度。
 	conduits.append({
@@ -219,6 +228,7 @@ func add_conduit(a: Vector2i, b: Vector2i) -> int:
 func add_enemy(type: String) -> int:
 	var id := _next_id
 	_next_id += 1
+	rev += 1
 	var hp := float(Enemies.of(type).get("hp", 1.0)) * hp_mult * float(mods["enemy_hp_mult"])
 	enemies.append({
 		"id": id,
@@ -235,6 +245,7 @@ func add_enemy(type: String) -> int:
 
 ## 移除一個節點，連同所有碰到它的導管（斷了的線留著只會騙人）。
 func remove_node_at(cell: Vector2i) -> void:
+	rev += 1
 	for i in range(nodes.size() - 1, -1, -1):
 		if nodes[i]["cell"] == cell:
 			nodes.remove_at(i)
@@ -245,6 +256,7 @@ func remove_node_at(cell: Vector2i) -> void:
 
 
 func remove_conduit(index: int) -> void:
+	rev += 1
 	if index >= 0 and index < conduits.size():
 		conduits.remove_at(index)
 

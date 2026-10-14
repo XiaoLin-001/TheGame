@@ -87,7 +87,7 @@
 
 ## 跑與測（宣稱「能動」前先實際驗證）
 
-> **統一入口**（B3.14）：`python qa/check.py lint | tests [--fast] | click | shots OUT [--against OLD] | all`。
+> **統一入口**（B3.14）：`python qa/check.py lint | tests [--fast] | click | shots OUT [--against OLD] | perf [--base DIR] | all`。
 > 環境：`python dev/setup.py`（冪等，缺什麼補什麼）；開遊戲：`dev\play.bat`；匯出：`dev\export.bat`。
 > **搬動程式碼的批次**（重構、改檔案結構）要跑 `shots`：截圖是確定性的，要求 **0 像素差**。
 > 下面是各條指令的完整寫法與每個鉤子的語意。
@@ -96,7 +96,7 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（21 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress / difficulty / m2 / fuzz / stage3d）
+# 自動化測試（22 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress / difficulty / m2 / fuzz / stage3d / render_cache）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -107,6 +107,10 @@ python assetgen/gen_audio.py && <godot> --headless --path godot --import
 
 # ★ 效能（B1.7）：模擬走 perf_test（五關實測 ＋ 規模哨兵）；渲染走 TL_STRESS。
 # TL_STRESS 的模擬是**凍結**的——那一份佈局單 tick 要 30 秒，不凍結就量不到渲染。
+# ★ 但配 `TL_PANEL=campaign TL_LEVEL=N TL_DEMO_TICKS=N`（真實關卡）時模擬**照常跑**（B3.15）：量的是玩家真正碰到的負載。
+# ★ 量渲染一律**關 vsync**（`--disable-vsync`）：開著的話幀時間被釘在螢幕週期的倍數（240 Hz ＝ 4.17 ms），
+#   量不出 4 ms 以下的任何差別。`TL_PROF=1` 在結束時印出 GDScript 每一段、引擎渲染 CPU／GPU、draw call 數。
+#   一鍵版：`python qa/check.py perf --runs 3 [--base <舊版工作樹>]`（同一把尺量新舊、三次取中位數）。
 TL_STRESS=1 TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 
 # ★ 文案稽核（B2.7.3）。規則在 `20_ART_DIRECTION.md` §3.5：**介面說事實，玩家自己下結論**。
@@ -265,26 +269,27 @@ TheGame/
 │   ├── 70_3D_MIGRATION.md     2D→3D 轉換準備：要使用者拍板的決定、接縫（Stage 契約）、分批
 │   └── agents/                外掛 skill 的設定（見「Agent skills」）
 ├── dev/                       setup.py（一鍵補齊環境）／play.bat／export.bat
-├── qa/check.py                ★ 統一品質閘門入口（lint／tests／click／shots／all）
+├── qa/check.py                ★ 統一品質閘門入口（lint／tests／click／shots／perf／all）
 ├── qa/gd_lint.py              靜態地雷掃描（不需要 Godot；含 TL_* 鉤子完備檢查）
 ├── qa/gd_graph.py             依賴圖：`--why FILE`、`--cut FILE`（砍掉會壞誰）、`--layers`（分層規則）
 ├── qa/copy_*.py               文案稽核（掃玩家字串 ＋ 比對 §3.5 的四條禁令）
 ├── assetgen/gen_audio.py      音源產生器（純 Python 標準庫；**音源的原始碼**）
 ├── tools/godot/               （gitignore）Godot console exe
 └── godot/
-    ├── scripts/core/          GameState / SaveService / Hooks / AudioBus / Rng / Env（autoload ＋ 鉤子讀取層）
+    ├── scripts/core/          GameState / SaveService / Hooks / AudioBus / Rng / Env（autoload ＋ 鉤子讀取層）／Prof（逐段計時）
     ├── scripts/sim/     ★     FlowNetwork / Combat / Tide / Build / MapGen / Score / Clock / Daily / Blueprint /
     │                          Loadout（局外成長進局的唯一入口）——純函式、零 RNG
     ├── scripts/game/          BattleController（每 tick 解算）/ BuildController / SessionState（局的狀態）
     ├── scripts/meta/          TycoonSim（純函式的**狀態機**）
     ├── scripts/render/        共用美術 token：Palette / Motion / Shapes
     │   └── 2d/                2D 專用的幾何與繪製：Glyphs（節點幾何＋體積語言）/ Foes（敵人幾何，由欄位推導）/
-    │                          Terrain（每張圖的地貌）/ TitleBackdrop（標題背景）——3D 版會是 render/3d/
+    │                          Terrain（每張圖的地貌）/ TitleBackdrop（標題背景）/ Batch（同色圖形併成一個指令）——3D 版會是 render/3d/
     ├── scripts/ui/            UiKit
     ├── scripts/screens/       各畫面
     │   ├── Battle.gd          局內畫面：**指揮者**（局的建立、每幀節拍、輸入、HUD 版面）
     │   └── battle/            局內畫面的模組（各是 Battle 的子節點，靠同名欄位互相接線）
-    │       ├── Stage.gd       ★ 舞台契約（2D→3D 的接縫）；Stage2D.gd 是 2D 實作（視野、拾取、全部 _draw_*）
+    │       ├── Stage.gd       ★ 舞台契約（2D→3D 的接縫）；Stage2D.gd 是 2D 實作（視野、拾取、繪圖）
+    │       ├── StageLayer.gd  舞台的快取圖層：簽章沒變就不重畫（導管與節點各自一件一個，B3.15）
     │       ├── Overlay2D.gd   螢幕座標的覆蓋：能量列、小地圖、邊緣箭頭
     │       ├── Feedback.gd    從狀態差值推導音效與死因
     │       ├── SelfTest.gd    TL_CLICKTEST／TL_STRESS／示範佈局（一般遊玩閒置）

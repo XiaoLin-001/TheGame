@@ -296,7 +296,7 @@ static func _closed(pts: PackedVector2Array) -> PackedVector2Array:
 #
 # 兩趟。**落影全部先畫、塔身全部後畫**：一座塔的影子偏出格線那兩個像素，
 # 只准壓在背景與導管上，不准壓在鄰居已經畫好的血條與徽章上。
-# 地圖上（`Battle._draw_nodes()`）兩趟跨全部節點；單一圖形（預覽、卡片）
+# 地圖上（`Stage2D` 的落影群組與塔身群組）兩趟跨全部節點；單一圖形（預覽、卡片）
 # 用 `paint()` 一次做完。
 
 ## 落影：`fill` 與有 `shadow` 的 `line` 往右下偏一筆深色。

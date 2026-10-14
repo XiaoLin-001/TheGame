@@ -125,8 +125,8 @@ static func clip_half(pts: PackedVector2Array, o: Vector2, n: Vector2) -> Packed
 
 ## 落影的偏移（地圖 px）。光從左上來，影子落在右下。
 ##
-## ★ **落影不算輪廓**：它是底層的一筆，在所有塔身之前畫完（`Battle._draw_nodes()`
-##   分兩趟），所以它伸出格線那兩個像素只會壓在背景與導管上，壓不到鄰居的
+## ★ **落影不算輪廓**：它是底層的一筆，在所有塔身之前畫完（`Stage2D` 的落影群組
+##   在塔身群組之前），所以它伸出格線那兩個像素只會壓在背景與導管上，壓不到鄰居的
 ##   血條與徽章——那正是 `body_extent()` 要守的東西。
 const SHADOW_OFF := Vector2(1.5, 2.0)
 
@@ -272,11 +272,17 @@ static func band_jitter(gx: int, gy: int) -> Vector2:
 ## 網格線。1px、border.subtle、透明度 20%（§1.5）。
 static func draw_grid(ci: CanvasItem, rect: Rect2) -> void:
 	var c := Palette.alpha(Palette.BORDER_SUBTLE, 0.2)
+	# ★ B3.15：整張網格一個指令（原本每條線一個——36×19 的圖是 55 個 draw call）。
+	var segs := PackedVector2Array()
 	var x := floorf(rect.position.x / GRID) * GRID
 	while x <= rect.end.x:
-		ci.draw_line(Vector2(x, rect.position.y), Vector2(x, rect.end.y), c, 1.0)
+		segs.append(Vector2(x, rect.position.y))
+		segs.append(Vector2(x, rect.end.y))
 		x += GRID
 	var y := floorf(rect.position.y / GRID) * GRID
 	while y <= rect.end.y:
-		ci.draw_line(Vector2(rect.position.x, y), Vector2(rect.end.x, y), c, 1.0)
+		segs.append(Vector2(rect.position.x, y))
+		segs.append(Vector2(rect.end.x, y))
 		y += GRID
+	if segs.size() >= 2:
+		ci.draw_multiline(segs, c, 1.0)
