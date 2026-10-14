@@ -5,7 +5,7 @@ CLAUDE.md「跑與測」列了二十幾條各自獨立的指令。這支把它�
 讓接手的人不必先讀完 CLAUDE.md 才知道「改完要跑什麼」。
 
     python qa/check.py lint                 靜態地雷掃描（不需要 Godot，約 1 秒）
-    python qa/check.py tests                headless 單元／整合測試（20 支，約 5 分鐘）
+    python qa/check.py tests                headless 單元／整合測試（21 支，約 5 分鐘）
     python qa/check.py tests flow save      只跑指定幾支
     python qa/check.py tests --fast         跳過最慢的 campaign_test（約 3 分鐘）
     python qa/check.py click                輸入層自檢（需要視窗；每條約 6 秒）
