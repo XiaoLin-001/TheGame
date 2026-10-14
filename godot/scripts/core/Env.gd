@@ -24,11 +24,14 @@ const HOOKS := [
 	"TL_LEVEL",       # =1..5　TL_PANEL=campaign 時直接進那一關
 	"TL_FOCUS",       # ="x,y,zoom"　鏡頭對到某一格並放大（拍特效近照）
 	"TL_STRESS",      # =1　壓力情境，模擬凍結只量渲染（B1.7、RG-8）
+	"TL_PICK",        # =wire　合照那一張改成選一條導管（B3.7）
 ]
 
 ## ⚠ 上面漏掉一個就等於**那個鉤子單獨使用時會寫進玩家的真實存檔**（規則 1）。
 ## `TL_LEVEL` 與 `TL_FOCUS` 是 B1.2／B1.6 加的，一直到 B1.7 才補進這張表——
 ## 它們實務上都跟 `TL_PANEL` 一起用所以沒出事，但「實務上不會單獨用」不是保護。
+## `TL_PICK`（B3.7）同一個錯又犯了一次，一直到 B3.14 才補——所以現在由 `qa/gd_lint.py` 的規則 8
+## 檢查：`scripts/` 裡出現的每一個 `TL_*` 字串都必須在這張表上。
 
 
 static func has(name: String) -> bool:

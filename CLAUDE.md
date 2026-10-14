@@ -87,11 +87,16 @@
 
 ## 跑與測（宣稱「能動」前先實際驗證）
 
+> **統一入口**（B3.14）：`python qa/check.py lint | tests [--fast] | click | shots OUT [--against OLD] | all`。
+> 環境：`python dev/setup.py`（冪等，缺什麼補什麼）；開遊戲：`dev\play.bat`；匯出：`dev\export.bat`。
+> **搬動程式碼的批次**（重構、改檔案結構）要跑 `shots`：截圖是確定性的，要求 **0 像素差**。
+> 下面是各條指令的完整寫法與每個鉤子的語意。
+
 ```bash
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（19 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress / difficulty / m2）
+# 自動化測試（20 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress / difficulty / m2 / fuzz）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -237,9 +242,13 @@ TL_SIM=3000 TL_SEED=42 <godot> --headless --path godot
 
 ## 專案結構
 
+> 想知道**砍掉哪段程式碼遊戲會跑不起來**、**某件事該去哪個檔案**：`docs/60_CODE_MAP.md`。
+> 新手上路：`README.md`。
+
 ```
 TheGame/
 ├── CLAUDE.md                  本檔
+├── README.md                  給人看的入口（三十秒上手、改完要跑什麼、程式碼地圖）
 ├── CHANGELOG.md               每版一節，倒序
 ├── docs/
 │   ├── 00_CONCEPT.md          概念書（願景、紅線、風險評估）
@@ -248,20 +257,34 @@ TheGame/
 │   ├── 30_TECH_DESIGN.md      技術設計（架構、確定性、存檔、鉤子、效能）
 │   ├── 40_PRODUCTION_PLAN.md  生產計畫（里程碑、批次、風險、砍案）
 │   ├── 50_QA_PLAN.md          QA（五層梯、bug 登記、回歸清單）
+│   ├── 60_CODE_MAP.md         程式碼地圖：資料流、分級（砍了會怎樣）、依賴方向、「想做某件事去哪裡」
 │   └── agents/                外掛 skill 的設定（見「Agent skills」）
+├── dev/                       setup.py（一鍵補齊環境）／play.bat／export.bat
+├── qa/check.py                ★ 統一品質閘門入口（lint／tests／click／shots／all）
+├── qa/gd_lint.py              靜態地雷掃描（不需要 Godot；含 TL_* 鉤子完備檢查）
+├── qa/gd_graph.py             依賴圖：`--why FILE`、`--cut FILE`（砍掉會壞誰）、`--layers`（分層規則）
 ├── qa/copy_*.py               文案稽核（掃玩家字串 ＋ 比對 §3.5 的四條禁令）
-├── qa/gd_lint.py              靜態地雷掃描（不需要 Godot）
 ├── assetgen/gen_audio.py      音源產生器（純 Python 標準庫；**音源的原始碼**）
 ├── tools/godot/               （gitignore）Godot console exe
 └── godot/
-    ├── scripts/core/          GameState / SaveService / Hooks / AudioBus / Rng
-    ├── scripts/sim/     ★     FlowNetwork / Combat / WaveGen / MapGen / Score / Daily /
+    ├── scripts/core/          GameState / SaveService / Hooks / AudioBus / Rng / Env（autoload ＋ 鉤子讀取層）
+    ├── scripts/sim/     ★     FlowNetwork / Combat / Tide / Build / MapGen / Score / Clock / Daily / Blueprint /
     │                          Loadout（局外成長進局的唯一入口）——純函式、零 RNG
-    ├── scripts/game/          BattleController / BuildController / SessionState
-    ├── scripts/screens/       各畫面
-    ├── scripts/render/        Palette / Shapes / Motion / Glyphs / Foes / Terrain（美術 token 實作；Glyphs＝節點幾何＋體積語言、Foes＝敵人幾何，由欄位推導、Terrain＝每張圖的地貌）
-    ├── scripts/ui/            UiKit
+    ├── scripts/game/          BattleController（每 tick 解算）/ BuildController / SessionState（局的狀態）
     ├── scripts/meta/          TycoonSim（純函式的**狀態機**）
+    ├── scripts/render/        共用美術 token：Palette / Motion / Shapes
+    │   └── 2d/                2D 專用的幾何與繪製：Glyphs（節點幾何＋體積語言）/ Foes（敵人幾何，由欄位推導）/
+    │                          Terrain（每張圖的地貌）/ TitleBackdrop（標題背景）
+    ├── scripts/ui/            UiKit
+    ├── scripts/screens/       各畫面
+    │   ├── Battle.gd          局內畫面：**指揮者**（局的建立、每幀節拍、輸入、HUD 版面）
+    │   └── battle/            局內畫面的模組（各是 Battle 的子節點，靠同名欄位互相接線）
+    │       ├── Stage.gd       ★ 舞台契約（畫面層與舞台實作之間的接縫）；Stage2D.gd 是 2D 實作（視野、拾取、全部 _draw_*）
+    │       ├── Overlay2D.gd   螢幕座標的覆蓋：能量列、小地圖、邊緣箭頭
+    │       ├── Feedback.gd    從狀態差值推導音效與死因
+    │       ├── SelfTest.gd    TL_CLICKTEST／TL_STRESS／示範佈局（一般遊玩閒置）
+    │       └── hud/           各面板：TopBar／BuildBar／HintBar／PriorityPanel／EnergyPanel／CodexPanel／
+    │                          InspectPanel／BlueprintPanel／HelpPanel／ResultPanel／MenuLayer
     ├── data/                  節點、角色、敵人、地圖、戰役、科技、等級軸、成就、**難度層**資料表
     ├── tests/                 flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / difficulty …
     └── assets/audio/          bgm/ 3 首、sfx/ 14 支（`assetgen/gen_audio.py` 生成）

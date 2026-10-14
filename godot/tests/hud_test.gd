@@ -16,9 +16,9 @@ extends SceneTree
 const T := preload("res://tests/_assert.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const Shapes := preload("res://scripts/render/Shapes.gd")
-const Glyphs := preload("res://scripts/render/Glyphs.gd")
-const Foes := preload("res://scripts/render/Foes.gd")
-const Terrain := preload("res://scripts/render/Terrain.gd")
+const Glyphs := preload("res://scripts/render/2d/Glyphs.gd")
+const Foes := preload("res://scripts/render/2d/Foes.gd")
+const Terrain := preload("res://scripts/render/2d/Terrain.gd")
 const Campaign := preload("res://data/Campaign.gd")
 const MapGen := preload("res://scripts/sim/MapGen.gd")
 const Enemies := preload("res://data/Enemies.gd")
@@ -636,7 +636,7 @@ func _enemy_screen_position_is_centred(t: T) -> void:
 	t.ok(Tide.pos_of([], 1.0).is_equal_approx(Vector2.ZERO), "★ 空路徑不炸")
 
 
-## ★ 六隻敵人的幾何（B3.12，`render/Foes.gd`）。§1.7 那條規則——「敵人的差異化只能用
+## ★ 六隻敵人的幾何（B3.12，`render/2d/Foes.gd`）。§1.7 那條規則——「敵人的差異化只能用
 ## **不增加行進軸 footprint** 的手段」——是實看 A/B 三次的結論，這裡把它釘成數字：
 ## 任何零件沿行進軸離中心不得超過 `Foes.FOOT × r`。另外：每一種都畫得出東西、
 ## 本體是星形多邊形（`draw_colored_polygon` 才不會噴 `Invalid polygon data`）、
@@ -728,7 +728,7 @@ func _geometry_sig(parts: Array, r: float) -> String:
 
 
 
-## ★ 地貌（B3.13，`render/Terrain.gd`）。§1.6c 的兩條不變量釘成斷言：
+## ★ 地貌（B3.13，`render/2d/Terrain.gd`）。§1.6c 的兩條不變量釘成斷言：
 ## ① 裝飾**只落在不承載資訊的格**——路徑、暈、礦點、核心與它的八鄰一個點都不准碰
 ##   （逐件逐點、線段沿途取樣）；② **確定性**——同一張圖建兩次是同一份。
 ## 另外：十二張圖每一張都有地貌、畫得出東西、縮圖也有大件、地至少五種顏色、

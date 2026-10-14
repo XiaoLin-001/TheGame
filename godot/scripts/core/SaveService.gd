@@ -130,7 +130,12 @@ static func normalize(raw: Dictionary) -> Dictionary:
 	_repair_containers(d, DEFAULTS)
 	d = migrate(d)
 	_fill_defaults(d, DEFAULTS)
-	d["sv"] = SAVE_VERSION
+	# ★ **比自己新的檔不動版號**（RG-180）。`migrate()` 對它已經是原樣放過，但這裡原本無條件把
+	#   `sv` 蓋回 `SAVE_VERSION`——於是玩家升級後又開了一次舊 exe，新版的 sv4 資料會被存成 sv3，
+	#   新版下次啟動時對一份**已經遷移過**的資料再跑一次 `_migrate_sv3_to_sv4()`。
+	#   B3.10 的修法只改了 `migrate()`，真正的路徑（`load_into`／`save_from` 都走這裡）沒被蓋到。
+	if int(d.get("sv", 0)) <= SAVE_VERSION:
+		d["sv"] = SAVE_VERSION
 	return d
 
 
@@ -459,10 +464,27 @@ func save_from(source: Dictionary) -> bool:
 	return _write_atomic(normalize(source))
 
 
+## 讀存檔。主檔讀不到（不在、開不起來、不是合法 JSON）時，**再看一眼 `.tmp`**。
+##
+## ★ RG-181：`_write_atomic()` 換檔是「先刪主檔、再把 `.tmp` 改名」兩步，**兩步之間被打斷**
+##   （斷電、當機、改名失敗）時只剩 `.tmp`——而它是**剛驗證過、完整的**新存檔。原本讀檔只認主檔，
+##   於是玩家開遊戲看到的是**進度歸零**（紅線 R1：失敗只花時間，不得永久損失）。
+##   `.tmp` 在正常流程裡只存在於「寫完」到「改名」之間，所以主檔在、`.tmp` 也在時永遠是主檔較舊——
+##   但那種情況主檔必然讀得出來，不會走到這裡的第二步。
 func _read_raw() -> Dictionary:
-	if not FileAccess.file_exists(path):
+	var main := _read_file(path)
+	if not main.is_empty():
+		return main
+	var spare := _read_file(tmp_path)
+	if not spare.is_empty():
+		push_warning("主存檔不在或讀不出來，改讀換檔前留下的暫存檔")
+	return spare
+
+
+func _read_file(file_path: String) -> Dictionary:
+	if not FileAccess.file_exists(file_path):
 		return {}
-	var f := FileAccess.open(path, FileAccess.READ)
+	var f := FileAccess.open(file_path, FileAccess.READ)
 	if f == null:
 		push_warning("存檔開啟失敗 err=%d，改用預設值" % FileAccess.get_open_error())
 		return {}

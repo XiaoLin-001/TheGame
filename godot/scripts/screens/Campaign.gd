@@ -12,7 +12,7 @@ const NodeDefs := preload("res://data/NodeDefs.gd")
 const Enemies := preload("res://data/Enemies.gd")
 const BattleScreen := preload("res://scripts/screens/Battle.gd")
 const TechScreen := preload("res://scripts/screens/Tech.gd")
-const Glyphs := preload("res://scripts/render/Glyphs.gd")
+const Glyphs := preload("res://scripts/render/2d/Glyphs.gd")
 
 ## 卡片寬度。五張 ＋ 四道間距要放進 1280 的設計基準。
 const CARD := Vector2(228, 300)
@@ -116,7 +116,7 @@ func _click_selftest() -> void:
 		UiKit.press_escape()
 		for _i in 3:
 			await get_tree().process_frame
-		esc_to_battle = is_instance_valid(battle) and battle._menu_layer != null
+		esc_to_battle = is_instance_valid(battle) and battle.menulayer.menu_layer != null
 
 	var ok: bool = (
 		five and first_open and second_locked and says_why and entered and esc_to_battle

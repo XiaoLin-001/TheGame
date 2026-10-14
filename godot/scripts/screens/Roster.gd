@@ -15,7 +15,7 @@ extends Control
 const RosterData := preload("res://data/Roster.gd")
 const Difficulty := preload("res://data/Difficulty.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
-const Glyphs := preload("res://scripts/render/Glyphs.gd")
+const Glyphs := preload("res://scripts/render/2d/Glyphs.gd")
 
 const CARD := Vector2(230, 168)
 ## 卡片上那隻角色的模型有多大（px）。一格 32 放大 1.5 倍——名冊是看角色的地方，
