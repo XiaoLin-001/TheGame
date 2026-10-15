@@ -95,6 +95,9 @@ const DEFAULTS := {
 	"settings": {
 		"master": 0.8, "bgm": 0.6, "sfx": 0.8,
 		"reduce_motion": false, "fullscreen": false, "resolution": 0,
+		# ★ B4.3：局內用不用傾斜舞台（地圖能往側面傾斜、長出 3D）。關＝永遠是平面的 2D 俯瞰。**加鍵不 bump `SAVE_VERSION`**；
+		# 讀的地方一律 `.get("tilt_stage", true)`，所以舊存檔不必遷移。下一局起生效（舞台是進局時建的）。
+		"tilt_stage": true,
 	},
 }
 

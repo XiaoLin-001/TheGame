@@ -178,8 +178,9 @@ TL_SHOT="C:/tmp/endless.png" TL_PANEL=endless TL_SEED=42 <godot> --path godot --
 # TL_PICK=wire 改成選一條導管（挑本 tick 流量最大的那條）；不給就是選一座塔。
 TL_CLICKTEST=1 TL_SHOT="C:/tmp/wire.png" TL_MUTE=1 TL_PICK=wire TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> --path godot --rendering-driver opengl3
 
-# ★ 傾斜舞台（B4.1／B4.2）：**預設正俯瞰的 2D，往側面轉就長出 3D**（地圖 App 的 3D 模式）。地面是內嵌的 `Stage2D`（貼圖），
-# 地形是梯田（`Relief`），建築與敵人是手作的多材質造型（`Models`），高度全乘 `lift`——傾斜 0° 就是 2D 那張圖。
+# ★ 傾斜舞台（B4.1／B4.2／B4.3）：**預設正俯瞰的 2D，往側面轉就長出 3D**（地圖 App 的 3D 模式）。地面是內嵌的 `Stage2D`（貼圖），
+# 地形是梯田（`Relief`），建築與敵人是手作的多材質造型（`Models`），導管是躺在地上的管子（`Wires`），特效與血條浮在 3D 裡（`Fx3D`），
+# 高度全乘 `lift`——傾斜 0° 就是 2D 那張圖。設定畫面有「傾斜視角（3D）」開關（`settings.tilt_stage`，預設開，下一局起生效）。
 # **有任何 `TL_*` 時預設平面舞台、沒有任何鉤子（玩家實玩）時預設傾斜舞台**；`TL_STAGE=3d｜2d` 明寫時照它。
 # `TL_TILT=<度>` 是起始傾斜角（0–62）。`TL_STAGE=3d TL_CLICKTEST=1` 跑只問契約的 smoke（含傾斜的四個進入點）；
 # 舞台契約與造型的 headless 驗收是 `tests/stage3d_test.gd`。
@@ -290,14 +291,15 @@ TheGame/
     ├── scripts/render/        共用美術 token：Palette / Motion / Shapes
     │   ├── 2d/                2D 專用的幾何與繪製：Glyphs（節點幾何＋體積語言）/ Foes（敵人幾何，由欄位推導）/
     │   │                      Terrain（每張圖的地貌）/ TitleBackdrop（標題背景）/ Batch（同色圖形併成一個指令）
-    │   └── 3d/                3D 專用的網格：Extrude（積木＋烘焙光照＋徽章）/ Models（十四種建築與六種敵人的手作配方）/
-    │                          Relief（梯田地形：溝、岸、橋、平台、懸崖、擺設）
+    │   └── 3d/                3D 專用的網格：Extrude（積木＋烘焙光照＋徽章）/ Models（十四種建築與六種敵人的手作配方＋敵人動作）/
+    │                          Relief（梯田地形：溝、岸、橋、平台、懸崖、擺設）/ Wires（導管：路徑貼地形、單位方盒實例）/
+    │                          Fx3D（開火、碎片爆、護盾、血條的幾何）
     ├── scripts/ui/            UiKit
     ├── scripts/screens/       各畫面
     │   ├── Battle.gd          局內畫面：**指揮者**（局的建立、每幀節拍、輸入、HUD 版面）
     │   └── battle/            局內畫面的模組（各是 Battle 的子節點，靠同名欄位互相接線）
     │       ├── Stage.gd       ★ 舞台契約（2D→3D 的接縫）；Stage2D.gd 是 2D 實作（視野、拾取、繪圖）
-    │       ├── Stage3D.gd     ★ 傾斜舞台（B4.1／B4.2）：內嵌 Stage2D 當地面貼圖 ＋ 3D 地形／建築／敵人；玩家實玩預設用它
+    │       ├── Stage3D.gd     ★ 傾斜舞台（B4.1–B4.3）：內嵌 Stage2D 當地面貼圖 ＋ 3D 地形／建築／敵人／導管／特效；玩家實玩預設用它
 │       ├── StageLayer.gd  舞台的快取圖層：簽章沒變就不重畫（導管與節點各自一件一個，B3.15）
     │       ├── Overlay2D.gd   螢幕座標的覆蓋：能量列、小地圖、邊緣箭頭
     │       ├── Feedback.gd    從狀態差值推導音效與死因

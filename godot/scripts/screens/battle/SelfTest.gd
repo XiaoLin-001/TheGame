@@ -1820,6 +1820,36 @@ func stage_smoke() -> void:
 	var tl_covers: bool = true
 	for corner: Vector2 in [Vector2.ZERO, Vector2(mpx.x, 0.0), mpx, Vector2(0.0, mpx.y)]:
 		tl_covers = tl_covers and Stage.FRAME.grow(1.0).has_point(stage.to_screen(corner))
+	# ⑤b 傾斜著的縮放與手勢（B4.3）：滾輪（以游標為錨）、＋／− 鈕、雙指捏合、雙指上下拖；游標在地圖外時手勢不作用。
+	var zb: float = stage.zoom
+	var zvr := stage.view_world_rect()
+	_wheel(up_from, true)
+	await _frames(2)
+	var tl_zoom_wheel: bool = stage.zoom > zb + 0.001 and stage.view_world_rect().size.x < zvr.size.x - 0.5
+	scr._on_zoom(1.0 / Stage.ZOOM_STEP)
+	await _frames(2)
+	var tl_zoom_out: bool = is_equal_approx(stage.zoom, stage.fit)
+	var pinch := InputEventMagnifyGesture.new()
+	pinch.position = up_from
+	pinch.factor = 1.6
+	scr._gui_input(pinch)
+	await _frames(2)
+	var tl_pinch: bool = stage.zoom > stage.fit + 0.001
+	scr._on_zoom_reset()
+	await _frames(2)
+	var tg0: float = stage.tilt_goal()
+	var pan2 := InputEventPanGesture.new()
+	pan2.position = Vector2(20.0, 400.0)
+	pan2.delta = Vector2(0.0, -40.0)
+	scr._gui_input(pan2)
+	var tl_pan_outside: bool = is_equal_approx(stage.tilt_goal(), tg0)
+	pan2.position = up_from
+	scr._gui_input(pan2)
+	await _frames(2)
+	var tl_pan2: bool = stage.tilt_goal() > tg0 + 1.0 or is_equal_approx(stage.tilt_goal(), Stage.TILT_MAX)
+	scr._tilt_slider.value = 55.0
+	await _frames(3)
+	var tl_zoom_ok: bool = tl_zoom_wheel and tl_zoom_out and tl_pinch and tl_pan_outside and tl_pan2
 	var before_t: int = s.nodes.size()
 	var free_t := Vector2i(-1, -1)
 	var occ_t: Dictionary = s.occupied()
@@ -1838,15 +1868,16 @@ func stage_smoke() -> void:
 	_click_button(tb)
 	await _wait_tilt()
 	var tl_back: bool = is_equal_approx(stage.tilt, 0.0) and not stage.raised() and tb.text == "3D"
-	var tilt_ok: bool = tl_widgets and tl_touch and tl_on_screen and tl_button and tl_eased and tl_slider and tl_right and tl_wheel and tl_covers and tl_placed and tl_reset and tl_back
+	var tilt_ok: bool = tl_widgets and tl_touch and tl_on_screen and tl_button and tl_eased and tl_slider and tl_right and tl_wheel and tl_covers and tl_zoom_ok and tl_placed and tl_reset and tl_back
 
 	var ok: bool = round_trip and covers and at_fit and zoomed and smaller and round_trip_zoomed and reset_ok and placed and tilt_ok
 	print("[TL_CLICKTEST/stage] 往返=%s 框住全圖=%s 縮放=%s 視野變小=%s 縮放後往返=%s 全景還原=%s 真的點擊蓋出節點=%s（%s）→ %s" % [
 		round_trip, covers, zoomed, smaller, round_trip_zoomed, reset_ok, placed, free,
 		"PASS" if ok else "FAIL"
 	])
-	print("[TL_CLICKTEST/tilt] 控制在=%s 命中區≥44=%s 在畫面內=%s 按鈕=%s 緩動=%s 滑桿=%s 右鍵拖曳=%s Shift滾輪=%s 傾斜下全景框住=%s 傾斜下點擊蓋出節點=%s（%s）全景鈕=%s 回俯瞰=%s（tilt=%.2f 目標=%.2f 鈕=%s）→ %s" % [
+	print("[TL_CLICKTEST/tilt] 控制在=%s 命中區≥44=%s 在畫面內=%s 按鈕=%s 緩動=%s 滑桿=%s 右鍵拖曳=%s Shift滾輪=%s 傾斜下全景框住=%s 傾斜下縮放（滾輪=%s 縮回=%s 捏合=%s 雙指拖外無效=%s 雙指拖=%s）傾斜下點擊蓋出節點=%s（%s）全景鈕=%s 回俯瞰=%s（tilt=%.2f 目標=%.2f 鈕=%s）→ %s" % [
 		tl_widgets, tl_touch, tl_on_screen, tl_button, tl_eased, tl_slider, tl_right, tl_wheel, tl_covers,
+		tl_zoom_wheel, tl_zoom_out, tl_pinch, tl_pan_outside, tl_pan2,
 		tl_placed, free_t, tl_reset, tl_back, stage.tilt, stage.tilt_goal(), tb.text, "PASS" if tilt_ok else "FAIL"
 	])
 	if Hooks.shot_path == "":

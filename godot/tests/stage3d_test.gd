@@ -22,6 +22,8 @@ const Enemies := preload("res://data/Enemies.gd")
 const Extrude := preload("res://scripts/render/3d/Extrude.gd")
 const Models := preload("res://scripts/render/3d/Models.gd")
 const Relief := preload("res://scripts/render/3d/Relief.gd")
+const Wires := preload("res://scripts/render/3d/Wires.gd")
+const Fx3D := preload("res://scripts/render/3d/Fx3D.gd")
 
 
 ## 主畫面的替身：契約的實作只會問它這幾件事。
@@ -31,6 +33,12 @@ class ScrStub:
 	var hover: Vector2i = Vector2i(-999, -999)
 	var selected: Vector2i = Vector2i(-1, -1)
 	var refreshed: int = 0
+	# 落點預覽（`Stage3D._sync_ghost()`）問的欄位：`Battle` 的同名欄位。
+	enum Mode { BUILD, DEMOLISH }
+	var mode: int = Mode.DEMOLISH
+	var build_type: String = ""
+	var bp_index: int = -1
+	var drag_from: Vector2i = Vector2i(-1, -1)
 
 	func redraw() -> void:
 		pass
@@ -48,7 +56,7 @@ func _initialize() -> void:
 
 ## 要等一個 process frame：`--script` 模式下 `_initialize()` 裡加進樹的節點，`_ready()` 要到主迴圈開始才跑。
 func _run() -> void:
-	var t := T.new("stage3d_test", 100)
+	var t := T.new("stage3d_test", 150)
 	var s := SessionState.new()
 	s.setup(Maps.SHOAL)
 	var scr := ScrStub.new()
@@ -502,4 +510,235 @@ func _run() -> void:
 	st2.center_view_on(far, true)
 	t.ok(Stage.FRAME.has_point(st2.to_screen(st2.center(far))), "大圖傾斜 50°：跳過去之後那一格仍在畫面框架內")
 
+	_b43(t, st, s, m, scr)
 	quit(t.report())
+
+
+## ★ B4.3：導管、特效、血條、受擊一閃、敵人動作、落點預覽。
+func _b43(t: Object, st: Stage3D, s: SessionState, m: Vector2i, scr: Control) -> void:
+	st.tilt_to(0.0, true)
+	st.reset_view()
+	s.nodes.clear()
+	s.conduits.clear()
+	s.enemies.clear()
+	s.shots.clear()
+	s.bursts.clear()
+	s.shields.clear()
+	s.rev += 1
+
+	# ── Wires：路徑貼著地形、管身有厚度、顏色與寬度走 2D 同一組算式 ──
+	var rel := st.relief()
+	var ra := Vector2i(3, 2)
+	var rb := Vector2i(9, 2)
+	var rt := Wires.route(rel, ra, rb)
+	t.ok(rt.size() >= 2, "Wires.route：至少兩個點（%d）" % rt.size())
+	t.ok(absf(rt[0].x - 3.5) < 0.001 and absf(rt[rt.size() - 1].x - 9.5) < 0.001, "★ Wires.route：兩端落在節點格的中心")
+	var above := true
+	for i in rt.size():
+		var floor_y := 0.0
+		for dx: float in [-0.3, 0.3]:
+			for dy: float in [-0.3, 0.3]:
+				floor_y = maxf(floor_y, Relief.top_at(rel, Vector2i(floori(rt[i].x + dx), floori(rt[i].z + dy))))
+		above = above and rt[i].y >= floor_y
+	t.ok(above, "★ Wires.route：管底永遠在地形之上（過梯田不鑽進去）")
+	t.ok(is_equal_approx(Wires.height_on(rt, 0.0), rt[0].y) and is_equal_approx(Wires.height_on(rt, 99.0), rt[rt.size() - 1].y), "Wires.height_on：兩端取端點、超出夾住")
+	t.ok(Wires.length_of(rt) > 5.9 and Wires.length_of(rt) < 6.1, "Wires.length_of：水平長度 ≈ 6 格（%.2f）" % Wires.length_of(rt))
+	# 橋：跨越點上的管底在橋面之上。
+	var crossing: Vector2i = (s.map.get("crossings", []) as Array)[0]
+	var horiz := (rel["path"] as Dictionary).has(crossing + Vector2i(1, 0))
+	var ca := crossing + (Vector2i(0, -3) if horiz else Vector2i(-3, 0))
+	var cb := crossing + (Vector2i(0, 3) if horiz else Vector2i(3, 0))
+	var brt := Wires.route(rel, ca, cb)
+	t.ok(Wires.height_on(brt, 3.0) >= Relief.BRIDGE, "★ 橋：導管過跨越點時管底在橋面之上（%.3f ≥ %.2f）" % [Wires.height_on(brt, 3.0), Relief.BRIDGE])
+	# 一條導管的實例資料：每個實例 16 個浮點數（3×4 變換 ＋ 顏色）；順序＝光暈（若有）→ 管身（每段一個）→ 環箍。
+	var c_plain := Wires.chunk(rt, 4.0, Palette.ORDER_CYAN, 0, 0.0)
+	var c_lv := Wires.chunk(rt, 4.0, Palette.ORDER_CYAN, 3, 0.0)
+	var c_hurt := Wires.chunk(rt, 4.0, Palette.ORDER_CYAN, 0, 0.8)
+	var n_plain := c_plain.size() / Wires.FLOATS
+	t.ok(c_plain.size() % Wires.FLOATS == 0 and n_plain == rt.size() - 1, "Wires.chunk：每一段管身一個實例（%d 個）" % n_plain)
+	t.eq(c_lv.size() / Wires.FLOATS, n_plain + 3, "★ Wires.chunk：每一級多一個環箍（等級刻度保留）")
+	t.eq(c_hurt.size() / Wires.FLOATS, n_plain * 2, "★ Wires.chunk：受損時每段多一條橙色光暈（挨打看得見）")
+	t.eq(Wires.chunk(PackedVector3Array([Vector3.ZERO]), 4.0, Palette.ORDER_CYAN, 0, 0.0).size(), 0, "Wires.chunk：不成路徑的回空")
+	var body_z := Vector3(c_plain[2], c_plain[6], c_plain[10])
+	var body_y := Vector3(c_plain[1], c_plain[5], c_plain[9])
+	t.ok(absf(body_z.length() - 4.0 / 32.0) < 0.0002, "★ Wires.chunk：管寬 ＝ 2D 的線寬（4 px → %.4f 格）" % body_z.length())
+	t.ok(absf(body_y.length() - Wires.half_height(4.0) * 2.0) < 0.0002, "Wires.chunk：管有厚度（%.4f 格）" % body_y.length())
+	t.ok(
+		absf(c_plain[12] - Palette.ORDER_CYAN.r) < 0.0001 and absf(c_plain[13] - Palette.ORDER_CYAN.g) < 0.0001 and absf(c_plain[14] - Palette.ORDER_CYAN.b) < 0.0001,
+		"★ Wires.chunk：管身的實例色就是 `Palette.conduit()` 給的色（頂面純白 × 實例色 ＝ 原色，與 2D 同色）"
+	)
+	t.ok(c_plain[7] - body_y.length() * 0.5 >= rt[0].y - 0.0001, "★ Wires.chunk：管底在路徑（地形之上）")
+	var thin := Wires.chunk(rt, 2.0, Palette.ORDER_CYAN, 0, 0.0)
+	var fat := Wires.chunk(rt, 8.0, Palette.ORDER_CYAN, 0, 0.0)
+	t.ok(Vector3(fat[2], fat[6], fat[10]).length() > Vector3(thin[2], thin[6], thin[10]).length() * 3.5 and Vector3(fat[1], fat[5], fat[9]).length() > Vector3(thin[1], thin[5], thin[9]).length(), "★ Wires.chunk：流量越大管子越寬越厚（2 px → 8 px）")
+	var box := Wires.box_mesh()
+	t.eq(Extrude.triangle_count(box), 12, "Wires.box_mesh：單位方盒 12 個三角形")
+	var box_cols := box.surface_get_arrays(0)[Mesh.ARRAY_COLOR] as PackedColorArray
+	var white := 0
+	var darker := 0
+	for bc in box_cols:
+		if bc.r > 0.999 and bc.g > 0.999 and bc.b > 0.999:
+			white += 1
+		elif bc.r < 0.95:
+			darker += 1
+	t.ok(white == 6 and darker == 30, "★ Wires.box_mesh：頂面純白（乘實例色＝原色）、其餘五面壓暗（立體感；白 %d／暗 %d）" % [white, darker])
+	t.ok(Extrude.triangle_count(Wires.bead_mesh()) >= 40, "Wires.bead_mesh：珠子是個有面的小球")
+	t.ok(Wires.SHADER.contains("lift") and Wires.SHADER.contains("POSITION"), "導管的著色器在世界座標乘 lift")
+
+	# ── 舞台裡的導管：3D 管子取代地面貼圖的導管，珠子沿管滾 ──
+	var n1 := s.add_node("relay", ra)
+	var n2 := s.add_node("generator", rb)
+	var cid := s.add_conduit(ra, rb)
+	s.rates["conduit_flow"][cid] = 6.0
+	s.rates["conduit_net"][cid] = Vector3(1.0, 0.0, 0.0)
+	var ground := st.ground_stage() as Object
+	st.tilt_to(0.0, true)
+	st._process(0.0)
+	t.ok(st.wire_count() == s.conduits.size(), "同步：導管數量一致（%d）" % st.wire_count())
+	t.ok(bool(ground.get("draw_wires")), "俯瞰：地面貼圖畫導管（2D 本尊）")
+	t.ok(not st._wire_mmi.visible and st.bead_count() == 0, "俯瞰：3D 導管與珠子不畫")
+	st.tilt_to(50.0, true)
+	s.rev += 1
+	st._process(0.0)
+	t.ok(not bool(ground.get("draw_wires")), "★ 傾斜：地面貼圖不再畫導管（交給 3D 的管子，不重複畫）")
+	t.ok(st._wire_mmi.visible and st.wire_instances() >= 1, "傾斜：3D 導管在畫（%d 個實例）" % st.wire_instances())
+	t.ok(st.wire_route(cid).size() >= 2, "導管有自己的路徑")
+	t.ok(st.bead_count() > 0, "★ 傾斜：有流量的導管上有珠子（%d 顆）" % st.bead_count())
+	s.rates["conduit_net"][cid] = Vector3.ZERO
+	s.rates["conduit_flow"][cid] = 0.0
+	s.rev += 1
+	st._process(0.0)
+	t.eq(st.bead_count(), 0, "沒有流量：沒有珠子")
+	s.remove_node_at(rb)
+	s.conduits.clear()
+	s.rev += 1
+	st._process(0.0)
+	t.eq(st.wire_count(), 0, "拆掉之後 3D 導管被清掉")
+	t.eq(st.wire_instances(), 0, "拆掉之後沒有導管實例")
+	st.tilt_to(0.0, true)
+	st._process(0.0)
+	t.ok(bool(ground.get("draw_wires")), "回到俯瞰：地面貼圖重新畫導管")
+	t.ok(n1 != n2, "（探針）兩個節點的 id 不同")
+
+	# ── Fx3D：筆的基本形狀 ──
+	var pen := Fx3D.Pen.new()
+	pen.disc(Vector3.ZERO, 1.0, Vector3.RIGHT, Vector3.UP, Color.WHITE, 12)
+	t.eq(pen.verts.size(), 36, "Fx3D.Pen.disc：12 邊 ＝ 12 個三角形")
+	pen.ribbon(Vector3.ZERO, Vector3(1, 0, 0), 0.1, Vector3(0, -1, 0), Color.WHITE)
+	t.eq(pen.verts.size(), 42, "Fx3D.Pen.ribbon：兩個三角形")
+	var degenerate := Fx3D.Pen.new()
+	degenerate.ribbon(Vector3.ZERO, Vector3(0, -1, 0), 0.1, Vector3(0, -1, 0), Color.WHITE)
+	t.ok(degenerate.is_empty(), "Fx3D.Pen.ribbon：沿視線的退化帶不畫")
+	var bar := Fx3D.Pen.new()
+	Fx3D.hp_bar(bar, Vector3.ZERO, 0.5, 0.075, 0.5, Vector3.RIGHT, Vector3.UP)
+	var bar0 := Fx3D.Pen.new()
+	Fx3D.hp_bar(bar0, Vector3.ZERO, 0.5, 0.075, 0.0, Vector3.RIGHT, Vector3.UP)
+	t.ok(bar.verts.size() == bar0.verts.size() + 6, "Fx3D.hp_bar：有血才有那一段填色（空血只剩底與軌）")
+
+	# ── 舞台裡的特效：升起之後才在 3D 裡畫，貼地的那一份關掉 ──
+	s.nodes.clear()
+	s.rev += 1
+	var tower := s.add_node("anchor", Vector2i(6, 3))
+	var foe := s.add_enemy("drifter")
+	var foe_cell: Vector2i = s.path[mini(6, s.path.size() - 1)]
+	(s.enemies[0] as Dictionary)["progress"] = 6.0
+	s.shots.append({"from": Vector2i(6, 3), "to": foe_cell, "ttl": 3, "by": "anchor", "target": foe, "prog": 6.0})
+	s.bursts.append({"at": Vector2(foe_cell), "kind": "chaos", "seed": 7, "life": 5, "ttl": 6})
+	s.shields.append({"at": foe_cell, "life": 3, "ttl": 4, "frac": 0.6})
+	s.rev += 1
+	st.tilt_to(0.0, true)
+	st._process(0.0)
+	t.ok(bool(ground.get("draw_fx")), "俯瞰：地面貼圖畫特效（2D 本尊）")
+	t.ok(not st._fx_mi.visible, "俯瞰：3D 特效不畫")
+	st.tilt_to(50.0, true)
+	st._process(0.0)
+	t.ok(not bool(ground.get("draw_fx")), "★ 傾斜：地面貼圖不再畫特效（交給 3D，不重複畫）")
+	t.ok(st.fx_triangles() > 20, "★ 傾斜：開火、碎片爆、護盾、落影在 3D 裡有面（%d 個三角形）" % st.fx_triangles())
+	t.ok(st._fx_mi.visible, "傾斜：特效網格在畫")
+	var fx_before := st.fx_triangles()
+	s.shots.clear()
+	s.bursts.clear()
+	s.shields.clear()
+	st._process(0.0)
+	t.ok(st.fx_triangles() < fx_before, "特效清掉之後開火、碎片爆、護盾的面都沒了（%d → %d）" % [fx_before, st.fx_triangles()])
+	t.eq(st.shadow_count(), 1, "★ 每隻畫出來的敵人腳下一圈落影（MultiMesh 的實例）")
+	# 血條：滿血沒有、受傷才有（浮在頭上，永遠看得見的那一層）。
+	t.eq(st.hp_bar_triangles(), 0, "滿血的敵人沒有血條")
+	(s.enemies[0] as Dictionary)["hp"] = float((s.enemies[0] as Dictionary)["hp"]) * 0.4
+	st._process(0.0)
+	t.ok(st.hp_bar_triangles() >= 6, "★ 受傷的敵人頭上有血條（%d 個三角形）" % st.hp_bar_triangles())
+	# 受擊一閃：這一 tick 有彈落在它身上 → 換成閃光材質；沒有 → 一般材質。
+	var foe_mi: MeshInstance3D = st._foes[foe]
+	t.ok(foe_mi.material_override == st._solid, "沒被打中：一般材質")
+	s.shots.append({"from": Vector2i(6, 3), "to": foe_cell, "ttl": 3, "by": "anchor", "target": foe})
+	st._process(0.0)
+	t.ok(foe_mi.material_override == st._solid_hit, "★ 受擊一閃：這一 tick 被打中的敵人換成閃光材質")
+	s.shots.clear()
+	st._process(0.0)
+	t.ok(foe_mi.material_override == st._solid, "閃完回到一般材質")
+
+	# ── 敵人動作：由機制欄位推導、有界、有個性；reduce_motion 時不動 ──
+	var motions: Dictionary = {}
+	var pose_ok := true
+	var bad_pose := ""
+	for ft: String in Enemies.DEFS.keys():
+		var mo := Models.foe_motion(Enemies.of(ft))
+		motions[ft] = mo
+		for tt in range(0, 40):
+			var ps := Models.foe_pose(mo, float(tt) * 0.13, 1.7)
+			var sc: Vector3 = ps["scale"]
+			if sc.y < 0.9 or sc.y > 1.25 or sc.x < 0.85 or sc.x > 1.15 or absf(float(ps["roll"])) > 0.15 or absf(float(ps["pitch"])) > 0.4 or float(ps["hop"]) < 0.0 or float(ps["hop"]) > 0.06:
+				pose_ok = false
+				bad_pose = "%s %s" % [ft, str(ps)]
+	t.ok(pose_ok, "★ 每種敵人的姿態在合理範圍內（壓扁 ±25%%、搖擺 < 0.15 rad、彈跳 < 0.06 格；%s）" % bad_pose)
+	var rates: Dictionary = {}
+	for ft2: String in motions.keys():
+		rates[snappedf(float((motions[ft2] as Dictionary)["rate"]), 0.01)] = true
+	t.ok(rates.size() >= 3, "★ 敵人的動作有個性：至少 %d 種不同的節奏（重甲沉、迅捷快、再生有心跳）" % rates.size())
+	var any_beat := false
+	for ft3: String in motions.keys():
+		any_beat = any_beat or float((motions[ft3] as Dictionary)["beat"]) > 0.0
+	t.ok(any_beat, "有再生的敵人有心跳")
+	var f_basis0 := foe_mi.transform.basis
+	scr.set("accum", 0.0)
+	s.tick_count += 3
+	st._process(0.0)
+	t.ok(foe_mi.transform.basis != f_basis0, "★ 敵人會動：不同的時刻姿態不同")
+	Motion.reduce = true
+	s.tick_count += 2
+	st._process(0.0)
+	var still0 := foe_mi.transform.basis
+	s.tick_count += 2
+	st._process(0.0)
+	t.ok(foe_mi.transform.basis == still0, "★ reduce_motion：敵人不動（姿態不隨時間變）")
+	Motion.reduce = false
+
+	# ── 落點預覽：手上拿著建築、游標在地圖上 → 傾斜時是半透明的 3D 造型 ──
+	s.shots.clear()
+	s.enemies.clear()
+	s.rev += 1
+	var bscr := scr as Object
+	bscr.set("hover", Vector2i(8, 6))
+	bscr.set("build_type", "")
+	bscr.set("mode", 0)
+	st._process(0.0)
+	t.ok(not st.ghost_visible(), "手上沒拿東西：沒有 3D 預覽")
+	bscr.set("build_type", "prism")
+	st._process(0.0)
+	t.ok(st.ghost_visible(), "★ 傾斜：拿著稜鏡、游標在地圖上 → 3D 預覽出現")
+	t.ok(absf(st._ghost.position.x - 8.5) < 0.001 and absf(st._ghost.position.z - 6.5) < 0.001, "預覽在游標那一格的中心")
+	bscr.set("hover", Vector2i(-999, -999))
+	st._process(0.0)
+	t.ok(not st.ghost_visible(), "游標在地圖外：沒有預覽")
+	bscr.set("hover", Vector2i(8, 6))
+	bscr.set("mode", 1)
+	st._process(0.0)
+	t.ok(not st.ghost_visible(), "不在建造模式：沒有預覽")
+	bscr.set("mode", 0)
+	st.tilt_to(0.0, true)
+	st._process(0.0)
+	t.ok(not st.ghost_visible() and bool(ground.get("draw_ghost")), "俯瞰：沒有 3D 預覽，2D 的那份在畫")
+	bscr.set("build_type", "")
+	st.tilt_to(0.0, true)
+	if tower < 0:
+		t.ok(false, "（探針）塔沒蓋成")

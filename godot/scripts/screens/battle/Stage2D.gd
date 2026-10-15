@@ -106,6 +106,27 @@ var draw_enemy_bodies: bool = true
 ## 要畫的世界範圍（px）；空（沒有面積）＝ 用自己的視野。傾斜舞台的地面貼圖涵蓋整張圖，視野外的敵人要靠它剔除。
 var cull_rect: Rect2 = Rect2()
 
+## 特效（開火、命中、碎片爆、護盾）與敵人的血量弧畫不畫。傾斜舞台升起之後，它們改畫在 3D 裡（`Fx3D`：炮口在塔頂、
+## 火花在敵人身上、血條浮在頭上不被前面的塔擋住），貼地的這一份就關掉。
+var draw_fx: bool = true
+
+## 導管與流動珠畫不畫。傾斜舞台升起之後，導管改成 3D 的管子（`Wires`：有厚度、浮在地上、珠子是小球），貼地的這一份就關掉
+## ——關掉時連它們的逐件同步與珠子緩衝區都不做（不白算）；打開時把簽章清掉，下一幀整批補畫。
+var draw_wires: bool = true:
+	set(v):
+		if v == draw_wires:
+			return
+		draw_wires = v
+		if _conduit_group != null:
+			_conduit_group.visible = v
+			_bead_layer.visible = v
+		if v:
+			_forget_signatures()
+			_world_key = []
+
+## 落點預覽裡「手上那一隻」的本體畫不畫（3D 的半透明造型取代它；框與射程圈仍畫在地上）。
+var draw_ghost: bool = true
+
 var _auras: Array = []
 
 ## 本幀每隻敵人所在的格（與 `s.enemies` 同索引）、id → 索引、「這一 tick 被打中的
@@ -393,9 +414,10 @@ func _draw() -> void:
 	_draw_enemies()
 	Prof.lap("stage.enemies")
 	_draw_ripple()
-	_draw_shots()
-	_draw_bursts()
-	_draw_shields()
+	if draw_fx:
+		_draw_shots()
+		_draw_bursts()
+		_draw_shields()
 	Prof.lap("stage.fx")
 	_draw_selection()
 	_draw_hover()
@@ -461,14 +483,18 @@ func _process(_delta: float) -> void:
 			_clear_elements()
 			_elem_sid = sid
 		_flow_layer.repaint()
-		_sync_conduits()
+		if draw_wires:
+			_sync_conduits()
 		Prof.lap("proc.sync_conduits")
 		_sync_nodes()
 		Prof.lap("proc.sync_nodes")
+		# 規格（哪幾條線上有珠子、什麼色）傾斜舞台的 3D 珠子也讀，所以關著導管時仍然算；只有 2D 的緩衝區不配。
 		_bead_specs_cache = _bead_specs()
-		_size_beads()
+		if draw_wires:
+			_size_beads()
 		Prof.lap("proc.bead_specs")
-	_update_beads()
+	if draw_wires:
+		_update_beads()
 	Prof.lap("stage.beads")
 
 
@@ -1479,7 +1505,7 @@ func _draw_enemies() -> void:
 		# 血量弧。★ 分母是這一隻的 `max_hp`（無盡曲線 × 難度層乘過的），不是表上的原值
 		#   ——原本讀表值，第 10 波之後血 2.5 倍的敵人要掉到表值以下才開始有弧。
 		var frac := float(e["hp"]) / maxf(1.0, float(e.get("max_hp", def.get("hp", 1.0))))
-		if frac < 1.0:
+		if draw_fx and frac < 1.0:
 			draw_arc(p, r + 4.0, -PI / 2.0, -PI / 2.0 + TAU * frac, 20, Palette.TIDE_DEEP, 2.0)
 
 
@@ -1748,7 +1774,7 @@ func _draw_selection() -> void:
 		if not lit.has(cd["id"]):
 			continue
 		draw_line(center(cd["a"]), center(cd["b"]),
-			Palette.alpha(Palette.ENERGY_AMBER, 0.55), 6.0)
+			Palette.alpha(Palette.ENERGY_AMBER, 0.55), _overlay_w(cd, 6.0))
 	# 來源畫琥珀菱形（琥珀專屬能量，§1.1 配色紀律 2）——它答的是「電從哪來」。
 	for cell: Variant in (chain["sources"] as Dictionary):
 		var sc := center(cell)
@@ -1756,6 +1782,16 @@ func _draw_selection() -> void:
 			sc + Vector2(0, -20), sc + Vector2(20, 0), sc + Vector2(0, 20),
 			sc + Vector2(-20, 0), sc + Vector2(0, -20),
 		]), Palette.ENERGY_AMBER, 2.5)
+
+
+## 疊在導管上的高亮線寬。導管本體交給 3D（`draw_wires` ＝ false）時，管子有厚度、浮在地面上，
+## 貼地的高亮要比管寬再多兩邊各 2.5px 才露得出來；2D 時照舊。
+func _overlay_w(c: Dictionary, base: float) -> float:
+	if draw_wires:
+		return base
+	var cap_max := Build.conduit_cap(Build.CAP_MAX_LEVEL, float(s.mods["cap_bonus"]))
+	var flow := float((s.rates["conduit_flow"] as Dictionary).get(c["id"], 0.0))
+	return maxf(base, Shapes.conduit_width(flow, cap_max) + 5.0)
 
 
 func _draw_hover() -> void:
@@ -1776,7 +1812,7 @@ func _draw_hover() -> void:
 	if hover_wire >= 0:
 		var hc: Dictionary = s.conduits[hover_wire]
 		draw_line(center(hc["a"]), center(hc["b"]),
-			Palette.alpha(Palette.ORDER_BRIGHT, 0.45), 8.0)
+			Palette.alpha(Palette.ORDER_BRIGHT, 0.45), _overlay_w(hc, 8.0))
 	elif scr.mode == scr.Mode.BUILD and scr.build_type == "" and scr.bp_index < 0:
 		# ★ B3.7.1：手上什麼都沒拿——**不畫落點預覽**。畫了就是承諾點下去會蓋東西，
 		#   而這一刻不會。淡框仍然畫，游標在哪一格還是要看得見。
@@ -1800,7 +1836,8 @@ func _draw_hover() -> void:
 		# 走 `_draw_node_body()`（和真的節點同一支函式），不另外畫一份：
 		# 抄一份的下場是加第十五種節點時只有一邊記得加，而漏掉的那一邊
 		# 症狀是隱形不是報錯（B2.4 中過三次，`_no_glyph` 就是為此而生）。
-		_draw_node_body({"type": scr.build_type}, center(scr.hover))
+		if draw_ghost:
+			_draw_node_body({"type": scr.build_type}, center(scr.hover))
 		# 塔的射程要**在花錢之前**看得到——擺位是本作的主要決策，
 		# 讓玩家蓋完才發現打不到路徑等於逼他拆（§3.5 塔的擺位）。
 		var r := float(NodeDefs.of(scr.build_type).get("range", 0.0))

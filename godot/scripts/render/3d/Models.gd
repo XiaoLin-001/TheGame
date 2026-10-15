@@ -482,6 +482,49 @@ static func _blob(
 	E.dome(sp, off + Vector3(0.0, r * 0.10 + r * hgt_k * 0.86, 0.0), Vector3(r * len_k * 0.42, r * hgt_k * 0.16, r * wid_k * 0.42), accent.lerp(body, 0.35), 2, 8, true, false, 1)
 
 
+# ── 敵人的動作 ──────────────────────────────────────────────────────────
+
+## 一種敵人的動作參數。**和 `foe()` 吃同一組機制欄位、沒有以型別名為鍵的 `match`**：
+## 重甲（`armor`）慢而沉、迅捷（`swift`／高速）快而前傾、再生（`regen`）有心跳、成群（`pack`）一跳一跳、其餘是柔軟的漂蟲。
+##   rate   起伏的角頻率（rad/s）；squash 壓扁／拉長的幅度（體積大致守恆）；sway 左右搖的幅度（rad）；
+##   lean   往前傾的角度（rad，常數）；hop 上下彈的幅度（格）；beat 心跳放大的幅度（0 ＝ 沒有）。
+static func foe_motion(def: Dictionary) -> Dictionary:
+	var armored: bool = float(def.get("armor", 0.0)) > 0.0
+	var swift: bool = bool(def.get("swift", false))
+	var fast: bool = float(def.get("speed", 1.0)) > Foes.SWIFT_SPEED
+	var regen: bool = float(def.get("regen", 0.0)) > 0.0
+	var pack := int(def.get("pack", 1))
+	var m := {"rate": 6.0, "squash": 0.07, "sway": 0.07, "lean": 0.0, "hop": 0.014, "beat": 0.0}
+	if armored:
+		m = {"rate": 4.2, "squash": 0.03, "sway": 0.05, "lean": 0.0, "hop": 0.008, "beat": 0.0}
+	elif swift:
+		m = {"rate": 12.0, "squash": 0.05, "sway": 0.035, "lean": 0.2, "hop": 0.02, "beat": 0.0}
+	elif fast:
+		m = {"rate": 10.0, "squash": 0.05, "sway": 0.04, "lean": 0.14, "hop": 0.016, "beat": 0.0}
+	elif regen:
+		m = {"rate": 4.4, "squash": 0.035, "sway": 0.04, "lean": 0.0, "hop": 0.01, "beat": 0.1}
+	elif pack > 1:
+		m = {"rate": 9.0, "squash": 0.06, "sway": 0.07, "lean": 0.0, "hop": 0.04, "beat": 0.0}
+	return m
+
+
+## 某一刻（秒）、某一隻（相位）的姿態：`scale`（x 與 z 同、y 相反）、`roll`（繞行進軸）、`pitch`（繞側軸，負＝低頭）、
+## `hop`（離地高度，格，不為負）。純函式、零 RNG；`reduce_motion` 時呼叫端不呼叫它。
+static func foe_pose(m: Dictionary, t: float, phase: float) -> Dictionary:
+	var rate: float = m["rate"]
+	var s := sin(t * rate + phase)
+	var s2 := sin(t * rate * 0.5 + phase * 1.3)
+	var sq: float = m["squash"]
+	var beat: float = m["beat"]
+	var pulse := 1.0 + beat * pow(maxf(0.0, sin(t * rate)), 8.0)
+	return {
+		"scale": Vector3(1.0 - 0.5 * sq * s, 1.0 + sq * s, 1.0 - 0.5 * sq * s) * pulse,
+		"roll": float(m["sway"]) * s2,
+		"pitch": -(float(m["lean"]) + float(m["sway"]) * 0.4 * s),
+		"hop": float(m["hop"]) * absf(sin(t * rate * 0.5 + phase)),
+	}
+
+
 ## 同一型的一隻小幅度變色：色相在品紅帶內位移、明度略不同。
 static func _vary(c: Color, k: int) -> Color:
 	var j := (k % 4) - 1

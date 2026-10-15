@@ -7,6 +7,9 @@ extends SceneTree
 ##     <godot> --path godot --rendering-driver opengl3 --script res://tests/gallery_shot.gd
 ## `GALLERY_FOCUS` ＝ 要看的那一格（預設圖中央）、`GALLERY_ZOOM` ＝ 放大幾倍（預設 1）、`GALLERY_TILT` ＝ 傾斜角（預設 50）。
 ## 三排建築：0 級（y ＝ 4）、2 級（y ＝ 8）、5 級（y ＝ 12）；敵人在 y ＝ 15，每型四個變體。
+## 最上面一排（y ＝ 2）是四條導管：細（2 px）、中（5 px）、粗＋三級環箍（8 px）、粗＋受損光暈，三種資源的珠子在跑。
+## `GALLERY_FX=1`：在敵人那一排旁邊補一發彈丸、一次碎片爆、一個護盾、兩隻受傷的敵人（看特效與血條）。
+## `GALLERY_GHOST=類型,x,y`：手上拿著那種建築、游標在 (x, y)——看落點預覽的半透明造型（例：`GALLERY_GHOST=prism,6,6`）。
 
 const Stage := preload("res://scripts/screens/battle/Stage.gd")
 const Stage3D := preload("res://scripts/screens/battle/Stage3D.gd")
@@ -14,6 +17,7 @@ const SessionState := preload("res://scripts/game/SessionState.gd")
 const Maps := preload("res://data/Maps.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const Enemies := preload("res://data/Enemies.gd")
+const Build := preload("res://scripts/sim/Build.gd")
 
 
 class ScrStub:
@@ -21,6 +25,12 @@ class ScrStub:
 	var accum: float = 0.0
 	var hover: Vector2i = Vector2i(-999, -999)
 	var selected: Vector2i = Vector2i(-1, -1)
+	# 落點預覽（`Stage3D._sync_ghost()`）問的欄位。
+	enum Mode { BUILD, DEMOLISH }
+	var mode: int = Mode.DEMOLISH
+	var build_type: String = ""
+	var bp_index: int = -1
+	var drag_from: Vector2i = Vector2i(-1, -1)
 
 	func redraw() -> void:
 		pass
@@ -56,6 +66,22 @@ func _run() -> void:
 				if int(n["id"]) == id:
 					n["level"] = rows[r]
 	s.add_node("core", Vector2i(31, 1))
+	# 導管：四條，寬度由流量、環箍由等級、光暈由血量決定（與局內同一組算式）。
+	var cap_max := Build.conduit_cap(Build.CAP_MAX_LEVEL, 0.0)
+	var wires: Array = [
+		[2, 0.0, 0, 40.0], [9, 0.5, 0, 40.0], [16, 1.0, 3, 40.0], [23, 1.0, 0, 10.0],
+	]
+	for wspec: Array in wires:
+		var xa := int(wspec[0])
+		s.add_node("relay", Vector2i(xa, 2))
+		s.add_node("relay", Vector2i(xa + 5, 2))
+		var cid := s.add_conduit(Vector2i(xa, 2), Vector2i(xa + 5, 2))
+		for cd: Dictionary in s.conduits:
+			if int(cd["id"]) == cid:
+				cd["level"] = int(wspec[2])
+				cd["hp"] = float(wspec[3])
+		(s.rates["conduit_flow"] as Dictionary)[cid] = float(wspec[1]) * cap_max
+		(s.rates["conduit_net"] as Dictionary)[cid] = Vector3(1.0, 1.0, 0.4)
 	s.rev += 1
 
 	var bg := ColorRect.new()
@@ -96,6 +122,27 @@ func _run() -> void:
 			st._foe_root.add_child(mi)
 			x += 1.3
 		x += 0.6
+	if OS.has_environment("GALLERY_GHOST"):
+		var gp := OS.get_environment("GALLERY_GHOST").split(",")
+		scr.mode = ScrStub.Mode.BUILD
+		scr.build_type = gp[0]
+		scr.hover = Vector2i(int(gp[1]), int(gp[2]))
+	if OS.has_environment("GALLERY_FX"):
+		# 兩隻受傷的敵人（敵人走路徑，所以把路徑接到陳列的那一排旁邊）＋ 一發彈丸、一次碎片爆、一個護盾。
+		var path_cells: Array[Vector2i] = []
+		for gx in range(2, 34):
+			path_cells.append(Vector2i(gx, 15))
+		s.path = path_cells
+		for k in 2:
+			var fid := s.add_enemy("shellback" if Enemies.DEFS.has("shellback") else String(Enemies.DEFS.keys()[0]))
+			(s.enemies[k] as Dictionary)["progress"] = 10.0 + 5.0 * float(k)
+			(s.enemies[k] as Dictionary)["hp"] = float((s.enemies[k] as Dictionary)["hp"]) * (0.35 + 0.3 * float(k))
+			if k == 0:
+				s.shots.append({"from": Vector2i(10, 12), "to": Vector2i(12, 15), "ttl": 3, "by": "anchor", "target": fid})
+		s.bursts.append({"at": Vector2(24.0, 15.0), "kind": "chaos", "seed": 5, "life": 3, "ttl": 6})
+		s.bursts.append({"at": Vector2(20.0, 14.0), "kind": "order", "seed": 3, "life": 3, "ttl": 6})
+		s.shields.append({"at": Vector2i(17, 15), "life": 2, "ttl": 4, "frac": 0.7})
+		s.rev += 1
 	for _i in 6:
 		st._process(0.016)
 		await process_frame

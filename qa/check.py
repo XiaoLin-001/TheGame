@@ -90,6 +90,8 @@ SHOTS: dict[str, dict[str, str]] = {
     "tilt50_L1": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_PANEL": "campaign", "TL_LEVEL": "1", **_DEMO},
     "tilt50_L10": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_PANEL": "campaign", "TL_LEVEL": "10", **_DEMO},
     "tilt50_naked": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_NAKED": "1", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO},
+    # B4.3：同一個開火瞬間（第 5 關第 581 tick），傾斜 50° 放大 3 倍——彈道從塔頂、碎片爆、血條、3D 導管與珠子、敵人落影。
+    "tilt50_fx_focus": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_PANEL": "campaign", "TL_LEVEL": "5", "TL_DEMO_TICKS": "581", "TL_FOCUS": "30,15,3"},
 }
 
 

@@ -215,13 +215,13 @@ func _ready() -> void:
 			selftest.click_selftest.call_deferred()
 
 
-## 這一局用傾斜舞台嗎？**有鉤子（自動化）時預設平面、玩家實玩預設傾斜**（`Hooks.stage3d`／`stage2d` 明寫時照它）。
+## 這一局用傾斜舞台嗎？**有鉤子（自動化）時預設平面、玩家實玩看設定（預設傾斜）**（`Hooks.stage3d`／`stage2d` 明寫時照它）。
 func _wants_tilt_stage() -> bool:
 	if Hooks.stage3d:
 		return true
 	if Hooks.stage2d or Env.any_hook():
 		return false
-	return true
+	return bool((GameState.data["settings"] as Dictionary).get("tilt_stage", true))
 
 
 ## 建立並接上全部模組（`screens/battle/`）。
@@ -443,6 +443,19 @@ func _process(delta: float) -> void:
 ## 而「絕不在沒有鉤子的情況下開視窗」這條紀律讓我也沒有手動點過。
 ## **整個輸入層在這之前是零覆蓋。** 對策：`TL_CLICKTEST=1`（見 `_click_selftest()`）。
 func _gui_input(event: InputEvent) -> void:
+	# ★ 觸控板／觸控螢幕的雙指手勢（B4.3，地圖 App 的語彙）：**捏合＝縮放**（以兩指中心為錨）、**雙指上下拖＝傾斜**
+	#   （往上拖＝更側視，與右鍵往上拖同方向）。引擎只在平台給得出手勢時才送這兩種事件（macOS 觸控板、Android／iOS 觸控），
+	#   所以桌面滑鼠玩家完全碰不到它；滑鼠與觸控的另一條路（滾輪、右鍵拖曳、「3D」鈕與滑桿）都還在（P3）。
+	if event is InputEventMagnifyGesture:
+		var mg := event as InputEventMagnifyGesture
+		if stage.FRAME.has_point(mg.position):
+			stage.zoom_by(mg.factor, mg.position)
+		return
+	if event is InputEventPanGesture:
+		var pg := event as InputEventPanGesture
+		if stage.can_tilt() and stage.FRAME.has_point(pg.position):
+			stage.tilt_by(-pg.delta.y * 0.35, true)
+		return
 	if event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
 		# ★ 平移：**按住滑鼠中鍵拖**（B1.3.1，使用者指定）。

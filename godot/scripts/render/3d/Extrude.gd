@@ -46,6 +46,22 @@ void fragment() {
 }
 """
 
+## 受擊一閃的著色器：同 `SHADER`，再往 `flash_col` 推 `flash`（0..1）。換一隻敵人的 `material_override` 就是一次閃爍
+## （比逐隻設參數便宜：受擊的只有那一兩隻，而且不必逐實例的 uniform——相容性渲染器不一定有）。
+const FLASH_SHADER := """
+shader_type spatial;
+render_mode unshaded, cull_disabled;
+uniform float lift = 1.0;
+uniform vec3 flash_col = vec3(1.0);
+uniform float flash = 0.55;
+void vertex() {
+	VERTEX.y = VERTEX.y * lift + UV.x * 0.0025;
+}
+void fragment() {
+	ALBEDO = mix(COLOR.rgb, flash_col, flash);
+}
+"""
+
 ## 徽章的著色器：**billboard**（面向相機）、不做深度測試（永遠看得見——它是警示，不該被建築擋住）、不看光。
 ## 網格原點＝徽章中心；`MODEL_MATRIX` 的位移就是它在世界裡的位置。
 const BADGE_SHADER := """

@@ -33,6 +33,13 @@ const Relief := preload("res://scripts/render/3d/Relief.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const SessionState := preload("res://scripts/game/SessionState.gd")
 const Enemies := preload("res://data/Enemies.gd")
+const Build := preload("res://scripts/sim/Build.gd")
+const Prof := preload("res://scripts/core/Prof.gd")
+const Tide := preload("res://scripts/sim/Tide.gd")
+const BattleController := preload("res://scripts/game/BattleController.gd")
+const BuildController := preload("res://scripts/game/BuildController.gd")
+const Fx3D := preload("res://scripts/render/3d/Fx3D.gd")
+const Wires := preload("res://scripts/render/3d/Wires.gd")
 
 ## 垂直視角（度）。窄＝接近正交；寬＝透視感強。
 const FOV_DEG := 24.0
@@ -52,6 +59,10 @@ const GROUND_TEX_MAX := 4096
 const MARCH_STEP := 0.05
 ## 升起程度超過這個就不再畫地面貼圖裡的扁敵人（3D 的敵人已經夠高、蓋住了它）。
 const FLAT_FOE_MAX_LIFT := 0.30
+## 敵人身體中段離地的高度（格）：彈著點、碎片爆、護盾的中心。
+const FOE_BODY_Y := 0.2
+## 流動珠的半徑相對於 2D 的倍率（3D 的珠子是球，擺在管子上）。
+const BEAD_K := 1.15
 
 ## 地面：貼圖 × 頂點色（地形的受光與遮蔽）。高度與頂點色的作用都隨 lift 淡入——lift ＝ 0 時是一片平的貼圖。
 ## 貼圖只涵蓋視野（`uv_rect` ＝ 貼圖在地圖上的位置與大小，0..1 的地圖座標），見 `_apply_ground_window()`。
@@ -68,6 +79,22 @@ void vertex() {
 }
 void fragment() {
 	ALBEDO = texture(tex, (UV - uv_rect.xy) / uv_rect.zw).rgb * tint;
+}
+"""
+
+## 落點預覽：同 `Extrude.SHADER`，半透明、往 `tint`（可放／不可放）推一點；不寫深度，疊起來的零件會透出來（鬼影的樣子）。
+const GHOST_SHADER := """
+shader_type spatial;
+render_mode unshaded, cull_disabled, depth_draw_never;
+uniform float lift = 1.0;
+uniform vec3 tint = vec3(0.4, 0.8, 0.6);
+uniform float alpha = 0.62;
+void vertex() {
+	VERTEX.y = VERTEX.y * lift + UV.x * 0.0025;
+}
+void fragment() {
+	ALBEDO = mix(COLOR.rgb, tint, 0.28);
+	ALPHA = alpha;
 }
 """
 
@@ -90,6 +117,35 @@ var _badge_root: Node3D = null
 var _badge_mat: ShaderMaterial = null
 var _solid: ShaderMaterial = null
 var _ground_mat: ShaderMaterial = null
+var _solid_hit: ShaderMaterial = null    # 受擊一閃（`Extrude.FLASH_SHADER`）
+
+# 特效、導管、珠子、落點預覽（B4.3）。
+var _fx_mesh: ArrayMesh = null
+var _fx_top_mesh: ArrayMesh = null
+var _fx_mi: MeshInstance3D = null
+var _fx_top_mi: MeshInstance3D = null
+var _wire_mm: MultiMesh = null       # 所有導管：單位方盒的實例（一個 draw call）
+var _wire_mmi: MultiMeshInstance3D = null
+var _wire_mat: ShaderMaterial = null
+var _wire_buf: PackedFloat32Array = PackedFloat32Array()
+var _wires: Dictionary = {}        # 導管 id → {sig: Array, chunk: PackedFloat32Array, key: Vector4i}
+var _routes: Dictionary = {}       # Vector4i（a.x, a.y, b.x, b.y）→ {rt: PackedVector3Array（管底路徑）, hh: 半個管厚}
+var _wire_key: Array = []
+var _shadow_mm: MultiMesh = null    # 敵人的落影：一個 MultiMesh
+var _shadow_mmi: MultiMeshInstance3D = null
+var _shadow_buf: PackedFloat32Array = PackedFloat32Array()
+var _rw: int = 0                    # 這張圖的起伏（`_rel`）的快取：寬、地面高度陣列（每隻敵人每幀查一次，不走字典）
+var _rfloor: PackedFloat32Array = PackedFloat32Array()
+var _bead_mmi: MultiMeshInstance3D = null
+var _bead_mm: MultiMesh = null
+var _bead_buf: PackedFloat32Array = PackedFloat32Array()
+var _ghost: MeshInstance3D = null
+var _ghost_mat: ShaderMaterial = null
+var _ghost_meshes: Dictionary = {}
+var _ghost_key: Array = []
+var _ghost_ok: bool = false
+var _foe_info: PackedFloat32Array = PackedFloat32Array()   # 本幀畫出來的敵人，每隻 5 個：x（格）、z（格）、地面高、半徑（格）、血量比例（落影、血條用）
+var _foe_motions: Dictionary = {}  # 型別 → `Models.foe_motion()`
 
 var _nodes: Dictionary = {}       # 節點 id → {mi: MeshInstance3D, key: String}
 var _foes: Dictionary = {}        # 敵人 id → MeshInstance3D
@@ -208,6 +264,82 @@ func _ready() -> void:
 	_vp.add_child(_node_root)
 	_vp.add_child(_foe_root)
 	_vp.add_child(_badge_root)
+
+	_solid_hit = ShaderMaterial.new()
+	_solid_hit.shader = Shader.new()
+	_solid_hit.shader.code = Extrude.FLASH_SHADER
+	var fc := Palette.TIDE_BRIGHT
+	_solid_hit.set_shader_parameter("flash_col", Vector3(fc.r, fc.g, fc.b))
+	# 導管與珠子：各是一個 MultiMesh（一個 draw call）。導管的變換在世界座標乘 lift（`Wires.SHADER`）。
+	_wire_mm = MultiMesh.new()
+	_wire_mm.transform_format = MultiMesh.TRANSFORM_3D
+	_wire_mm.use_colors = true
+	_wire_mm.mesh = Wires.box_mesh()
+	_wire_mat = ShaderMaterial.new()
+	_wire_mat.shader = Shader.new()
+	_wire_mat.shader.code = Wires.SHADER
+	_wire_mmi = MultiMeshInstance3D.new()
+	_wire_mmi.multimesh = _wire_mm
+	_wire_mmi.material_override = _wire_mat
+	_wire_mmi.custom_aabb = AABB(Vector3(-1.0, -1.0, -1.0), Vector3(512.0, 8.0, 512.0))
+	_vp.add_child(_wire_mmi)
+	_bead_mm = MultiMesh.new()
+	_bead_mm.transform_format = MultiMesh.TRANSFORM_3D
+	_bead_mm.use_colors = true
+	_bead_mm.mesh = Wires.bead_mesh()
+	_bead_mmi = MultiMeshInstance3D.new()
+	_bead_mmi.multimesh = _bead_mm
+	var bead_mat := ShaderMaterial.new()
+	bead_mat.shader = Shader.new()
+	bead_mat.shader.code = Wires.BEAD_SHADER
+	_bead_mmi.material_override = bead_mat
+	_bead_mmi.custom_aabb = AABB(Vector3(-1.0, -1.0, -1.0), Vector3(512.0, 8.0, 512.0))
+	_vp.add_child(_bead_mmi)
+	# 敵人的落影：腳下一圈淡淡的暗（一個 MultiMesh，不為每隻敵人各建一圈幾何）。
+	_shadow_mm = MultiMesh.new()
+	_shadow_mm.transform_format = MultiMesh.TRANSFORM_3D
+	_shadow_mm.use_colors = true
+	_shadow_mm.mesh = Fx3D.disc_mesh(12)
+	var shadow_mat := ShaderMaterial.new()
+	shadow_mat.shader = Shader.new()
+	shadow_mat.shader.code = Fx3D.SHADER
+	shadow_mat.render_priority = 3
+	_shadow_mmi = MultiMeshInstance3D.new()
+	_shadow_mmi.multimesh = _shadow_mm
+	_shadow_mmi.material_override = shadow_mat
+	_shadow_mmi.custom_aabb = AABB(Vector3(-1.0, -1.0, -1.0), Vector3(512.0, 8.0, 512.0))
+	_shadow_mmi.visible = false
+	_vp.add_child(_shadow_mmi)
+	# 特效：一般的（深度測試）與永遠看得見的（血條）各一個重複使用的網格。
+	_fx_mesh = ArrayMesh.new()
+	_fx_top_mesh = ArrayMesh.new()
+	var fx_mat := ShaderMaterial.new()
+	fx_mat.shader = Shader.new()
+	fx_mat.shader.code = Fx3D.SHADER
+	fx_mat.render_priority = 5
+	var fx_top_mat := ShaderMaterial.new()
+	fx_top_mat.shader = Shader.new()
+	fx_top_mat.shader.code = Fx3D.TOP_SHADER
+	fx_top_mat.render_priority = 11
+	_fx_mi = MeshInstance3D.new()
+	_fx_mi.mesh = _fx_mesh
+	_fx_mi.material_override = fx_mat
+	_fx_mi.visible = false
+	_vp.add_child(_fx_mi)
+	_fx_top_mi = MeshInstance3D.new()
+	_fx_top_mi.mesh = _fx_top_mesh
+	_fx_top_mi.material_override = fx_top_mat
+	_fx_top_mi.visible = false
+	_vp.add_child(_fx_top_mi)
+	# 落點預覽：手上那一種建築的半透明造型。
+	_ghost_mat = ShaderMaterial.new()
+	_ghost_mat.shader = Shader.new()
+	_ghost_mat.shader.code = GHOST_SHADER
+	_ghost_mat.render_priority = 4
+	_ghost = MeshInstance3D.new()
+	_ghost.material_override = _ghost_mat
+	_ghost.visible = false
+	_vp.add_child(_ghost)
 	_apply_camera()
 
 
@@ -402,21 +534,37 @@ func invalidate() -> void:
 func _process(delta: float) -> void:
 	if s == null or _ground == null:
 		return
+	Prof.mark()
 	_sync_map()
 	_apply_view_scale()
 	_apply_ground_window()
+	Prof.lap("s3d.window")
 	# 地面（2D 舞台）由這裡親手推進：它的推導（交戰、威脅、敵人所在）與 3D 吃的是同一幀的值。
 	_ground.s = s
 	_ground.scr = scr
 	# 地面貼圖涵蓋整張圖，所以敵人要靠這個範圍剔除；升起之後本體交給 3D（貼圖裡只留血量弧與減速描邊）。
 	_ground.cull_rect = view_world_rect()
 	_ground.draw_enemy_bodies = _lift <= FLAT_FOE_MAX_LIFT
+	# 特效、血量弧：升起之後改畫在 3D。導管、珠子、落點預覽：一離開正俯瞰就改成 3D 的（低 lift 時 3D 的管子是貼地的帶，與 2D 的線同寬）。
+	_ground.draw_fx = _lift <= FLAT_FOE_MAX_LIFT
+	_ground.draw_wires = _lift <= LIFT_SHOW
+	_ground.draw_ghost = _lift <= LIFT_SHOW
 	_ground._process(delta)
 	_ground.queue_redraw()
 	engaged = _ground.engaged
 	threat = _ground.threat
+	Prof.lap("s3d.ground")
 	_sync_nodes()
+	Prof.lap("s3d.nodes")
+	_sync_wires()
+	Prof.lap("s3d.wires")
 	_sync_foes()
+	Prof.lap("s3d.foes")
+	_sync_fx()
+	Prof.lap("s3d.fx")
+	_sync_ghost()
+	_update_beads()
+	Prof.lap("s3d.beads")
 
 
 func _sync_map() -> void:
@@ -438,7 +586,13 @@ func _sync_map() -> void:
 	for rec: Dictionary in _badges.values():
 		(rec["mi"] as Node).queue_free()
 	_badges.clear()
+	_wires.clear()
+	_routes.clear()
+	_wire_key = []
+	_ghost_key = []
 	_rel = Relief.build(s.map)
+	_rw = int(_rel["w"])
+	_rfloor = _rel["floor"]
 	_ground_mesh.mesh = Relief.ground_mesh(_rel)
 	_cliffs.mesh = Relief.cliff_mesh(_rel)
 	_scenery.mesh = Relief.scenery_mesh(s.map, _rel)
@@ -610,36 +764,71 @@ func _node_mesh(n: Dictionary, type: String, lv: int, mkey: String) -> ArrayMesh
 
 func _sync_foes() -> void:
 	var alive: Dictionary = {}
+	_foe_info.resize(0)
 	# 視野外的敵人不建、不擺（放大看大圖時，其餘的敵人白白佔 draw call）；邊距比最大的敵人寬鬆。
 	var view := view_world_rect().grow(Shapes.GRID * 2.0)
+	var hit_ids: Dictionary = _ground._hit_ids_of()
+	var tsec: float = _ground._time_s()
+	var animate := not Motion.reduce
 	for i in s.enemies.size():
 		var e: Dictionary = s.enemies[i]
 		var id := int(e["id"])
 		alive[id] = true
 		var mi: MeshInstance3D = _foes.get(id)
-		if not view.has_point(_ground._enemy_pos(e, i)):
+		# 位置與朝向問 2D 舞台：地面貼圖裡那隻扁的與這隻立體的，必然在同一個地方（同一個 progress）。
+		var prog: float = _ground._enemy_prog(e, i)
+		var p: Vector2 = _ground._path_px(prog)
+		if not view.has_point(p):
 			if mi != null:
 				mi.visible = false
 			continue
+		var type := String(e["type"])
+		var def := Enemies.of(type)
 		if mi == null:
 			mi = MeshInstance3D.new()
-			mi.material_override = _solid
-			mi.mesh = _foe_mesh(String(e["type"]), id)
+			mi.mesh = _foe_mesh(type, id)
 			_foe_root.add_child(mi)
 			_foes[id] = mi
-		# 位置與朝向問 2D 舞台：地面貼圖裡那隻扁的與這隻立體的，必然在同一個地方。
-		var p: Vector2 = _ground._enemy_pos(e, i)
-		var d: Vector2 = _ground._enemy_dir(e, i)
-		var cell := Vector2i(floori(p.x / Shapes.GRID), floori(p.y / Shapes.GRID))
+		# 受擊一閃：這一 tick 有彈落在它身上，本體往亮階推一下（換材質，不必逐實例參數）。
+		mi.material_override = _solid_hit if hit_ids.has(id) else _solid
+		var d: Vector2 = Tide.heading_of(s.path, prog)
+		var gx := p.x / Shapes.GRID
+		var gz := p.y / Shapes.GRID
+		var floor_y := _floor_at(floori(gx), floori(gz))
 		mi.visible = true
-		# 走在**地面**上（橋底下是溝）；每一隻有自己的相位，輕輕上下晃（`reduce_motion` 時不晃）。
-		var bob := 0.0 if Motion.reduce else 0.018 * sin(_ground._time_s() * 7.0 + float(id) * 1.7)
-		mi.position = Vector3(p.x / Shapes.GRID, (Relief.floor_at(_rel, cell) + bob) * _lift, p.y / Shapes.GRID)
-		mi.rotation.y = atan2(-d.y, d.x)
+		# 走在**地面**上（橋底下是溝）。動作由機制欄位推導（`Models.foe_motion`）：重甲慢而沉、迅捷前傾、再生有心跳……
+		# 每一隻有自己的相位；`reduce_motion` 時不動。
+		var yaw := atan2(-d.y, d.x)
+		var hop := 0.0
+		if animate:
+			var pose := Models.foe_pose(_foe_motion(type, def), tsec, float(id) * 1.7)
+			mi.basis = Basis.from_euler(Vector3(float(pose["roll"]), yaw, float(pose["pitch"])), EULER_ORDER_YZX).scaled_local(pose["scale"])
+			hop = float(pose["hop"])
+		else:
+			mi.basis = Basis(Vector3.UP, yaw)
+		mi.position = Vector3(gx, (floor_y + hop) * _lift, gz)
+		_foe_info.append(gx)
+		_foe_info.append(gz)
+		_foe_info.append(floor_y)
+		_foe_info.append(maxf(float(def.get("radius", 9.0)) / Shapes.GRID, Models.MIN_FOE_RADIUS))
+		_foe_info.append(float(e["hp"]) / maxf(1.0, float(e.get("max_hp", def.get("hp", 1.0)))))
 	for id: int in _foes.keys():
 		if not alive.has(id):
 			(_foes[id] as Node).queue_free()
 			_foes.erase(id)
+
+
+## 這一格的**地面**高度（敵人走的；橋底下是溝）。圖外是 0。比 `Relief.floor_at()` 快：不走字典。
+func _floor_at(cx: int, cy: int) -> float:
+	if cx < 0 or cy < 0 or cx >= _rw or cy * _rw + cx >= _rfloor.size():
+		return 0.0
+	return _rfloor[cy * _rw + cx]
+
+
+func _foe_motion(type: String, def: Dictionary) -> Dictionary:
+	if not _foe_motions.has(type):
+		_foe_motions[type] = Models.foe_motion(def)
+	return _foe_motions[type]
 
 
 ## 敵人的網格：一型四個變體（用 id 取），色相在品紅帶內小幅位移，同一型的幾隻不會長得一模一樣。
@@ -648,6 +837,349 @@ func _foe_mesh(type: String, id: int) -> ArrayMesh:
 	if not _foe_meshes.has(key):
 		_foe_meshes[key] = Models.foe(Enemies.of(type), id % 4)
 	return _foe_meshes[key]
+
+
+# ── 導管（B4.3）────────────────────────────────────────────────────────
+
+## 把 `s.conduits` 同步成 3D 的管子（一個 MultiMesh）。**每條導管的實例資料（`Wires.chunk()`）只在簽章——等級、寬度、
+## 滿載比、缺電、受損——變了才重算**；路徑（貼著地形走）只在第一次建時算。寬度、顏色、受損與 2D `_sync_conduits()` 是
+## 同一組算式，所以資訊通道原樣保留。有任何一條變了，才把各條的資料依序串成一塊緩衝區送出去。
+func _sync_wires() -> void:
+	var key := [s.get_instance_id(), s.tick_count, s.rev, _map_id]
+	if key == _wire_key:
+		return
+	_wire_key = key
+	var flows: Dictionary = s.rates["conduit_flow"]
+	var sat: Dictionary = s.rates["satisfaction"]
+	var bonus := float(s.mods["cap_bonus"])
+	var cap_max := Build.conduit_cap(Build.CAP_MAX_LEVEL, bonus)
+	var node_at: Dictionary = {}
+	for n: Dictionary in s.nodes:
+		node_at[n["cell"]] = int(n["id"])
+	var alive: Dictionary = {}
+	var dirty: bool = _wires.size() != s.conduits.size()
+	for c: Dictionary in s.conduits:
+		var id := int(c["id"])
+		alive[id] = true
+		var flow := float(flows.get(id, 0.0))
+		var lv := int(c["level"])
+		var cap := Build.conduit_cap(lv, bonus)
+		var to_id: int = node_at.get(c["b"], -1)
+		var starving: bool = to_id >= 0 and float(sat.get(to_id, 1.0)) < 0.95 and flow > 0.0
+		var w := Shapes.conduit_width(flow, cap_max)
+		var hp := float(c["hp"])
+		var hurt := 0.0 if hp >= 40.0 else snappedf(1.0 - hp / 40.0, 0.1)
+		# 簽章收齊畫它會讀的每個輸入：等級、寬度、滿載比（顏色的來源，量化到 1%）、缺電、受損。
+		var sig := [lv, snappedf(w, 0.05), snappedf(flow / maxf(cap, 0.001), 0.01), starving, hurt]
+		var rec: Dictionary = _wires.get(id, {})
+		if rec.is_empty():
+			var a: Vector2i = c["a"]
+			var b: Vector2i = c["b"]
+			rec = {"sig": [], "chunk": PackedFloat32Array(), "key": Vector4i(a.x, a.y, b.x, b.y)}
+			_wires[id] = rec
+			_routes[rec["key"]] = {"rt": Wires.route(_rel, a, b), "hh": 0.0}
+		if rec["sig"] == sig:
+			continue
+		rec["sig"] = sig
+		var route: Dictionary = _routes[rec["key"]]
+		route["hh"] = Wires.half_height(w)
+		rec["chunk"] = Wires.chunk(route["rt"], w, Palette.conduit(flow, cap, starving), lv, hurt)
+		dirty = true
+	for id: int in _wires.keys():
+		if not alive.has(id):
+			_routes.erase(_wires[id]["key"])
+			_wires.erase(id)
+			dirty = true
+	if not dirty:
+		return
+	_wire_buf.resize(0)
+	for c: Dictionary in s.conduits:
+		_wire_buf.append_array((_wires[int(c["id"])] as Dictionary)["chunk"])
+	var count := _wire_buf.size() / Wires.FLOATS
+	if count > _wire_mm.instance_count:
+		var cap_n := maxi(64, _wire_mm.instance_count)
+		while cap_n < count:
+			cap_n *= 2
+		_wire_mm.instance_count = cap_n
+	_wire_buf.resize(_wire_mm.instance_count * Wires.FLOATS)
+	_wire_mm.visible_instance_count = count
+	_wire_mm.buffer = _wire_buf
+
+
+## 流動珠（3D）：規格讀 2D 舞台算好的那一份（`_bead_specs_cache`：哪幾條線、什麼色、多大、多快），位置沿著管子的路徑算，
+## 珠子是擺在管頂上的小球。與 2D 的 `_update_beads()` 同一條時間軸（模擬秒數，零系統時間）。
+func _update_beads() -> void:
+	if not raised():
+		if _bead_mm.visible_instance_count != 0:
+			_bead_mm.visible_instance_count = 0
+		return
+	var specs: Array = _ground._bead_specs_cache
+	var need := 0
+	for sp: Array in specs:
+		need += int(float(sp[2]) / Stage2D.BEAD_GAP) + 1
+	if need > _bead_mm.instance_count:
+		var cap := maxi(64, _bead_mm.instance_count)
+		while cap < need:
+			cap *= 2
+		_bead_mm.instance_count = cap
+		_bead_buf.resize(cap * 16)
+	var t: float = (float(s.tick_count) + scr.accum / BattleController.TICK) * BattleController.TICK
+	var n := 0
+	for sp: Array in specs:
+		var a: Vector2 = sp[0]
+		var u: Vector2 = sp[1]
+		var span: float = sp[2]
+		var rad: float = float(sp[3]) / Shapes.GRID * BEAD_K
+		var col: Color = sp[7]
+		var b := a + u * span
+		var rec: Dictionary = _routes.get(Vector4i(
+			floori(a.x / Shapes.GRID), floori(a.y / Shapes.GRID), floori(b.x / Shapes.GRID), floori(b.y / Shapes.GRID)
+		), {})
+		if rec.is_empty():
+			continue
+		var rt: PackedVector3Array = rec["rt"]
+		var hh: float = rec["hh"]
+		var x := fposmod(t * float(sp[5]) * Stage2D.BEAD_SPEED + float(sp[6]), Stage2D.BEAD_GAP)
+		while x < span:
+			var q := (a + u * x) / Shapes.GRID
+			var y := (Wires.height_on(rt, x / Shapes.GRID) + hh * 2.0 + rad * 0.55) * _lift
+			var o := n * 16
+			_bead_buf[o] = rad
+			_bead_buf[o + 1] = 0.0
+			_bead_buf[o + 2] = 0.0
+			_bead_buf[o + 3] = q.x
+			_bead_buf[o + 4] = 0.0
+			_bead_buf[o + 5] = rad
+			_bead_buf[o + 6] = 0.0
+			_bead_buf[o + 7] = y
+			_bead_buf[o + 8] = 0.0
+			_bead_buf[o + 9] = 0.0
+			_bead_buf[o + 10] = rad
+			_bead_buf[o + 11] = q.y
+			_bead_buf[o + 12] = col.r
+			_bead_buf[o + 13] = col.g
+			_bead_buf[o + 14] = col.b
+			_bead_buf[o + 15] = 1.0
+			n += 1
+			x += Stage2D.BEAD_GAP
+	_bead_mm.visible_instance_count = n
+	_bead_mm.buffer = _bead_buf
+
+
+# ── 特效（B4.3）────────────────────────────────────────────────────────
+
+## 升起之後的特效、落影與血條。形狀、時間軸、顏色**沿用 2D**（`Stage2D._draw_shots()` 等）：彈道從**塔頂**飛向**敵人身上**
+## （不是兩個地面點之間的線）、火花與碎片在身體的高度、護盾泡罩著身體、血條浮在頭上（永遠看得見）。
+## 低於 `FLAT_FOE_MAX_LIFT` 時地面貼圖還畫著 2D 的那一份，這裡不畫（兩邊不同時畫同一件事）。
+func _sync_fx() -> void:
+	if _lift <= FLAT_FOE_MAX_LIFT:
+		_fx_mi.visible = false
+		_fx_top_mi.visible = false
+		_shadow_mmi.visible = false
+		return
+	var pen := Fx3D.Pen.new()
+	var top := Fx3D.Pen.new()
+	var r := Vector3.RIGHT
+	var u := _u
+	var frac: float = scr.accum / BattleController.TICK
+	_ground._enemy_index = _ground._index_enemies()   # 彈丸要找得到「此刻」的敵人
+	# 落影：腳下一圈淡淡的暗（身體浮在溝裡，沒有它看不出離地多高）——一個 MultiMesh，寫緩衝區就好。
+	# 血條：受傷的才有，浮在頭上，永遠看得見的那一層。
+	var n_foes := _foe_info.size() / 5
+	if n_foes > _shadow_mm.instance_count:
+		var cap := maxi(64, _shadow_mm.instance_count)
+		while cap < n_foes:
+			cap *= 2
+		_shadow_mm.instance_count = cap
+		_shadow_buf.resize(cap * 16)
+	var sc := Palette.alpha(Palette.MAT_SHADOW, 0.34)
+	for k in n_foes:
+		var o5 := k * 5
+		var x := _foe_info[o5]
+		var z := _foe_info[o5 + 1]
+		var fy := _foe_info[o5 + 2]
+		var rad := _foe_info[o5 + 3] * 0.95
+		var o := k * 16
+		_shadow_buf[o] = rad
+		_shadow_buf[o + 1] = 0.0
+		_shadow_buf[o + 2] = 0.0
+		_shadow_buf[o + 3] = x
+		_shadow_buf[o + 4] = 0.0
+		_shadow_buf[o + 5] = 1.0
+		_shadow_buf[o + 6] = 0.0
+		_shadow_buf[o + 7] = fy * _lift + 0.012
+		_shadow_buf[o + 8] = 0.0
+		_shadow_buf[o + 9] = 0.0
+		_shadow_buf[o + 10] = rad
+		_shadow_buf[o + 11] = z
+		_shadow_buf[o + 12] = sc.r
+		_shadow_buf[o + 13] = sc.g
+		_shadow_buf[o + 14] = sc.b
+		_shadow_buf[o + 15] = sc.a
+		if _foe_info[o5 + 4] < 1.0:
+			Fx3D.hp_bar(top, _lifted(Vector3(x, fy + Models.FOE_HEIGHT + 0.22, z)), 0.5, 0.075, _foe_info[o5 + 4], r, u)
+	_shadow_mm.visible_instance_count = n_foes
+	if n_foes > 0:
+		_shadow_mm.buffer = _shadow_buf
+	_shadow_mmi.visible = n_foes > 0
+	_fx_shots(pen, r, u, frac)
+	_fx_bursts(pen, r, u, frac)
+	_fx_shields(pen, r, u, frac)
+	pen.to_mesh(_fx_mesh)
+	top.to_mesh(_fx_top_mesh)
+	_fx_mi.visible = not pen.is_empty()
+	_fx_top_mi.visible = not top.is_empty()
+
+
+func _fx_shots(pen: Fx3D.Pen, r: Vector3, u: Vector3, frac: float) -> void:
+	for sh: Dictionary in s.shots:
+		var def := NodeDefs.of(String(sh.get("by", "anchor")))
+		var pa := _lifted(_muzzle_of(sh["from"]))
+		var pb := _lifted(_body_of(_ground._shot_anchor(sh, "target", "prog", "to")))
+		var t := Motion.progress(BattleController.SHOT_TTL, int(sh["ttl"]), frac)
+		var fade := 1.0 - t
+		var beam: bool = bool(def.get("pierce", false))
+		# 砲口一閃（菱形；光束多一圈柔光）。
+		if not Motion.reduce and t < 0.5:
+			var k := 1.0 - t / 0.5
+			if beam:
+				pen.disc(pa, Fx3D.px(4.0 + 4.0 * k), r, u, Palette.alpha(Palette.ORDER_BRIGHT, 0.35 * k))
+			pen.poly(pa, Shapes.ngon(Vector2.ZERO, Fx3D.px(3.0 + 5.0 * k), 4, 0.0), r, u, Palette.alpha(Palette.ORDER_BRIGHT, 0.85 * k))
+		if beam:
+			# 能量貫穿：整條線一次亮到底，寬度 3→1 衰減。
+			pen.ribbon(pa, pb, Fx3D.px(6.0), _f, Palette.alpha(Palette.ORDER_BRIGHT, 0.10 + 0.18 * fade))
+			pen.ribbon(pa, pb, Fx3D.px(1.0 + 2.0 * fade), _f, Palette.alpha(Palette.ORDER_BRIGHT, 0.35 + 0.65 * fade))
+			continue
+		# 物理彈丸：短促實心的一段沿線飛行。
+		var d3 := pb - pa
+		var total := d3.length()
+		if total > 0.001:
+			var dir := d3 / total
+			var bolt := minf(Fx3D.px(14.0), total * 0.45)
+			var head := pa + dir * (bolt + (total - bolt) * Motion.ease_out_cubic(t))
+			pen.ribbon(head - dir * bolt, head, Fx3D.px(3.0), _f, Palette.alpha(Palette.ORDER_CYAN, 0.45 + 0.55 * fade))
+		# 命中火花：落點炸開一顆四角星。
+		if not Motion.reduce and t >= 0.6:
+			var k := (1.0 - t) / 0.4
+			var rr := 3.0 + 6.0 * (1.0 - k)
+			pen.poly(pb, Shapes.star(Vector2.ZERO, Fx3D.px(rr), Fx3D.px(rr * 0.4), 4, PI * 0.25), r, u, Palette.alpha(Palette.ORDER_BRIGHT, 0.9 * k))
+		# 濺射環：貼著腳下的擴張環，半徑就是資料裡的 `splash` 格（遊戲距離，不放大）。
+		if sh.has("splash_at"):
+			var at: Vector2 = _ground._shot_anchor(sh, "splash_target", "splash_prog", "splash_at")
+			var cell := Vector2i(floori(at.x / Shapes.GRID), floori(at.y / Shapes.GRID))
+			var ring_at := Vector3(at.x / Shapes.GRID, (Relief.floor_at(_rel, cell) + 0.14) * _lift + 0.01, at.y / Shapes.GRID)
+			pen.flat_ring(ring_at, float(def.get("splash", 0.0)) * Motion.ease_out_cubic(t), Fx3D.px(2.0), Palette.alpha(Palette.ORDER_CYAN, 0.15 + 0.45 * fade))
+		# 回收：一顆琥珀珠回流到塔（方向是反的，走 t 的後半段）。
+		if float(def.get("reclaim", 0.0)) > 0.0 and t >= 0.4:
+			var k := (t - 0.4) / 0.6
+			pen.disc(pb.lerp(pa, Motion.ease_out_cubic(k)), Fx3D.px(3.0), r, u, Palette.alpha(Palette.ENERGY_AMBER, 1.0 - k))
+
+
+func _fx_bursts(pen: Fx3D.Pen, r: Vector3, u: Vector3, frac: float) -> void:
+	for b: Dictionary in s.bursts:
+		var t := Motion.progress(int(b["life"]), int(b["ttl"]), frac)
+		var e := Motion.ease_out_cubic(t)
+		var at: Vector2 = b["at"]
+		var cell := Vector2i(floori(at.x + 0.5), floori(at.y + 0.5))
+		var chaos: bool = String(b["kind"]) == "chaos"
+		var col := Palette.TIDE_MAGENTA if chaos else Palette.ORDER_CYAN
+		var base_y := (Relief.floor_at(_rel, cell) + FOE_BODY_Y) if chaos else (_top(cell) + 0.3)
+		var c := _lifted(Vector3(at.x + 0.5, base_y, at.y + 0.5))
+		var seed_id := int(b["seed"])
+		# 一次縮放閃光：混沌＝實心淡去、秩序＝線框擴張。**貼在地上**（直立的圓盤會被溝岸與地形切成鋸齒）。
+		var flash := Palette.alpha(col, (1.0 - t) * (0.55 if chaos else 0.75))
+		if chaos:
+			pen.flat_disc(Vector3(at.x + 0.5, (Relief.floor_at(_rel, cell) + 0.14) * _lift + 0.01, at.y + 0.5), Fx3D.px(4.0 + 10.0 * e), flash)
+		else:
+			pen.flat_ring(Vector3(at.x + 0.5, _top(cell) * _lift + 0.02, at.y + 0.5), Fx3D.px(4.0 + 18.0 * e), Fx3D.px(2.0), flash)
+		# 3–5 個幾何碎片：往外飛（地面方向）、先上拋再落。混沌＝不規則三角＋自轉，秩序＝正方、不自轉。
+		var count := 3 + (absi(seed_id) % 3)
+		for i in count:
+			var dir := Motion.fragment_dir(seed_id, i, count)
+			var dist := Fx3D.px(10.0 + 34.0 * e)
+			var rise := (0.30 * e - 0.20 * t * t) * _lift
+			var p := c + Vector3(dir.x * dist, rise, dir.y * dist)
+			var rr := (8.0 if chaos else 6.5) * (1.0 - 0.6 * t)
+			var bright: Color = Palette.TIDE_BRIGHT if chaos else Palette.ORDER_BRIGHT
+			var fc := Palette.alpha(bright.lerp(col, minf(1.0, t / 0.3)), 1.0 - t)
+			if chaos:
+				var spin := float(seed_id) * 0.7 + t * 3.0
+				pen.poly(p, PackedVector2Array([
+					Vector2(Fx3D.px(rr * 1.4), 0.0).rotated(spin),
+					Vector2(Fx3D.px(rr), 0.0).rotated(spin + 2.3),
+					Vector2(Fx3D.px(rr * 0.8), 0.0).rotated(spin + 4.1),
+				]), r, u, fc)
+			else:
+				var q := Fx3D.px(rr)
+				pen.poly(p, PackedVector2Array([Vector2(-q, -q), Vector2(q, -q), Vector2(q, q), Vector2(-q, q)]), r, u, fc)
+
+
+func _fx_shields(pen: Fx3D.Pen, r: Vector3, u: Vector3, frac: float) -> void:
+	for sh: Dictionary in s.shields:
+		var t := Motion.progress(int(sh["life"]), int(sh["ttl"]), frac)
+		var cell: Vector2i = sh["at"]
+		var c := _lifted(Vector3(float(cell.x) + 0.5, Relief.floor_at(_rel, cell) + FOE_BODY_Y + 0.05, float(cell.y) + 0.5))
+		var rad := 0.62 + 0.22 * Motion.ease_out_cubic(t)
+		var hex := PackedVector2Array()
+		for i in 6:
+			var a := TAU * float(i) / 6.0 - PI / 2.0
+			hex.append(Vector2(cos(a), sin(a)) * rad)
+		pen.outline(c, hex, Fx3D.px(3.0), r, u, Palette.alpha(Palette.ORDER_BRIGHT, (1.0 - t) * 0.95))
+		var fill := clampf(float(sh["frac"]), 0.0, 1.0)
+		pen.outline(c, hex, Fx3D.px(7.0), r, u, Palette.alpha(Palette.ORDER_CYAN, (1.0 - t) * 0.45 * fill))
+		if t < 0.35:
+			pen.disc(c, 0.30, r, u, Palette.alpha(Palette.ORDER_BRIGHT, (0.35 - t) * 1.6))
+
+
+## 炮口：塔頂（格；高度未乘 lift）。塔已經不在了就取一個普通的高度。
+func _muzzle_of(cell: Vector2i) -> Vector3:
+	var n: Dictionary = s.node_at(cell)
+	var h := 0.4
+	if not n.is_empty():
+		h = Models.height_of(String(n["type"]), int(n.get("level", 0))) * 0.85
+	return Vector3(float(cell.x) + 0.5, _top(cell) + h, float(cell.y) + 0.5)
+
+
+## 敵人身上的一點：地圖座標（px）→ 該格地面之上 `FOE_BODY_Y`（格；高度未乘 lift）。
+func _body_of(px: Vector2) -> Vector3:
+	var cell := Vector2i(floori(px.x / Shapes.GRID), floori(px.y / Shapes.GRID))
+	return Vector3(px.x / Shapes.GRID, Relief.floor_at(_rel, cell) + FOE_BODY_Y, px.y / Shapes.GRID)
+
+
+## 高度乘 lift。
+func _lifted(v: Vector3) -> Vector3:
+	return Vector3(v.x, v.y * _lift, v.z)
+
+
+# ── 落點預覽（B4.3）────────────────────────────────────────────────────
+
+## 手上拿著一種建築、游標在地圖上時：在那一格擺一個**半透明的 3D 造型**（框與射程圈仍畫在地上）。可放＝偏綠、不可放＝偏橙，
+## 與 2D 的預覽同一組判定（`BuildController.preview_place()`）。條件與 `Stage2D._draw_hover()` 一致：選了類型、不是藍圖、
+## 沒壓在導管上、沒在拉線。
+func _sync_ghost() -> void:
+	_ghost.visible = false
+	if not raised() or scr.get("build_type") == null:
+		return
+	var bt := String(scr.build_type)
+	if scr.mode != scr.Mode.BUILD or bt == "" or scr.bp_index >= 0 or scr.drag_from.x >= 0 or not in_map(scr.hover):
+		return
+	if _ground._hover_wire >= 0 and scr.drag_from.x < 0:
+		return
+	var key := [s.get_instance_id(), s.tick_count, s.rev, bt, scr.hover]
+	if key != _ghost_key:
+		_ghost_key = key
+		_ghost_ok = bool(BuildController.preview_place(s, bt, scr.hover)["ok"])
+	if not _ghost_meshes.has(bt):
+		_ghost_meshes[bt] = Models.node({"type": bt, "level": 0, "hp": NodeDefs.hp(bt)}, 0)
+	var mesh: ArrayMesh = _ghost_meshes[bt]
+	if Extrude.triangle_count(mesh) == 0:
+		return
+	var tint := Palette.OK_GREEN if _ghost_ok else Palette.WARN_ORANGE
+	_ghost_mat.set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b))
+	_ghost.mesh = mesh
+	var cell: Vector2i = scr.hover
+	_ghost.position = Vector3(float(cell.x) + 0.5, _top(cell) * _lift, float(cell.y) + 0.5)
+	_ghost.visible = true
 
 
 # ── 測試用的讀值 ───────────────────────────────────────────────────────
@@ -675,6 +1207,43 @@ func ground_scale() -> float:
 ## 這張圖的起伏（`Relief.build()` 的結果）。
 func relief() -> Dictionary:
 	return _rel
+
+
+## 3D 導管的條數、本幀畫出來的珠子數、特效網格有沒有東西（`stage3d_test`／`SelfTest` 用）。
+func wire_count() -> int:
+	return _wires.size()
+
+
+func bead_count() -> int:
+	return _bead_mm.visible_instance_count
+
+
+## 這一幀 3D 導管的實例數（管身、環箍、光暈加起來）。
+func wire_instances() -> int:
+	return _wire_mm.visible_instance_count
+
+
+func wire_route(id: int) -> PackedVector3Array:
+	var rec: Dictionary = _wires.get(id, {})
+	if rec.is_empty():
+		return PackedVector3Array()
+	return (_routes[rec["key"]] as Dictionary)["rt"]
+
+
+func shadow_count() -> int:
+	return _shadow_mm.visible_instance_count if _shadow_mmi.visible else 0
+
+
+func fx_triangles() -> int:
+	return Extrude.triangle_count(_fx_mesh) + Extrude.triangle_count(_fx_top_mesh)
+
+
+func hp_bar_triangles() -> int:
+	return Extrude.triangle_count(_fx_top_mesh)
+
+
+func ghost_visible() -> bool:
+	return _ghost.visible
 
 
 ## 沒有造型的節點型別（要是空的）。
@@ -767,6 +1336,9 @@ func _apply_camera() -> void:
 	_cam.far = _dist * 2.6 + diag
 	_lift = _lift_of(tilt)
 	_solid.set_shader_parameter("lift", _lift)
+	_solid_hit.set_shader_parameter("lift", _lift)
+	_ghost_mat.set_shader_parameter("lift", _lift)
+	_wire_mat.set_shader_parameter("lift", _lift)
 	_ground_mat.set_shader_parameter("lift", _lift)
 	_place_nodes()
 	_place_badges()
@@ -775,6 +1347,8 @@ func _apply_camera() -> void:
 	_scenery.visible = show
 	_node_root.visible = show
 	_foe_root.visible = show
+	_wire_mmi.visible = show
+	_bead_mmi.visible = show
 
 
 ## 傾斜角 → 升起程度（0..1，平滑曲線）。

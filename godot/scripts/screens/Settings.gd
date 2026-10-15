@@ -23,6 +23,7 @@ var on_exit: Callable = Callable()
 var _sliders: Dictionary = {}          # key → HSlider
 var _reduce_check: Button = null
 var _fullscreen_check: Button = null
+var _tilt_check: Button = null
 var _res_buttons: Array[Button] = []
 var _col: VBoxContainer = null
 
@@ -93,6 +94,16 @@ func _click_selftest() -> void:
 	await get_tree().process_frame
 	var restored: bool = DisplayServer.window_get_size() == SaveService.RESOLUTIONS[0] and before == before
 
+	# ③b 傾斜視角（B4.3）：切換 → 設定值真的變了 → 切回來。
+	var tilt_was: bool = bool(s.get("tilt_stage", true))
+	_tilt_check.button_pressed = not tilt_was
+	await get_tree().process_frame
+	var tilt_flips: bool = bool(s.get("tilt_stage", true)) == (not tilt_was)
+	_tilt_check.button_pressed = tilt_was
+	await get_tree().process_frame
+	var tilt_back: bool = bool(s.get("tilt_stage", true)) == tilt_was
+	var tilt_ok: bool = _tilt_check != null and tilt_flips and tilt_back
+
 	# ④ 存檔沒有被真的寫出去（有鉤子時 persist=false，鐵律 1）。
 	var no_write: bool = not SaveService.persist
 
@@ -107,10 +118,10 @@ func _click_selftest() -> void:
 
 	var ok: bool = (
 		vol_saved and mute_wins and buses_exist and reduce_live and reduce_off
-		and resized and restored and no_write and fits and esc_back
+		and resized and restored and tilt_ok and no_write and fits and esc_back
 	)
-	print("[TL_CLICKTEST/settings] vol=%s buses=%s mute_wins=%s reduce_on=%s reduce_off=%s resize=%s restore=%s no_write=%s fits=%s esc_back=%s → %s" % [
-		vol_saved, buses_exist, mute_wins, reduce_live, reduce_off, resized, restored, no_write,
+	print("[TL_CLICKTEST/settings] vol=%s buses=%s mute_wins=%s reduce_on=%s reduce_off=%s resize=%s restore=%s tilt_stage=%s no_write=%s fits=%s esc_back=%s → %s" % [
+		vol_saved, buses_exist, mute_wins, reduce_live, reduce_off, resized, restored, tilt_ok, no_write,
 		fits, esc_back, "PASS" if ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
@@ -157,6 +168,15 @@ func _build() -> void:
 		"全螢幕", bool(_settings().get("fullscreen", false)), _on_fullscreen
 	)
 	col.add_child(_left(_fullscreen_check))
+	# ★ B4.3：傾斜視角。局內的地圖預設可以往側面傾斜（俯瞰變側視，長出 3D）；關掉＝永遠是平面的 2D 俯瞰。舞台是進局時建的，所以下一局起生效。
+	_tilt_check = _checkbox(
+		"傾斜視角（3D）", bool(_settings().get("tilt_stage", true)), _on_tilt_stage
+	)
+	col.add_child(_left(_tilt_check))
+	col.add_child(UiKit.label(
+		"　地圖可以往側面傾斜，看到立體的地形與造型。下一局起生效。",
+		13, Palette.TEXT_SECONDARY, false
+	))
 
 	col.add_child(UiKit.label("視窗大小", 16, Palette.TEXT_SECONDARY, false))
 	var res_row := UiKit.hbox(8)
@@ -236,6 +256,11 @@ func _on_volume(v: float, key: String, value_label: Label) -> void:
 func _on_reduce(on: bool) -> void:
 	_settings()["reduce_motion"] = on
 	Motion.reduce = on
+	_save()
+
+
+func _on_tilt_stage(on: bool) -> void:
+	_settings()["tilt_stage"] = on
 	_save()
 
 

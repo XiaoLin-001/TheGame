@@ -243,7 +243,8 @@ TheGame/
   "entitlements": { "purchases": [], "no_ads": false, "pass_season": 0, "pass_owned": false },
   "blueprints": [],
   "settings": { "master": 0.8, "bgm": 0.6, "sfx": 0.8,
-                "reduce_motion": false, "fullscreen": false, "resolution": 0 }
+                "reduce_motion": false, "fullscreen": false, "resolution": 0,
+                "tilt_stage": true }   // B4.3：局內用不用傾斜舞台；讀的地方一律 .get("tilt_stage", true)，加鍵不 bump SAVE_VERSION
 }
 ```
 
