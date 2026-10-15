@@ -114,9 +114,10 @@
 | 區段 | 檔案 | 說明 |
 |---|---|---|
 | **舞台（2D）** | `screens/battle/Stage.gd`（契約）、`Stage2D.gd`（視野、拾取、繪圖）、`StageLayer.gd`（快取圖層） | 畫面層只認 `Stage.gd` 的契約；**2D→3D 要換掉的就是這一塊**（見 `70_3D_MIGRATION.md`）。**繪圖拆成快取層**：路徑與網格整局不重畫、導管與節點逐件只在簽章變了才重畫（`30_TECH_DESIGN.md` §5.4）——**新增一個會改動畫面的建造動作要在 `SessionState.rev` 加一** |
-| 舞台（3D，**實驗**） | `screens/battle/Stage3D.gd`（約 450 行，B4.0 脊椎）；開關 `TL_STAGE=3d`，預設關閉 | 證明契約成立：HUD 與輸入不改一行就能跑；`tests/stage3d_test.gd` 是它的驗收尺 |
+| 舞台（傾斜，B4.1／B4.2） | `screens/battle/Stage3D.gd`（約 800 行）：內嵌 `Stage2D` 當地面貼圖 ＋ 3D 地形／建築／敵人／徽章；傾斜控制在 `Battle`（左上角「3D」鈕與滑桿、右鍵拖曳、Shift＋滾輪）；`TL_STAGE=2d｜3d`、`TL_TILT=<度>`；**玩家實玩預設用它，自動化預設平面** | 使用者指定的「俯瞰 2D → 側視 3D」；`tests/stage3d_test.gd` 是契約與造型的驗收尺，`tests/gallery_shot.gd` 是看造型的陳列照工具 |
 | 覆蓋層 | `screens/battle/Overlay2D.gd` | 能量列、小地圖、邊緣箭頭——螢幕座標，只問舞台契約 |
 | HUD | `screens/battle/hud/*.gd`（11 個面板） | 全是 2D `Control` |
+| 3D 美術生成器 | `render/3d/`：`Extrude`（積木＋烘焙光照＋徽章）、`Models`（十四種建築與六種敵人的配方）、`Relief`（梯田地形、懸崖、擺設） | 純函式，輸出網格；吃與 2D 同一組級數步數與機制欄位；顏色全來自 `Palette` 的材質色票 |
 | 2D 美術生成器 | `render/2d/`：`Glyphs`（節點幾何）、`Foes`（敵人幾何）、`Terrain`（地貌）、`TitleBackdrop`、`Batch`（同色圖形併成一個指令） | 純函式，輸出幾何；3D 要寫對應的網格生成器 |
 | 效能量測 | `core/Prof.gd`（`TL_PROF`）、`qa/check.py perf`、`SelfTest.stress_frame()` | 逐段計時、引擎渲染 CPU／GPU、draw call；T4，一般遊玩閒置 |
 | 共用美術 token | `render/Palette.gd`（色值）、`Motion.gd`（時長階、`reduce_motion`）、`Shapes.gd`（格大小 `GRID`、`fit_zoom`、線形 helper） | 維度無關（`Shapes` 的繪圖 helper 是 2D 的，`GRID`／`fit_zoom` 不是） |

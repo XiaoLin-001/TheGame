@@ -44,11 +44,15 @@ var focus_zoom: float = 1.0
 ## 同 `TL_FOCUS` 的理由：檢視面板是**純互動狀態**，沒有鉤子就拍不到，
 ## 於是「導管面板做好了」只能用宣稱的。預設（空字串）選一座塔，維持 B3.6 那張圖。
 var pick: String = ""
-## ★ `TL_STAGE=3d`：局內畫面用 `Stage3D`（B4.0 脊椎，**實驗性**）。預設 `Stage2D`。
+## ★ `TL_STAGE=3d`：局內畫面用傾斜舞台 `Stage3D`；`TL_STAGE=2d`：強制平面舞台 `Stage2D`。
 ##
-## 這是**唯一**讓主畫面知道「哪一種舞台」的地方（`Battle._build_modules()`）。要把它做成玩家的設定時
-## （`docs/70_3D_MIGRATION.md` D5），改的也只有這一行判斷。
+## **有任何鉤子（自動化）時預設平面**——22 支測試與截圖矩陣照舊守著 `Stage2D`（傾斜舞台的地面貼圖就是它）；
+## **沒有任何鉤子（玩家實玩）時預設傾斜舞台**。這是**唯一**讓主畫面知道「哪一種舞台」的地方
+## （`Battle._wants_tilt_stage()`）。
 var stage3d: bool = false
+var stage2d: bool = false
+## ★ `TL_TILT=<度>`：傾斜舞台的起始傾斜角（0 ＝ 正俯瞰）。拍 3D 截圖要用——傾斜是**互動狀態**，沒有鉤子就拍不到。
+var tilt: float = 0.0
 ## ★ `TL_PROF=1`：逐段計時（B3.15，`core/Prof.gd`）。要配 `TL_STRESS`——它在量測結束時印報表。
 var prof: bool = false
 
@@ -65,6 +69,8 @@ func _ready() -> void:
 	level = Env.int_of("TL_LEVEL", 0)
 	pick = Env.str_of("TL_PICK")
 	stage3d = Env.str_of("TL_STAGE").to_lower() == "3d"
+	stage2d = Env.str_of("TL_STAGE").to_lower() == "2d"
+	tilt = Env.float_of("TL_TILT", 0.0)
 	prof = Env.flag("TL_PROF")
 	var f := Env.str_of("TL_FOCUS")
 	if f != "":

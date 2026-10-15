@@ -91,6 +91,21 @@ const ZOOM_MAX_MULT := 3.0
 ## 本幀每隻敵人身上的光環 `Vector2(減速, 破甲)`，與 `s.enemies` 同索引。
 ## 和 `_engaged` 一樣是**繪圖層自己算的**：模擬層每 tick 都在算同一份，
 ## 但它只把結果用在傷害上、沒有留下來，而畫面要畫的是「誰被抓住了」。
+## 這個舞台畫在哪個矩形裡。預設就是畫面層的 `FRAME`；**傾斜舞台**（`Stage3D`）把一個 Stage2D 放進
+## `SubViewport` 當地面貼圖，那時它是「整張圖」的矩形（與視窗無關）。
+var frame: Rect2 = FRAME
+
+## 三態徽章畫不畫。傾斜舞台把它交給 3D 的 billboard（貼地的徽章傾斜後會被前面的建築擋住）。
+## 要在第一次畫之前設——節點的簽章不收它（它整局不變）。
+var draw_badges: bool = true
+
+## 敵人的本體畫不畫。傾斜舞台把本體交給 3D 的造型（`Models.foe`）時關掉：不建每隻敵人的多邊形（壓力場景 200 隻要 13 ms），
+## 只留血量弧與減速的描邊（兩者是狀態，不是造型）。
+var draw_enemy_bodies: bool = true
+
+## 要畫的世界範圍（px）；空（沒有面積）＝ 用自己的視野。傾斜舞台的地面貼圖涵蓋整張圖，視野外的敵人要靠它剔除。
+var cull_rect: Rect2 = Rect2()
+
 var _auras: Array = []
 
 ## 本幀每隻敵人所在的格（與 `s.enemies` 同索引）、id → 索引、「這一 tick 被打中的
@@ -236,7 +251,7 @@ func tick_view(delta: float) -> void:
 ## 但語意在 B2.1b 之後是「看得最遠的倍率」，不一定看得到全圖。
 func _fit_zoom() -> float:
 	return maxf(
-		Shapes.fit_zoom(s.map["size"], FRAME.size),
+		Shapes.fit_zoom(s.map["size"], frame.size),
 		Shapes.MIN_READABLE_CELL / Shapes.GRID
 	)
 
@@ -245,7 +260,7 @@ func _fit_zoom() -> float:
 ## **一屏可見的地圖一律 false**，所以戰役關卡不會多出這兩塊遮擋。
 func oversized() -> bool:
 	var px := Vector2(s.map["size"]) * Shapes.GRID * zoom
-	return px.x > FRAME.size.x + 0.5 or px.y > FRAME.size.y + 0.5
+	return px.x > frame.size.x + 0.5 or px.y > frame.size.y + 0.5
 
 
 ## 進場（與「全景」鈕）的視野：fit ＋ 居中。
@@ -257,23 +272,25 @@ func reset_view() -> void:
 	view_moved.emit()
 	# ★ `TL_FOCUS="x,y,zoom"`：拍特效的近照（B1.6）。**不會在真實遊玩中生效**
 	#   ——它只在有鉤子時存在，而有鉤子時存檔已經是唯讀的。
-	if Hooks.focus.x >= 0:
-		zoom = clampf(fit * Hooks.focus_zoom, fit, fit * ZOOM_MAX_MULT)
+	#   （用節點查詢而不是直接寫 `Hooks`：`--script` 測試不載入 autoload，而傾斜舞台內嵌的就是這支。）
+	var hooks := get_node_or_null("/root/Hooks")
+	if hooks != null and hooks.focus.x >= 0:
+		zoom = clampf(fit * hooks.focus_zoom, fit, fit * ZOOM_MAX_MULT)
 		var px := Vector2(s.map["size"]) * Shapes.GRID
-		pan_to((px * 0.5 - center(Hooks.focus)) * zoom, true)
+		pan_to((px * 0.5 - center(hooks.focus)) * zoom, true)
 
 
 ## 地圖左上角在螢幕上的位置。**框架內居中**，放大後由 `_pan` 帶著走。
 func _map_origin() -> Vector2:
 	var px := Vector2(s.map["size"]) * Shapes.GRID * zoom
-	return FRAME.position + (FRAME.size - px) * 0.5 + pan
+	return frame.position + (frame.size - px) * 0.5 + pan
 
 
 ## 放大之後地圖比框架大，平移要有邊界——不然可以把地圖整片拖出畫面，
 ## 然後玩家會以為遊戲壞了。夾住之後框架永遠被地圖蓋滿。
 func _clamp_pan() -> void:
 	var px := Vector2(s.map["size"]) * Shapes.GRID * zoom
-	var slack := (px - FRAME.size) * 0.5
+	var slack := (px - frame.size) * 0.5
 	pan.x = clampf(pan.x, -maxf(0.0, slack.x), maxf(0.0, slack.x))
 	pan.y = clampf(pan.y, -maxf(0.0, slack.y), maxf(0.0, slack.y))
 	pan_goal.x = clampf(pan_goal.x, -maxf(0.0, slack.x), maxf(0.0, slack.x))
@@ -325,11 +342,11 @@ func zoom_by(mult: float, anchor: Vector2) -> void:
 	#   所以直接照定義寫：新原點 = anchor − k × (anchor − 舊原點)，pan 就是它和
 	#   置中位置的差。看得懂比省一行重要。
 	var m := Vector2(s.map["size"]) * Shapes.GRID
-	var origin_before := FRAME.position + (FRAME.size - m * before) * 0.5 + pan
+	var origin_before := frame.position + (frame.size - m * before) * 0.5 + pan
 	var k := zoom / before
 	pan_to(
 		anchor - (anchor - origin_before) * k
-		- (FRAME.position + (FRAME.size - m * zoom) * 0.5),
+		- (frame.position + (frame.size - m * zoom) * 0.5),
 		true
 	)
 	scr.refresh_zoom()
@@ -509,7 +526,7 @@ func _paint_flow(ci: CanvasItem) -> void:
 ## 都從這裡算——**只有一份**，兩者不可能各算各的而對不起來。
 func view_world_rect() -> Rect2:
 	var o := _map_origin()
-	return Rect2((FRAME.position - o) / zoom, FRAME.size / zoom)
+	return Rect2((frame.position - o) / zoom, frame.size / zoom)
 
 
 ## 把某一格移到畫面中央（小地圖與箭頭的「一鍵跳」）。
@@ -524,7 +541,7 @@ func center_view_on(c: Vector2i, immediate: bool = false) -> void:
 ## 節點**（＝整個畫面），對「只夾住框架」這件事沒有用，而為此把 1500 行的
 ## 繪圖搬進一個子節點，換到的只是同一個結果。
 func _draw_frame_matte() -> void:
-	var f := FRAME
+	var f := frame
 	var w := size.x
 	var h := size.y
 	for r: Rect2 in [
@@ -1208,7 +1225,8 @@ func _paint_node_body(ci: CanvasItem, rec: NodeRec) -> void:
 	_draw_engaged(ci, nd, p)
 	# ★ B3.9.3：零件長在塔身周圍而不是頭上那一條帶子，所以缺料徽章（y −16 起）
 	#   不必再讓位——它是**地圖上唯一指出瓶頸的元素**。
-	_draw_badge(ci, nd, p)
+	if draw_badges:
+		_draw_badge(ci, nd, p)
 	Prof.lap("paint.node")
 
 
@@ -1435,7 +1453,7 @@ func _draw_enemies() -> void:
 	var now := _time_s()
 	# ★ B3.15：視野外的敵人不畫（放大看大圖時，其餘的敵人白白建幾何、白白發指令）。
 	#   邊距收得比最大的敵人（半徑約 14）加血量弧寬鬆；一屏可見的戰役關卡這條永遠為真。
-	var view := view_world_rect().grow(48.0)
+	var view := (cull_rect if cull_rect.has_area() else view_world_rect()).grow(48.0)
 	for i in s.enemies.size():
 		var e: Dictionary = s.enemies[i]
 		var def := Enemies.of(String(e["type"]))
@@ -1446,14 +1464,18 @@ func _draw_enemies() -> void:
 		# ★ 受擊一閃（B3.11）：這一 tick 有彈落在它身上，本體往亮階推 0.2 秒。
 		#   純渲染推導（`_hit_ids`），仍在品紅色相內、不動用橙（§1.7）。
 		var hit: bool = _hit_ids.has(int(e["id"]))
-		var parts: Array = Foes.build(def, int(e["id"]), p, _enemy_dir(e, i), now, hit)
-		Foes.paint(self, parts)
-		# ★ 被潮鳴抓住的敵人：輪廓描一圈 `order.cyan`（B1.8）。**標在敵人身上而不是
-		#   塔上**——減速作用在它身上，標在這裡因果才讀得出來。
 		var slow := 0.0 if i >= _auras.size() else (_auras[i] as Vector2).x
-		if slow > 0.01:
-			for rim: PackedVector2Array in Foes.outlines(parts):
-				draw_polyline(rim, Palette.alpha(Palette.ORDER_CYAN, 0.35 + 1.4 * slow), 2.0)
+		if draw_enemy_bodies:
+			var parts: Array = Foes.build(def, int(e["id"]), p, _enemy_dir(e, i), now, hit)
+			Foes.paint(self, parts)
+			# ★ 被潮鳴抓住的敵人：輪廓描一圈 `order.cyan`（B1.8）。**標在敵人身上而不是
+			#   塔上**——減速作用在它身上，標在這裡因果才讀得出來。
+			if slow > 0.01:
+				for rim: PackedVector2Array in Foes.outlines(parts):
+					draw_polyline(rim, Palette.alpha(Palette.ORDER_CYAN, 0.35 + 1.4 * slow), 2.0)
+		elif slow > 0.01:
+			# 本體在 3D：同一個訊號改成腳下的一圈。
+			draw_arc(p, r + 1.0, 0.0, TAU, 20, Palette.alpha(Palette.ORDER_CYAN, 0.35 + 1.4 * slow), 2.0)
 		# 血量弧。★ 分母是這一隻的 `max_hp`（無盡曲線 × 難度層乘過的），不是表上的原值
 		#   ——原本讀表值，第 10 波之後血 2.5 倍的敵人要掉到表值以下才開始有弧。
 		var frac := float(e["hp"]) / maxf(1.0, float(e.get("max_hp", def.get("hp", 1.0))))

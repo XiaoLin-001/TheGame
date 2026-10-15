@@ -50,7 +50,8 @@ CLICKTESTS: list[tuple[str, str, dict[str, str]]] = [
     ("battle", "", {}), ("endless", "endless", {}), ("campaign", "campaign", {}), ("tech", "tech", {}), ("achievements", "achievements", {}),
     ("tiers", "tiers", {}), ("daily", "daily", {}), ("roster", "roster", {}), ("tycoon", "tycoon", {}),
     ("settings", "settings", {}), ("title", "title", {}),
-    # 3D 舞台的 smoke（B4.0 脊椎）：只問 `Stage.gd` 的契約，走完整輸入路由蓋出一個節點。
+    # 傾斜舞台的 smoke（B4.0 脊椎 → B4.1）：只問 `Stage.gd` 的契約，走完整輸入路由蓋出一個節點；
+    # 並走一遍傾斜的四個進入點（按鈕、滑桿、右鍵拖曳、Shift＋滾輪）與傾斜下的全景、點擊。
     ("stage3d", "", {"TL_STAGE": "3d"}),
 ]
 
@@ -81,8 +82,14 @@ SHOTS: dict[str, dict[str, str]] = {
     "tech": {"TL_CLICKTEST": "1", "TL_PANEL": "tech"},
     "achievements": {"TL_CLICKTEST": "1", "TL_PANEL": "achievements"},
     "settings": {"TL_PANEL": "settings"},
-    # 3D 舞台（B4.0 脊椎，實驗性）：同一關、同一個局面，換舞台。HUD 部分應與 campaign_L4 完全相同。
+    # 傾斜舞台（B4.1）：同一關、同一個局面，換舞台。**正俯瞰（傾斜 0°）的畫面應與 campaign_L4 幾乎相同**（地面是同一個
+    # Stage2D 畫的；差在貼圖取樣的邊緣）——HUD 部分逐像素相同。TL_TILT 是傾斜角（度）。
     "stage3d_L4": {"TL_STAGE": "3d", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO},
+    "tilt35_L4": {"TL_STAGE": "3d", "TL_TILT": "35", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO},
+    "tilt62_L4": {"TL_STAGE": "3d", "TL_TILT": "62", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO},
+    "tilt50_L1": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_PANEL": "campaign", "TL_LEVEL": "1", **_DEMO},
+    "tilt50_L10": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_PANEL": "campaign", "TL_LEVEL": "10", **_DEMO},
+    "tilt50_naked": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_NAKED": "1", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO},
 }
 
 
@@ -91,6 +98,10 @@ SHOTS: dict[str, dict[str, str]] = {
 PERF: dict[str, dict[str, str]] = {
     **{f"campaign_L{n}": {"TL_PANEL": "campaign", "TL_LEVEL": str(n), "TL_DEMO_TICKS": "1600"} for n in (1, 5, 10)},
     "stress（547 節點／2045 導管／200 敵人）": {},
+    # 傾斜舞台（B4.1）：地面（內嵌的 Stage2D）＋ 3D 的建築與敵人。`--base` 的舊版沒有傾斜舞台，這幾列只量新版。
+    "傾斜 0° campaign_L10": {"TL_STAGE": "3d", "TL_TILT": "0", "TL_PANEL": "campaign", "TL_LEVEL": "10", "TL_DEMO_TICKS": "1600"},
+    "傾斜 50° campaign_L10": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_PANEL": "campaign", "TL_LEVEL": "10", "TL_DEMO_TICKS": "1600"},
+    "傾斜 50° stress": {"TL_STAGE": "3d", "TL_TILT": "50"},
 }
 
 
@@ -258,7 +269,7 @@ def cmd_perf(a: argparse.Namespace) -> int:
     for name, env in PERF.items():
         r = _median_run(env, None, a.runs)
         line = f"{name:<34}{r['avg']:9.2f}{r['p95']:8.2f}{r['worst']:8.2f}{r['over']:9.1f}%"
-        if base:
+        if base and "TL_STAGE" not in env:
             b = _median_run(env, base, a.runs)
             line += f"{b['avg']:10.2f}{b['worst']:10.2f}{(b['avg'] / r['avg'] if r['avg'] else float('nan')):6.1f}×"
         print(line)

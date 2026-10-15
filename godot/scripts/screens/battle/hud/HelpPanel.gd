@@ -31,7 +31,7 @@ func build_panel() -> void:
 	box.position = Vector2(150, 250)
 	var col := UiKit.vbox(3)
 	box.add_child(col)
-	for line: String in [
+	var lines: Array[String] = [
 		"操作　左鍵做事、中鍵移動視野、滾輪縮放、ESC 開選單",
 		"　蓋節點：左欄選一種 → 左鍵點地圖上的一格",
 		"　拉導管：從一個節點按住左鍵，拖到另一個節點放開（隨時都能拖）",
@@ -50,7 +50,11 @@ func build_panel() -> void:
 		"　塔只有交戰時吃電，待機 0",
 		"",
 		"底欄　快進 4×（只有準備期）｜提前召喚（提早開波換掉落倍率）｜優先權（缺料時誰先餓死）",
-	]:
+	]
+	# 傾斜舞台才有的操作（B4.1）：放在「移動」那一行後面。
+	if scr.stage.can_tilt():
+		lines.insert(7, "　視　角：左上角「3D」鈕與滑桿；按住右鍵上下拖、或 Shift＋滾輪，把視角從俯瞰轉向側面")
+	for line: String in lines:
 		if line == "":
 			col.add_child(buildbar.spacer(6))
 			continue

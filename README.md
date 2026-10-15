@@ -66,7 +66,7 @@ dev/                       setup.py、play.bat、export.bat
 
 - 想知道「**砍掉哪段程式碼遊戲會跑不起來**」：[`docs/60_CODE_MAP.md`](docs/60_CODE_MAP.md)
   （`python qa/gd_graph.py --cut FILE` 可以現場算）
-- 想知道「**怎麼從 2D 轉 3D**」：[`docs/70_3D_MIGRATION.md`](docs/70_3D_MIGRATION.md)
+- 想知道「**俯瞰 2D ↔ 側視 3D（傾斜視角）**」怎麼做的、做到哪：[`docs/70_3D_MIGRATION.md`](docs/70_3D_MIGRATION.md)；美術規則在 [`docs/20_ART_DIRECTION.md`](docs/20_ART_DIRECTION.md) §8
 
 ## 文件權威順序
 

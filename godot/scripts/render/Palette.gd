@@ -76,6 +76,45 @@ const MOSS := Color("#2f6b55")
 const SHELL := Color("#4f4a5c")
 
 
+# ── ★ 3D 材質色票（B4.2，`20_ART_DIRECTION.md` §8）─────────────────────────────
+# 使用者（2026-10-15）：「角色的配色不要這麼單調，多樣性一點，更像是人做出來的」。
+# 2D 一座塔只有一個主色；3D 的建築是由**材質**拼起來的（陶白的槽、鋼的框、銅的線圈、發光的芯），
+# 所以這裡給的是**材質**而不是新的資訊通道：
+#   · 玩家側仍是冷色（青／鋼／藍）＋ 琥珀——**琥珀仍然專屬能量**（只有發電機的本體與發光槽、儲槽的充能條、能量相關的光用它）；
+#   · 銅／鏽是暖棕（≠ 琥珀：飽和度低、明度低），只當線圈與管口；
+#   · 混沌側（`FOE_*`）整組仍在品紅—紫的色相帶內，**只在這條色相帶裡做明度與飽和度的變化**
+#     （珊瑚、玫瑰、緋紅、李紫、紫羅蘭、薰衣草、骨白）——一眼仍分得出敵我，也不碰橙（橙是「建築受損」）。
+# 烘焙光照用 `MAT_SHADOW` 當陰影的偏色（暗部偏藍，不是單純變黑）。
+const MAT_IVORY := Color("#dfe7e6")       ## 陶白：槽身、桅杆、圈
+const MAT_STEEL := Color("#8ea4b4")       ## 鋼
+const MAT_STEEL_DARK := Color("#55697a")  ## 暗鋼：底座、支架
+const MAT_IRON := Color("#2c3947")        ## 鑄鐵：通風口、煙囪、地台
+const MAT_NAVY := Color("#1f3a57")        ## 藍黑：核心的身、中繼的柱
+const MAT_TEAL := Color("#3f9aa0")        ## 青綠：帶、框、水晶
+const MAT_TEAL_DARK := Color("#27666f")
+const MAT_COPPER := Color("#b8664a")      ## 銅：線圈、管口、吊索
+const MAT_RUST := Color("#8c4a3a")        ## 鏽：配重
+const GLOW_CYAN := Color("#b8f6ff")       ## 發光（不吃光照）：核心水晶、中繼尖端、燈
+const GLOW_AMBER := Color("#ffd988")      ## 發光：能量（發電機的槽、熔爐口、儲槽充能條）
+const MAT_SHADOW := Color("#14223a")      ## 烘焙陰影的偏色
+
+# 混沌側（敵人）：品紅—紫色相帶內的材質。
+const FOE_CORAL := Color("#ff6f8e")       ## 漂蟲的身
+const FOE_ROSE := Color("#ff8fab")
+const FOE_CRIMSON := Color("#d63a5c")     ## 熾泳的身
+const FOE_SHELL := Color("#5a2a6e")       ## 甲殼的殼（李紫）
+const FOE_VIOLET := Color("#a35fd9")      ## 潛涌的身
+const FOE_LILAC := Color("#cfa8f0")       ## 癒殼的身、苔群的斑
+const FOE_BONE := Color("#f6dde4")        ## 骨白：刺、縫線
+const FOE_HEART := Color("#ff7aa8")       ## 再生的亮芯（發光）
+const FOE_EYE := Color("#fff0f6")         ## 眼睛（發光）
+
+
+## 一個灰階乘數（頂點色當調色用：地形的受光、遮蔽）。
+static func tint(v: float) -> Color:
+	return Color(v, v, v, 1.0)
+
+
 ## 導管顏色：青 →（連續）→ 亮青，飢餓為暗青。
 ## 這是「線的顏色＝飽和度」這條資訊視覺化規則的唯一實作（§1.4、R-3）。
 ##

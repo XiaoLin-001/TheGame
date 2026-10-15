@@ -1335,7 +1335,7 @@ func _drag(a: Vector2i, b: Vector2i) -> void:
 ## 像素座標的拖曳。按下 → 移動（鍵壓著）→ 放開。
 func _drag_px(a: Vector2, b: Vector2, button: int) -> void:
 	Input.use_accumulated_input = false
-	var mask := MOUSE_BUTTON_MASK_LEFT if button == MOUSE_BUTTON_LEFT else MOUSE_BUTTON_MASK_MIDDLE
+	var mask := _mask_of(button)
 	_press_at(a, true, button)
 	# 移動到終點時鍵是壓著的——`button_mask` 少了這一位，平移那條分支就進不去。
 	var mm := InputEventMouseMotion.new()
@@ -1347,11 +1347,30 @@ func _drag_px(a: Vector2, b: Vector2, button: int) -> void:
 	_press_at(b, false, button)
 
 
+## 滑鼠按鍵 → 它在 `button_mask` 裡的那一位（左／中／右）。
+func _mask_of(button: int) -> int:
+	match button:
+		MOUSE_BUTTON_LEFT:
+			return MOUSE_BUTTON_MASK_LEFT
+		MOUSE_BUTTON_RIGHT:
+			return MOUSE_BUTTON_MASK_RIGHT
+		_:
+			return MOUSE_BUTTON_MASK_MIDDLE
+
+
+## 等傾斜的緩動走完。**以「到位」判，不以幀數判**：緩動吃的是 delta，幀率不同時同樣的幀數走過的時間不同。
+func _wait_tilt(max_frames: int = 1200) -> void:
+	for _i in max_frames:
+		if is_equal_approx(stage.tilt, stage.tilt_goal()):
+			return
+		await get_tree().process_frame
+
+
 ## 一顆按鍵事件（前面附一次移動，GUI 的滑鼠路由要先知道游標在哪）。
 ## `pressed=true` 而不送對應的放開，就是「手指還沒鬆開」那一幀。
 func _press_at(at: Vector2, pressed: bool, button: int = MOUSE_BUTTON_LEFT) -> void:
 	Input.use_accumulated_input = false
-	var mask := MOUSE_BUTTON_MASK_LEFT if button == MOUSE_BUTTON_LEFT else MOUSE_BUTTON_MASK_MIDDLE
+	var mask := _mask_of(button)
 	var mm := InputEventMouseMotion.new()
 	mm.position = at
 	mm.global_position = at
@@ -1765,10 +1784,70 @@ func stage_smoke() -> void:
 	_click(free)
 	await _frames(3)
 	var placed: bool = free.x >= 0 and s.nodes.size() == before + 1
-	var ok: bool = round_trip and covers and at_fit and zoomed and smaller and round_trip_zoomed and reset_ok and placed
+
+	# ⑤ 傾斜（B4.1）：控制在畫面上、點得到；三種進入點（按鈕、滑桿、右鍵拖曳、Shift＋滾輪）都真的改了視角；
+	#    傾斜之後全景仍框住整張圖、而且**傾斜著也點得出節點**（真的合成點擊走完整輸入路由）。
+	var tb: Button = scr._tilt_button
+	var tl_widgets: bool = tb != null and scr._tilt_slider != null and stage.can_tilt()
+	var tl_touch: bool = tl_widgets and tb.size.x >= 44.0 and tb.size.y >= 44.0 and scr._tilt_slider.size.x >= 44.0
+	var tl_on_screen: bool = tl_widgets and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(tb.get_global_rect())
+	_click_button(tb)
+	await _frames(2)
+	var tl_button: bool = is_equal_approx(stage.tilt_goal(), Stage.TILT_DEFAULT) and tb.text == "2D"
+	await _wait_tilt()
+	var tl_eased: bool = absf(stage.tilt - Stage.TILT_DEFAULT) < 0.5 and stage.raised()
+	scr._tilt_slider.value = 20.0
+	await _frames(2)
+	var tl_slider: bool = is_equal_approx(stage.tilt, 20.0)
+	var up_from := Stage.FRAME.get_center()
+	_drag_px(up_from, up_from + Vector2(0.0, -60.0), MOUSE_BUTTON_RIGHT)
+	await _frames(2)
+	var tl_right: bool = stage.tilt > 30.0 and stage.tilt < Stage.TILT_MAX + 0.01
+	var tilt_before: float = stage.tilt_goal()
+	# 滾輪事件要成對（按下＋放開）：只送按下，Viewport 會一直當它還按著，下一次點擊就不會送到按鈕上。
+	for wheel_down: bool in [true, false]:
+		var sw := InputEventMouseButton.new()
+		sw.button_index = MOUSE_BUTTON_WHEEL_DOWN
+		sw.shift_pressed = true
+		sw.pressed = wheel_down
+		sw.position = up_from
+		sw.global_position = up_from
+		Input.parse_input_event(sw)
+	await _frames(2)
+	var tl_wheel: bool = stage.tilt_goal() < tilt_before - 1.0
+	scr._tilt_slider.value = 55.0
+	await _frames(3)
+	var tl_covers: bool = true
+	for corner: Vector2 in [Vector2.ZERO, Vector2(mpx.x, 0.0), mpx, Vector2(0.0, mpx.y)]:
+		tl_covers = tl_covers and Stage.FRAME.grow(1.0).has_point(stage.to_screen(corner))
+	var before_t: int = s.nodes.size()
+	var free_t := Vector2i(-1, -1)
+	var occ_t: Dictionary = s.occupied()
+	for yy in m.y:
+		for xx in m.x:
+			if free_t.x < 0 and Build.can_place(s.sets, occ_t, "relay", Vector2i(xx, yy)) == Build.OK and not stage.threat.has(Vector2i(xx, yy)):
+				free_t = Vector2i(xx, yy)
+	_press(scr.buildbar.build_buttons["relay"])
+	await _frames(2)
+	_click(free_t)
+	await _frames(3)
+	var tl_placed: bool = free_t.x >= 0 and s.nodes.size() == before_t + 1
+	scr._on_zoom_reset()
+	await _frames(2)
+	var tl_reset: bool = is_equal_approx(stage.zoom, stage.fit) and stage.tilt > 40.0
+	_click_button(tb)
+	await _wait_tilt()
+	var tl_back: bool = is_equal_approx(stage.tilt, 0.0) and not stage.raised() and tb.text == "3D"
+	var tilt_ok: bool = tl_widgets and tl_touch and tl_on_screen and tl_button and tl_eased and tl_slider and tl_right and tl_wheel and tl_covers and tl_placed and tl_reset and tl_back
+
+	var ok: bool = round_trip and covers and at_fit and zoomed and smaller and round_trip_zoomed and reset_ok and placed and tilt_ok
 	print("[TL_CLICKTEST/stage] 往返=%s 框住全圖=%s 縮放=%s 視野變小=%s 縮放後往返=%s 全景還原=%s 真的點擊蓋出節點=%s（%s）→ %s" % [
 		round_trip, covers, zoomed, smaller, round_trip_zoomed, reset_ok, placed, free,
 		"PASS" if ok else "FAIL"
+	])
+	print("[TL_CLICKTEST/tilt] 控制在=%s 命中區≥44=%s 在畫面內=%s 按鈕=%s 緩動=%s 滑桿=%s 右鍵拖曳=%s Shift滾輪=%s 傾斜下全景框住=%s 傾斜下點擊蓋出節點=%s（%s）全景鈕=%s 回俯瞰=%s（tilt=%.2f 目標=%.2f 鈕=%s）→ %s" % [
+		tl_widgets, tl_touch, tl_on_screen, tl_button, tl_eased, tl_slider, tl_right, tl_wheel, tl_covers,
+		tl_placed, free_t, tl_reset, tl_back, stage.tilt, stage.tilt_goal(), tb.text, "PASS" if tilt_ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)

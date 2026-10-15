@@ -46,6 +46,15 @@ var fit: float = 1.0
 var pan: Vector2 = Vector2.ZERO
 var pan_goal: Vector2 = Vector2.ZERO
 
+## ── 傾斜（B4.1）：從正俯瞰往側面轉的角度 ─────────────────────────────────────
+## 0° ＝ 正俯瞰（就是 2D 那張圖）；越大越側視，建築與敵人隨之「長」出來（像地圖 App 的 3D 模式）。
+## 2D 舞台沒有這個維度（`can_tilt()` 為假、`tilt` 恆為 0），HUD 據此決定要不要放傾斜的控制。
+## `tilt` 是**目前**的角度（會緩動）；目標用 `tilt_to()` 設。
+const TILT_MAX := 62.0
+## 「3D」鈕按下去轉到的角度。
+const TILT_DEFAULT := 50.0
+var tilt: float = 0.0
+
 ## 本幀交戰中的塔 `{id: bool}`、正在被啃的格 `{cell: true}`。**舞台自己算**——
 ## 它要畫的是「誰正在吃電」「哪裡正在被啃」，模擬層只留了一個座數。HUD 與小地圖會讀它們。
 var engaged: Dictionary = {}
@@ -114,6 +123,26 @@ func in_map(_c: Vector2i) -> bool:
 
 ## 每幀的視野緩動（只動畫面，不碰模擬）。
 func tick_view(_delta: float) -> void:
+	pass
+
+
+## 這個舞台能傾斜嗎？（HUD 據此決定要不要出傾斜的控制。）
+func can_tilt() -> bool:
+	return false
+
+
+## 傾斜一個相對量（度）。滑鼠拖曳與按鈕走這條。
+func tilt_by(_deg: float, _immediate: bool = false) -> void:
+	pass
+
+
+## 傾斜到某個角度（0 ＝ 正俯瞰）。`immediate` 為真時當場到位（測試用），否則平滑追過去。
+func tilt_to(_deg: float, _immediate: bool = false) -> void:
+	pass
+
+
+## 俯瞰 ↔ 傾斜的切換鈕（「3D」）。
+func tilt_toggle() -> void:
 	pass
 
 

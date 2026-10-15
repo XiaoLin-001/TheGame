@@ -150,6 +150,10 @@ var bp_index: int = -1
 
 ## 中鍵按著沒放（B1.3.1）＝正在平移地圖。
 var _panning: bool = false
+## 右鍵按著沒放（B4.1）＝正在傾斜視角（只有傾斜舞台）。
+var _tilting: bool = false
+var _tilt_slider: VSlider = null
+var _tilt_button: Button = null
 
 var hover: Vector2i = Vector2i(-999, -999)
 
@@ -211,6 +215,15 @@ func _ready() -> void:
 			selftest.click_selftest.call_deferred()
 
 
+## 這一局用傾斜舞台嗎？**有鉤子（自動化）時預設平面、玩家實玩預設傾斜**（`Hooks.stage3d`／`stage2d` 明寫時照它）。
+func _wants_tilt_stage() -> bool:
+	if Hooks.stage3d:
+		return true
+	if Hooks.stage2d or Env.any_hook():
+		return false
+	return true
+
+
 ## 建立並接上全部模組（`screens/battle/`）。
 ##
 ## **加入的順序有意義**：子節點依加入順序繪圖，後加的在上面——舞台在最底、覆蓋層次之，
@@ -218,7 +231,7 @@ func _ready() -> void:
 ## 不動這些模組。
 func _build_modules() -> void:
 	# 唯一知道「哪一種舞台」的地方：其餘一律只認 `Stage.gd` 的契約。
-	stage = Stage3D.new() if Hooks.stage3d else Stage2D.new()
+	stage = Stage3D.new() if _wants_tilt_stage() else Stage2D.new()
 	overlay = Overlay2D.new()
 	feedback = Feedback.new()
 	selftest = SelfTest.new()
@@ -324,6 +337,12 @@ func _setup_session() -> void:
 	else:
 		s.setup(MapsData.SANDBOX if Hooks.panel == "sandbox" else MapsData.SHOAL, [], meta)
 	stage.reset_view()
+	if stage.can_tilt() and Hooks.tilt > 0.0:
+		stage.tilt_to(Hooks.tilt, true)
+	# `TL_FOCUS="x,y,zoom"`：2D 舞台在自己的 `reset_view()` 裡處理；傾斜舞台走這裡（拍近照用）。
+	if stage.can_tilt() and Hooks.focus.x >= 0:
+		stage.zoom_by(Hooks.focus_zoom, stage.FRAME.get_center())
+		stage.center_view_on(Hooks.focus, true)
 	feedback.audio_reset()
 	# 兩層一起起跑，戰鬥層先靜音（`AudioBus.music()` 的無縫切層前提）。
 	AudioBus.music("battle")
@@ -353,6 +372,7 @@ func _process(delta: float) -> void:
 	# 視野緩動與小地圖倒數：都只動畫面，不碰模擬（細節在各自的函式）。
 	Prof.mark()
 	stage.tick_view(delta)
+	refresh_tilt()
 	overlay.tick(delta)
 	Prof.lap("proc.view")
 
@@ -438,6 +458,11 @@ func _gui_input(event: InputEvent) -> void:
 			stage.pan_by(mm.relative)
 			redraw()
 			return
+		# ★ 傾斜：**按住右鍵上下拖**（B4.1，像地圖 App 的 3D 手勢）。往上拖＝更側視。
+		#   ⚠ 右鍵不是唯一的路（P3）：左上角有「3D」鈕與傾斜滑桿；觸控走那兩個。
+		if _tilting:
+			stage.tilt_by(-mm.relative.y * 0.35, true)
+			return
 		# ★ 小地圖按住拖曳（B2.1d，使用者指定）：按住不放，視野持續跟著游標走。
 		#   走 `_pan_goal` → 畫面是**平滑**追過去的，不是一格一格跳。
 		if overlay.mini_drag:
@@ -456,6 +481,9 @@ func _gui_input(event: InputEvent) -> void:
 		return
 	if mb.button_index == MOUSE_BUTTON_MIDDLE:
 		_panning = mb.pressed
+		return
+	if mb.button_index == MOUSE_BUTTON_RIGHT and stage.can_tilt():
+		_tilting = mb.pressed and stage.FRAME.has_point(mb.position)
 		return
 	if not mb.pressed:
 		if mb.button_index == MOUSE_BUTTON_LEFT and overlay.mini_drag:
@@ -476,6 +504,10 @@ func _gui_input(event: InputEvent) -> void:
 	#     而那會讓「滑到底之後想捲外層」這個標準行為壞掉。**限制範圍才是對的層級。**
 	if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 		if not stage.FRAME.has_point(mb.position):
+			return
+		# Shift＋滾輪 ＝ 傾斜（桌面的便利；同樣不是唯一的路）。
+		if mb.shift_pressed and stage.can_tilt():
+			stage.tilt_by(6.0 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else -6.0)
 			return
 		stage.zoom_by(stage.ZOOM_STEP if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / stage.ZOOM_STEP,
 			mb.position)
@@ -631,6 +663,39 @@ func _build_zoom_bar() -> void:
 	refresh_zoom()
 
 
+## 傾斜控制（B4.1，**只有傾斜舞台才有**）：地圖左上角一顆「3D／2D」切換鈕 ＋ 一根垂直滑桿。
+## 放在地圖框架裡而不是頂欄——頂欄右端那一排（縮放）已經沒有空位；左上角是地圖 App 放視角控制的位置。
+## 兩個控制都是可點／可拖的（P3：觸控沒有右鍵與 Shift）。
+func _build_tilt_bar() -> void:
+	if not stage.can_tilt():
+		return
+	var box := UiKit.panel(0.82)
+	box.position = stage.FRAME.position + Vector2(8.0, 8.0)
+	add_child(box)
+	var col := UiKit.vbox(6)
+	box.add_child(col)
+	_tilt_button = Button.new()
+	_tilt_button.pressed.connect(func() -> void: stage.tilt_toggle())
+	col.add_child(UiKit.touchable(_tilt_button))
+	_tilt_slider = VSlider.new()
+	_tilt_slider.min_value = 0.0
+	_tilt_slider.max_value = stage.TILT_MAX
+	_tilt_slider.step = 1.0
+	_tilt_slider.custom_minimum_size = Vector2(UiKit.TOUCH_MIN, 120.0)
+	_tilt_slider.value_changed.connect(func(v: float) -> void: stage.tilt_to(v, true))
+	col.add_child(_tilt_slider)
+	refresh_tilt()
+
+
+## 讓傾斜控制跟上舞台（鈕上的字、滑桿的位置）。舞台的傾斜會緩動，滑桿跟著動而不回頭觸發它。
+func refresh_tilt() -> void:
+	if _tilt_button == null:
+		return
+	_tilt_button.text = "2D" if stage.tilt_goal() > 5.0 else "3D"
+	if not is_equal_approx(_tilt_slider.value, stage.tilt):
+		_tilt_slider.set_value_no_signal(stage.tilt)
+
+
 ## HUD 的版面：**每個面板自己建自己的 widget**（`hud/*.gd`），這裡只決定它們放在哪、
 ## 以什麼順序加進來——**加入順序就是繪圖順序與命中順序**，下面每一段都不要調換。
 func _build_ui() -> void:
@@ -638,6 +703,7 @@ func _build_ui() -> void:
 	topbar.build_top()
 	menulayer.build_button()
 	_build_zoom_bar()
+	_build_tilt_bar()
 
 	# 左欄：建造清單。
 	buildbar.build()
