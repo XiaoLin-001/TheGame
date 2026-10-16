@@ -475,7 +475,7 @@ func _gui_input(event: InputEvent) -> void:
 		if stage.can_tilt() and stage.FRAME.has_point(pg.position):
 			stage.tilt_by(-pg.delta.y * 0.35, true)
 		if stage.can_rotate() and stage.FRAME.has_point(pg.position):
-			stage.yaw_by(pg.delta.x * 0.35, true)
+			stage.yaw_by(-pg.delta.x * 0.35, true)
 		return
 	if event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
@@ -494,11 +494,11 @@ func _gui_input(event: InputEvent) -> void:
 			return
 		# ★ 傾斜：**按住右鍵上下拖**（B4.1，像地圖 App 的 3D 手勢）。往上拖＝更側視。
 		#   ⚠ 右鍵不是唯一的路（P3）：左上角有「3D」鈕與傾斜滑桿；觸控走那兩個。
-		# 左右拖＝旋轉（往右拖＝地圖順時針），與上下拖的傾斜同一個手勢（B4.4，地圖 App 的語彙）。
+		# 左右拖＝旋轉（往右拖＝地圖逆時針；B4.4.1 依使用者要求與第一版反向），與上下拖的傾斜同一個手勢（地圖 App 的語彙）。
 		if _tilting:
 			stage.tilt_by(-mm.relative.y * 0.35, true)
 			if stage.can_rotate():
-				stage.yaw_by(mm.relative.x * 0.35, true)
+				stage.yaw_by(-mm.relative.x * 0.35, true)
 			return
 		# ★ 小地圖按住拖曳（B2.1d，使用者指定）：按住不放，視野持續跟著游標走。
 		#   走 `_pan_goal` → 畫面是**平滑**追過去的，不是一格一格跳。

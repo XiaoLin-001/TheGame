@@ -1913,16 +1913,17 @@ func stage_smoke() -> void:
 	await _wait_yaw()
 	var yw_keys: bool = is_equal_approx(stage.yaw_goal(), Stage.YAW_STEP)  # E E Q ＝ +45 +45 −45
 	stage.yaw_to(0.0, true)
-	# 右鍵往右拖＝順時針；往左拖＝逆時針（上下拖仍是傾斜，這裡水平拖不改傾斜）
+	# 右鍵往右拖＝逆時針（B4.4.1：與第一版反向）；往左拖＝順時針（上下拖仍是傾斜，這裡水平拖不改傾斜）
 	var drag_from := Stage.FRAME.get_center()
 	var tilt_keep: float = stage.tilt_goal()
 	_drag_px(drag_from, drag_from + Vector2(100.0, 0.0), MOUSE_BUTTON_RIGHT)
 	await _frames(2)
-	var yw_drag_r: bool = stage.yaw_goal() > 20.0 and stage.yaw_goal() < 60.0 and is_equal_approx(stage.tilt_goal(), tilt_keep)
+	var drag_r_delta: float = wrapf(stage.yaw_goal(), -180.0, 180.0)
+	var yw_drag_r: bool = drag_r_delta < -20.0 and drag_r_delta > -60.0 and is_equal_approx(stage.tilt_goal(), tilt_keep)
 	var yaw_mid: float = stage.yaw_goal()
 	_drag_px(drag_from, drag_from + Vector2(-100.0, 0.0), MOUSE_BUTTON_RIGHT)
 	await _frames(2)
-	var yw_drag_l: bool = absf(wrapf(stage.yaw_goal() - yaw_mid, -180.0, 180.0)) > 20.0 and wrapf(stage.yaw_goal() - yaw_mid, -180.0, 180.0) < 0.0
+	var yw_drag_l: bool = wrapf(stage.yaw_goal() - yaw_mid, -180.0, 180.0) > 20.0
 	stage.yaw_to(0.0, true)
 	# Ctrl＋滾輪
 	for wheel_press: bool in [true, false]:
@@ -1944,7 +1945,7 @@ func stage_smoke() -> void:
 	var yw_pan_out: bool = is_equal_approx(stage.yaw_goal(), 0.0)
 	ypan.position = drag_from
 	scr._gui_input(ypan)
-	var yw_pan: bool = stage.yaw_goal() > 5.0
+	var yw_pan: bool = wrapf(stage.yaw_goal(), -180.0, 180.0) < -5.0
 	stage.yaw_to(0.0, true)
 	# 每個旋轉角（俯瞰與傾斜各一）：往返、全景框住四個角、不出小地圖
 	# ★ 往返的探針要**離建築兩格以上**：傾斜之後「看得到什麼就是什麼」——從側面看，前面的建築會擋住後面那一格的格心，
