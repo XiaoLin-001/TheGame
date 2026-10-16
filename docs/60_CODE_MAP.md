@@ -117,9 +117,10 @@
 | 舞台（傾斜，B4.1／B4.2） | `screens/battle/Stage3D.gd`（約 800 行）：內嵌 `Stage2D` 當地面貼圖 ＋ 3D 地形／建築／敵人／徽章；傾斜控制在 `Battle`（左上角「3D」鈕與滑桿、右鍵拖曳、Shift＋滾輪）；`TL_STAGE=2d｜3d`、`TL_TILT=<度>`；**玩家實玩預設用它，自動化預設平面** | 使用者指定的「俯瞰 2D → 側視 3D」；`tests/stage3d_test.gd` 是契約與造型的驗收尺，`tests/gallery_shot.gd` 是看造型的陳列照工具 |
 | 開機速度（B4.4） | `screens/BattleLoader.gd`（延後載入局內畫面，標題一出來就 `ResourceLoader.load_threaded_request` 預取）；`Hooks._run_sim()` 的 `load()`（不 `preload`）；`Battle.SELFTEST_PATH`（測試鉤子執行者只在有 `TL_*` 時載入） | `Main`／`Campaign`／`Tiers` 不再 `preload` `Battle.gd`——`preload` 會在載入那支腳本時把整個局內（約 2/3 的腳本行數）編譯完，玩家先等完才看得到標題 |
 | 自動化的視窗（B4.4） | `qa/desk.py`（`CreateDesktop` 私有桌面）；`qa/check.py` 的 `_godot()` 走它 | 視窗開在另一個 Windows 桌面物件上：不出現在使用者的螢幕、不搶焦點；`--position` 沒用（Godot 夾回螢幕內）、`--headless` 沒有 GL |
+| 砲塔瞄準線（B4.5） | `screens/battle/AimLines.gd`（資料：每座有目標的塔此刻看著誰、距離、有沒有被擋；目標選擇與 `BattleController._fire()` 同一組函式）；`Overlay2D._draw_aim_lines()`；`Battle.toggle_aim_lines()`（`V` 鍵、「瞄準」鈕）；`Settings`（核取框）；契約 `Stage.muzzle_screen／foe_screen／sight_blocked`；`Relief.line_blocked()` | 預設關（`settings.aim_lines`，`TL_AIM=1`）。橙色虛線只是畫面上的視線，模擬層不看地形；`los_measure.gd` 是量「地形會擋掉多少」的開發工具 |
 | 覆蓋層 | `screens/battle/Overlay2D.gd` | 能量列、小地圖、邊緣箭頭——螢幕座標，只問舞台契約 |
 | HUD | `screens/battle/hud/*.gd`（11 個面板） | 全是 2D `Control` |
-| 3D 美術生成器 | `render/3d/`：`Extrude`（積木＋烘焙光照＋徽章）、`Models`（十四種建築與六種敵人的配方、敵人的動作參數）、`Relief`（梯田地形、懸崖、擺設）、`Wires`（導管的路徑與實例資料、單位方盒）、`Fx3D`（特效與血條的幾何） | 純函式，輸出網格；吃與 2D 同一組級數步數與機制欄位；顏色全來自 `Palette` 的材質色票 |
+| 3D 美術生成器 | `render/3d/`：`Extrude`（積木＋烘焙光照＋徽章）、`Models`（十四種建築與六種敵人的配方、敵人的動作參數）、`Creatures`（B4.5：六類生物的放樣造型與 6 相位動畫，由機制欄位推導）、`Relief`（梯田地形、懸崖、擺設）、`Wires`（導管的路徑與實例資料、單位方盒）、`Fx3D`（特效與血條的幾何） | 純函式，輸出網格；吃與 2D 同一組級數步數與機制欄位；顏色全來自 `Palette` 的材質色票 |
 | 2D 美術生成器 | `render/2d/`：`Glyphs`（節點幾何）、`Foes`（敵人幾何）、`Terrain`（地貌）、`TitleBackdrop`、`Batch`（同色圖形併成一個指令） | 純函式，輸出幾何；3D 要寫對應的網格生成器 |
 | 效能量測 | `core/Prof.gd`（`TL_PROF`）、`qa/check.py perf`、`SelfTest.stress_frame()` | 逐段計時、引擎渲染 CPU／GPU、draw call；T4，一般遊玩閒置 |
 | 共用美術 token | `render/Palette.gd`（色值）、`Motion.gd`（時長階、`reduce_motion`）、`Shapes.gd`（格大小 `GRID`、`fit_zoom`、線形 helper） | 維度無關（`Shapes` 的繪圖 helper 是 2D 的，`GRID`／`fit_zoom` 不是） |

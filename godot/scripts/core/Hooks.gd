@@ -55,6 +55,8 @@ var stage2d: bool = false
 var tilt: float = 0.0
 ## ★ `TL_YAW=<度>`：傾斜舞台的起始旋轉角（0 ＝ 北在上，正 ＝ 地圖順時針）。旋轉同樣是互動狀態，拍截圖要靠它（B4.4）。
 var yaw: float = 0.0
+## ★ `TL_AIM=1`：開局就顯示砲塔的瞄準線（B4.5）。
+var aim: bool = false
 ## ★ `TL_PROF=1`：逐段計時（B3.15，`core/Prof.gd`）。要配 `TL_STRESS`——它在量測結束時印報表。
 var prof: bool = false
 
@@ -74,6 +76,7 @@ func _ready() -> void:
 	stage2d = Env.str_of("TL_STAGE").to_lower() == "2d"
 	tilt = Env.float_of("TL_TILT", 0.0)
 	yaw = Env.float_of("TL_YAW", 0.0)
+	aim = Env.flag("TL_AIM")
 	prof = Env.flag("TL_PROF")
 	var f := Env.str_of("TL_FOCUS")
 	if f != "":

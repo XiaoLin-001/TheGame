@@ -118,7 +118,7 @@ func _run() -> void:
 			var mi := MeshInstance3D.new()
 			mi.mesh = st._foe_mesh(ft, v)
 			mi.material_override = st._solid
-			mi.position = Vector3(x, 0.0, 15.5)
+			mi.position = Vector3(x, st._floor_at(floori(x), 15) * st.lift(), 15.5)  # 站在地形上（起伏加強之後，y ＝ 0 會埋進山裡）
 			st._foe_root.add_child(mi)
 			x += 1.3
 		x += 0.6

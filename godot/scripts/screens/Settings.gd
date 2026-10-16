@@ -24,6 +24,7 @@ var _sliders: Dictionary = {}          # key → HSlider
 var _reduce_check: Button = null
 var _fullscreen_check: Button = null
 var _tilt_check: Button = null
+var _aim_check: Button = null
 var _res_buttons: Array[Button] = []
 var _col: VBoxContainer = null
 
@@ -103,6 +104,14 @@ func _click_selftest() -> void:
 	await get_tree().process_frame
 	var tilt_back: bool = bool(s.get("tilt_stage", true)) == tilt_was
 	var tilt_ok: bool = _tilt_check != null and tilt_flips and tilt_back
+	# ③c 瞄準線（B4.5）：切換 → 設定值真的變了 → 切回來。
+	var aim_was: bool = bool(s.get("aim_lines", false))
+	_aim_check.button_pressed = not aim_was
+	await get_tree().process_frame
+	var aim_flips: bool = bool(s.get("aim_lines", false)) == (not aim_was)
+	_aim_check.button_pressed = aim_was
+	await get_tree().process_frame
+	var aim_ok: bool = _aim_check != null and aim_flips and bool(s.get("aim_lines", false)) == aim_was
 
 	# ④ 存檔沒有被真的寫出去（有鉤子時 persist=false，鐵律 1）。
 	var no_write: bool = not SaveService.persist
@@ -118,10 +127,10 @@ func _click_selftest() -> void:
 
 	var ok: bool = (
 		vol_saved and mute_wins and buses_exist and reduce_live and reduce_off
-		and resized and restored and tilt_ok and no_write and fits and esc_back
+		and resized and restored and tilt_ok and aim_ok and no_write and fits and esc_back
 	)
-	print("[TL_CLICKTEST/settings] vol=%s buses=%s mute_wins=%s reduce_on=%s reduce_off=%s resize=%s restore=%s tilt_stage=%s no_write=%s fits=%s esc_back=%s → %s" % [
-		vol_saved, buses_exist, mute_wins, reduce_live, reduce_off, resized, restored, tilt_ok, no_write,
+	print("[TL_CLICKTEST/settings] vol=%s buses=%s mute_wins=%s reduce_on=%s reduce_off=%s resize=%s restore=%s tilt_stage=%s aim_lines=%s no_write=%s fits=%s esc_back=%s → %s" % [
+		vol_saved, buses_exist, mute_wins, reduce_live, reduce_off, resized, restored, tilt_ok, aim_ok, no_write,
 		fits, esc_back, "PASS" if ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
@@ -159,22 +168,25 @@ func _build() -> void:
 	_reduce_check = _checkbox(
 		"減少動態效果", bool(_settings().get("reduce_motion", false)), _on_reduce
 	)
-	col.add_child(_left(_reduce_check))
-	col.add_child(UiKit.label(
-		"　關掉碎片爆、脈動與所有週期性動態。不影響任何數值。",
-		13, Palette.TEXT_SECONDARY, false
-	))
 	_fullscreen_check = _checkbox(
 		"全螢幕", bool(_settings().get("fullscreen", false)), _on_fullscreen
 	)
-	col.add_child(_left(_fullscreen_check))
+	col.add_child(_pair(_reduce_check, _fullscreen_check))
+	col.add_child(UiKit.label(
+		"　減少動態效果：關掉碎片爆、脈動與所有週期性動態。不影響任何數值。",
+		13, Palette.TEXT_SECONDARY, false
+	))
 	# ★ B4.3：傾斜視角。局內的地圖預設可以往側面傾斜（俯瞰變側視，長出 3D）；關掉＝永遠是平面的 2D 俯瞰。舞台是進局時建的，所以下一局起生效。
 	_tilt_check = _checkbox(
 		"傾斜視角（3D）", bool(_settings().get("tilt_stage", true)), _on_tilt_stage
 	)
-	col.add_child(_left(_tilt_check))
+	# ★ B4.5：砲塔瞄準線。每座有目標的塔一條線指向它現在看著的敵人、標距離（格）；局內按 V 也能切。
+	_aim_check = _checkbox(
+		"顯示砲塔瞄準線", bool(_settings().get("aim_lines", false)), _on_aim_lines
+	)
+	col.add_child(_pair(_tilt_check, _aim_check))
 	col.add_child(UiKit.label(
-		"　地圖可以往側面傾斜，看到立體的地形與造型。下一局起生效。",
+		"　傾斜視角：地圖可以往側面傾斜（下一局起生效）。瞄準線：每座塔一條線指向它現在看著的敵人，標距離（格）；局內按 V 也能切。",
 		13, Palette.TEXT_SECONDARY, false
 	))
 
@@ -192,7 +204,7 @@ func _build() -> void:
 		res_row.add_child(UiKit.touchable(b))
 
 	col.add_child(UiKit.label(
-		"※ 只有一顆鍵：ESC ＝ 選單／返回。其餘操作都在滑鼠上。",
+		"※ 鍵盤：ESC ＝ 選單／返回；Q／E ＝ 旋轉視角；V ＝ 砲塔瞄準線。其餘操作都在滑鼠上。",
 		13, Palette.TEXT_DISABLED, false
 	))
 
@@ -231,6 +243,14 @@ func _checkbox(text: String, on: bool, handler: Callable) -> Button:
 	return c
 
 
+## 兩個開關併成一排（靠左、自然寬度）。
+func _pair(a: Control, b: Control) -> Control:
+	var row := UiKit.hbox(16)
+	row.add_child(UiKit.touchable(a))
+	row.add_child(UiKit.touchable(b))
+	return row
+
+
 ## `VBoxContainer` 會把子節點橫向撐滿，開關撐成一整條看起來像分隔線不像鈕。
 ## 包一層 `HBox` 讓它維持自然寬度、靠左。
 func _left(c: Control) -> Control:
@@ -261,6 +281,11 @@ func _on_reduce(on: bool) -> void:
 
 func _on_tilt_stage(on: bool) -> void:
 	_settings()["tilt_stage"] = on
+	_save()
+
+
+func _on_aim_lines(on: bool) -> void:
+	_settings()["aim_lines"] = on
 	_save()
 
 

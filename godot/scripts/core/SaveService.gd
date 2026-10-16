@@ -98,6 +98,9 @@ const DEFAULTS := {
 		# ★ B4.3：局內用不用傾斜舞台（地圖能往側面傾斜、長出 3D）。關＝永遠是平面的 2D 俯瞰。**加鍵不 bump `SAVE_VERSION`**；
 		# 讀的地方一律 `.get("tilt_stage", true)`，所以舊存檔不必遷移。下一局起生效（舞台是進局時建的）。
 		"tilt_stage": true,
+		# ★ B4.5：局內顯示砲塔的瞄準線（每座塔一條線指向它現在看著的敵人，標距離）。預設關；`V` 鍵、3D 控制盒的「瞄準」鈕、設定畫面都能切。
+		# 讀的地方一律 `.get("aim_lines", false)`（加鍵不 bump `SAVE_VERSION`）。
+		"aim_lines": false,
 	},
 }
 

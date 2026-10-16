@@ -123,8 +123,10 @@ var _solid_hit: ShaderMaterial = null    # 受擊一閃（`Extrude.FLASH_SHADER`
 # 特效、導管、珠子、落點預覽（B4.3）。
 var _fx_mesh: ArrayMesh = null
 var _fx_top_mesh: ArrayMesh = null
+var _fx_glow_mesh: ArrayMesh = null   # 加亮混合那一層（光暈、拖尾的亮部、命中的閃光）
 var _fx_mi: MeshInstance3D = null
 var _fx_top_mi: MeshInstance3D = null
+var _fx_glow_mi: MeshInstance3D = null
 var _wire_mm: MultiMesh = null       # 所有導管：單位方盒的實例（一個 draw call）
 var _wire_mmi: MultiMeshInstance3D = null
 var _wire_mat: ShaderMaterial = null
@@ -319,6 +321,7 @@ func _ready() -> void:
 	# 特效：一般的（深度測試）與永遠看得見的（血條）各一個重複使用的網格。
 	_fx_mesh = ArrayMesh.new()
 	_fx_top_mesh = ArrayMesh.new()
+	_fx_glow_mesh = ArrayMesh.new()
 	var fx_mat := ShaderMaterial.new()
 	fx_mat.shader = Shader.new()
 	fx_mat.shader.code = Fx3D.SHADER
@@ -337,6 +340,15 @@ func _ready() -> void:
 	_fx_top_mi.material_override = fx_top_mat
 	_fx_top_mi.visible = false
 	_vp.add_child(_fx_top_mi)
+	var fx_glow_mat := ShaderMaterial.new()
+	fx_glow_mat.shader = Shader.new()
+	fx_glow_mat.shader.code = Fx3D.GLOW_SHADER
+	fx_glow_mat.render_priority = 6
+	_fx_glow_mi = MeshInstance3D.new()
+	_fx_glow_mi.mesh = _fx_glow_mesh
+	_fx_glow_mi.material_override = fx_glow_mat
+	_fx_glow_mi.visible = false
+	_vp.add_child(_fx_glow_mi)
 	# 落點預覽：手上那一種建築的半透明造型。
 	_ghost_mat = ShaderMaterial.new()
 	_ghost_mat.shader = Shader.new()
@@ -878,6 +890,13 @@ func _sync_foes() -> void:
 			mi.mesh = _foe_mesh(type, id)
 			_foe_root.add_child(mi)
 			_foes[id] = mi
+		# 動作循環的第幾張網格（腿、觸手、翅）：依時間換指標；`reduce_motion` 時永遠是第 0 張（靜止的樣子）。
+		var frame := 0
+		if animate:
+			frame = Models.foe_frame(_foe_motion(type, def), tsec, float(id) * 1.7)
+		if frame != int(mi.get_meta("frame", 0)):
+			mi.mesh = _foe_mesh(type, id, frame)
+			mi.set_meta("frame", frame)
 		# 受擊一閃：這一 tick 有彈落在它身上，本體往亮階推一下（換材質，不必逐實例參數）。
 		mi.material_override = _solid_hit if hit_ids.has(id) else _solid
 		var d: Vector2 = Tide.heading_of(s.path, prog)
@@ -920,11 +939,12 @@ func _foe_motion(type: String, def: Dictionary) -> Dictionary:
 	return _foe_motions[type]
 
 
-## 敵人的網格：一型四個變體（用 id 取），色相在品紅帶內小幅位移，同一型的幾隻不會長得一模一樣。
-func _foe_mesh(type: String, id: int) -> ArrayMesh:
-	var key := "%s|%d" % [type, id % 4]
+## 敵人的網格：一型四個變體（用 id 取），色相在品紅帶內小幅位移，同一型的幾隻不會長得一模一樣；
+## 每個變體再烤 `Creatures.FRAMES` 張動作相位（腿的步態、觸手、翅），用到才建（建一張約 1–3 ms）。
+func _foe_mesh(type: String, id: int, frame: int = 0) -> ArrayMesh:
+	var key := "%s|%d|%d" % [type, id % 4, frame]
 	if not _foe_meshes.has(key):
-		_foe_meshes[key] = Models.foe(Enemies.of(type), id % 4)
+		_foe_meshes[key] = Models.foe(Enemies.of(type), id % 4, frame)
 	return _foe_meshes[key]
 
 
@@ -1064,10 +1084,12 @@ func _sync_fx() -> void:
 	if _lift <= FLAT_FOE_MAX_LIFT:
 		_fx_mi.visible = false
 		_fx_top_mi.visible = false
+		_fx_glow_mi.visible = false
 		_shadow_mmi.visible = false
 		return
 	var pen := Fx3D.Pen.new()
 	var top := Fx3D.Pen.new()
+	var glow := Fx3D.Pen.new()
 	var r := _r
 	var u := _u
 	var frac: float = scr.accum / BattleController.TICK
@@ -1111,60 +1133,60 @@ func _sync_fx() -> void:
 	if n_foes > 0:
 		_shadow_mm.buffer = _shadow_buf
 	_shadow_mmi.visible = n_foes > 0
-	_fx_shots(pen, r, u, frac)
-	_fx_bursts(pen, r, u, frac)
-	_fx_shields(pen, r, u, frac)
+	_fx_shots(pen, glow, r, u, frac)
+	_fx_bursts(pen, glow, r, u, frac)
+	_fx_shields(pen, glow, r, u, frac)
 	pen.to_mesh(_fx_mesh)
 	top.to_mesh(_fx_top_mesh)
+	glow.to_mesh(_fx_glow_mesh)
 	_fx_mi.visible = not pen.is_empty()
 	_fx_top_mi.visible = not top.is_empty()
+	_fx_glow_mi.visible = not glow.is_empty()
 
 
-func _fx_shots(pen: Fx3D.Pen, r: Vector3, u: Vector3, frac: float) -> void:
+func _fx_shots(pen: Fx3D.Pen, glow: Fx3D.Pen, r: Vector3, u: Vector3, frac: float) -> void:
 	for sh: Dictionary in s.shots:
 		var def := NodeDefs.of(String(sh.get("by", "anchor")))
 		var pa := _lifted(_muzzle_of(sh["from"]))
 		var pb := _lifted(_body_of(_ground._shot_anchor(sh, "target", "prog", "to")))
 		var t := Motion.progress(BattleController.SHOT_TTL, int(sh["ttl"]), frac)
-		var fade := 1.0 - t
 		var beam: bool = bool(def.get("pierce", false))
-		# 砲口一閃（菱形；光束多一圈柔光）。
+		var energy := String(def.get("dmg_type", "physical")) == "energy"
+		var power := Fx3D.power_of(float(def.get("dmg", 18.0)))
+		var col := Palette.ORDER_BRIGHT if energy else Palette.ORDER_CYAN
+		var span := pa.distance_to(pb)
+		var seed_id := int(sh.get("target", 0))
+		# 砲口：往前噴的閃光（`reduce_motion` 時不閃）。
 		if not Motion.reduce and t < 0.5:
-			var k := 1.0 - t / 0.5
-			if beam:
-				pen.disc(pa, Fx3D.px(4.0 + 4.0 * k), r, u, Palette.alpha(Palette.ORDER_BRIGHT, 0.35 * k))
-			pen.poly(pa, Shapes.ngon(Vector2.ZERO, Fx3D.px(3.0 + 5.0 * k), 4, 0.0), r, u, Palette.alpha(Palette.ORDER_BRIGHT, 0.85 * k))
+			Fx3D.muzzle(pen, glow, pa, pb - pa, 1.0 - t / 0.5, power, r, u, _f, col)
 		if beam:
-			# 能量貫穿：整條線一次亮到底，寬度 3→1 衰減。
-			pen.ribbon(pa, pb, Fx3D.px(6.0), _f, Palette.alpha(Palette.ORDER_BRIGHT, 0.10 + 0.18 * fade))
-			pen.ribbon(pa, pb, Fx3D.px(1.0 + 2.0 * fade), _f, Palette.alpha(Palette.ORDER_BRIGHT, 0.35 + 0.65 * fade))
+			# 能量貫穿：整條線一次亮到底、亮段沿線往目標跑；落點一直亮到消退。
+			Fx3D.beam(pen, glow, pa, pb, t, power, r, u, _f, col)
+			if not Motion.reduce:
+				Fx3D.impact(pen, glow, pb, 1.0 - t, power, seed_id, r, u, _f, col)
 			continue
-		# 物理彈丸：短促實心的一段沿線飛行。
-		var d3 := pb - pa
-		var total := d3.length()
-		if total > 0.001:
-			var dir := d3 / total
-			var bolt := minf(Fx3D.px(14.0), total * 0.45)
-			var head := pa + dir * (bolt + (total - bolt) * Motion.ease_out_cubic(t))
-			pen.ribbon(head - dir * bolt, head, Fx3D.px(3.0), _f, Palette.alpha(Palette.ORDER_CYAN, 0.45 + 0.55 * fade))
-		# 命中火花：落點炸開一顆四角星。
-		if not Motion.reduce and t >= 0.6:
-			var k := (1.0 - t) / 0.4
-			var rr := 3.0 + 6.0 * (1.0 - k)
-			pen.poly(pb, Shapes.star(Vector2.ZERO, Fx3D.px(rr), Fx3D.px(rr * 0.4), 4, PI * 0.25), r, u, Palette.alpha(Palette.ORDER_BRIGHT, 0.9 * k))
-		# 濺射環：貼著腳下的擴張環，半徑就是資料裡的 `splash` 格（遊戲距離，不放大）。
-		if sh.has("splash_at"):
+		# 物理彈丸：沿弧飛行、拖一條尾。濺射的（碎浪）是拋射的砲彈，弧高得多。
+		var lobbed := sh.has("splash_at")
+		var arc := minf(span * (0.34 if lobbed else 0.10), 1.1) * _lift
+		Fx3D.bolt(pen, glow, pa, pb, t, power, arc, r, u, _f, col)
+		# 命中：落點炸開（閃光、星、火花線、環）。
+		if not Motion.reduce and t >= 0.55:
+			Fx3D.impact(pen, glow, pb, (1.0 - t) / 0.45, power, seed_id, r, u, _f, col)
+		# 濺射：落地之後貼著腳下擴張的衝擊波，最終半徑就是資料裡的 `splash` 格（遊戲距離，不放大）。
+		if lobbed and t >= 0.55:
 			var at: Vector2 = _ground._shot_anchor(sh, "splash_target", "splash_prog", "splash_at")
 			var cell := Vector2i(floori(at.x / Shapes.GRID), floori(at.y / Shapes.GRID))
 			var ring_at := Vector3(at.x / Shapes.GRID, (Relief.floor_at(_rel, cell) + 0.14) * _lift + 0.01, at.y / Shapes.GRID)
-			pen.flat_ring(ring_at, float(def.get("splash", 0.0)) * Motion.ease_out_cubic(t), Fx3D.px(2.0), Palette.alpha(Palette.ORDER_CYAN, 0.15 + 0.45 * fade))
+			Fx3D.shockwave(pen, glow, ring_at, float(def.get("splash", 0.0)), (t - 0.55) / 0.45, col)
 		# 回收：一顆琥珀珠回流到塔（方向是反的，走 t 的後半段）。
 		if float(def.get("reclaim", 0.0)) > 0.0 and t >= 0.4:
 			var k := (t - 0.4) / 0.6
-			pen.disc(pb.lerp(pa, Motion.ease_out_cubic(k)), Fx3D.px(3.0), r, u, Palette.alpha(Palette.ENERGY_AMBER, 1.0 - k))
+			var bead := pb.lerp(pa, Motion.ease_out_cubic(k))
+			glow.disc(bead, Fx3D.px(7.0), r, u, Palette.alpha(Palette.ENERGY_AMBER, 0.45 * (1.0 - k)))
+			pen.disc(bead, Fx3D.px(3.0), r, u, Palette.alpha(Palette.ENERGY_AMBER, 1.0 - k))
 
 
-func _fx_bursts(pen: Fx3D.Pen, r: Vector3, u: Vector3, frac: float) -> void:
+func _fx_bursts(pen: Fx3D.Pen, glow: Fx3D.Pen, r: Vector3, u: Vector3, frac: float) -> void:
 	for b: Dictionary in s.bursts:
 		var t := Motion.progress(int(b["life"]), int(b["ttl"]), frac)
 		var e := Motion.ease_out_cubic(t)
@@ -1175,35 +1197,35 @@ func _fx_bursts(pen: Fx3D.Pen, r: Vector3, u: Vector3, frac: float) -> void:
 		var base_y := (Relief.floor_at(_rel, cell) + FOE_BODY_Y) if chaos else (_top(cell) + 0.3)
 		var c := _lifted(Vector3(at.x + 0.5, base_y, at.y + 0.5))
 		var seed_id := int(b["seed"])
-		# 一次縮放閃光：混沌＝實心淡去、秩序＝線框擴張。**貼在地上**（直立的圓盤會被溝岸與地形切成鋸齒）。
-		var flash := Palette.alpha(col, (1.0 - t) * (0.55 if chaos else 0.75))
+		# 衝擊波：**貼在地上**（直立的圓盤會被溝岸與地形切成鋸齒）。混沌＝實心閃光 ＋ 外擴的環，秩序＝線框擴張。
 		if chaos:
-			pen.flat_disc(Vector3(at.x + 0.5, (Relief.floor_at(_rel, cell) + 0.14) * _lift + 0.01, at.y + 0.5), Fx3D.px(4.0 + 10.0 * e), flash)
+			var ground := Vector3(at.x + 0.5, (Relief.floor_at(_rel, cell) + 0.14) * _lift + 0.01, at.y + 0.5)
+			Fx3D.shockwave(pen, glow, ground, Fx3D.px(24.0), t, col)
+			# 身上一團閃光＋一道往上衝的亮柱（敵人「炸開」的瞬間）。
+			glow.disc(c, Fx3D.px(5.0 + 9.0 * e), r, u, Palette.alpha(Palette.TIDE_BRIGHT, (1.0 - t) * 0.45))
+			glow.ribbon(c, c + Vector3(0.0, Fx3D.px(34.0) * (0.4 + 0.6 * e) * _lift, 0.0), Fx3D.px(6.0) * (1.0 - t), _f, Palette.alpha(Palette.TIDE_BRIGHT, (1.0 - t) * 0.40))
 		else:
-			pen.flat_ring(Vector3(at.x + 0.5, _top(cell) * _lift + 0.02, at.y + 0.5), Fx3D.px(4.0 + 18.0 * e), Fx3D.px(2.0), flash)
-		# 3–5 個幾何碎片：往外飛（地面方向）、先上拋再落。混沌＝不規則三角＋自轉，秩序＝正方、不自轉。
-		var count := 3 + (absi(seed_id) % 3)
+			pen.flat_ring(Vector3(at.x + 0.5, _top(cell) * _lift + 0.02, at.y + 0.5), Fx3D.px(4.0 + 18.0 * e), Fx3D.px(2.0), Palette.alpha(col, (1.0 - t) * 0.75))
+			glow.flat_ring(Vector3(at.x + 0.5, _top(cell) * _lift + 0.02, at.y + 0.5), Fx3D.px(4.0 + 22.0 * e), Fx3D.px(5.0), Palette.alpha(col, (1.0 - t) * 0.25))
+		# 碎片：往外飛（地面方向）、先上拋再落。混沌 5–8 片、三種形狀（三角碎片、菱形、水珠），秩序 3–5 個正方。
+		var count := (5 + (absi(seed_id) % 4)) if chaos else (3 + (absi(seed_id) % 3))
 		for i in count:
 			var dir := Motion.fragment_dir(seed_id, i, count)
-			var dist := Fx3D.px(10.0 + 34.0 * e)
-			var rise := (0.30 * e - 0.20 * t * t) * _lift
+			var dist := Fx3D.px(10.0 + 34.0 * e) * (0.75 + 0.5 * float((i * 7) % 4) / 3.0)
+			var rise := (0.34 * e - 0.22 * t * t) * _lift
 			var p := c + Vector3(dir.x * dist, rise, dir.y * dist)
 			var rr := (8.0 if chaos else 6.5) * (1.0 - 0.6 * t)
 			var bright: Color = Palette.TIDE_BRIGHT if chaos else Palette.ORDER_BRIGHT
 			var fc := Palette.alpha(bright.lerp(col, minf(1.0, t / 0.3)), 1.0 - t)
 			if chaos:
-				var spin := float(seed_id) * 0.7 + t * 3.0
-				pen.poly(p, PackedVector2Array([
-					Vector2(Fx3D.px(rr * 1.4), 0.0).rotated(spin),
-					Vector2(Fx3D.px(rr), 0.0).rotated(spin + 2.3),
-					Vector2(Fx3D.px(rr * 0.8), 0.0).rotated(spin + 4.1),
-				]), r, u, fc)
+				Fx3D.shard(pen, p, Fx3D.px(rr), i % 3, float(seed_id) * 0.7 + t * 3.0 + float(i), r, u, fc)
+				glow.disc(p, Fx3D.px(rr * 1.1), r, u, Palette.alpha(col, 0.18 * (1.0 - t)), 8)
 			else:
 				var q := Fx3D.px(rr)
 				pen.poly(p, PackedVector2Array([Vector2(-q, -q), Vector2(q, -q), Vector2(q, q), Vector2(-q, q)]), r, u, fc)
 
 
-func _fx_shields(pen: Fx3D.Pen, r: Vector3, u: Vector3, frac: float) -> void:
+func _fx_shields(pen: Fx3D.Pen, glow: Fx3D.Pen, r: Vector3, u: Vector3, frac: float) -> void:
 	for sh: Dictionary in s.shields:
 		var t := Motion.progress(int(sh["life"]), int(sh["ttl"]), frac)
 		var cell: Vector2i = sh["at"]
@@ -1215,9 +1237,30 @@ func _fx_shields(pen: Fx3D.Pen, r: Vector3, u: Vector3, frac: float) -> void:
 			hex.append(Vector2(cos(a), sin(a)) * rad)
 		pen.outline(c, hex, Fx3D.px(3.0), r, u, Palette.alpha(Palette.ORDER_BRIGHT, (1.0 - t) * 0.95))
 		var fill := clampf(float(sh["frac"]), 0.0, 1.0)
-		pen.outline(c, hex, Fx3D.px(7.0), r, u, Palette.alpha(Palette.ORDER_CYAN, (1.0 - t) * 0.45 * fill))
+		glow.outline(c, hex, Fx3D.px(9.0), r, u, Palette.alpha(Palette.ORDER_CYAN, (1.0 - t) * 0.35 * fill))
 		if t < 0.35:
-			pen.disc(c, 0.30, r, u, Palette.alpha(Palette.ORDER_BRIGHT, (0.35 - t) * 1.6))
+			glow.disc(c, 0.34, r, u, Palette.alpha(Palette.ORDER_BRIGHT, (0.35 - t) * 1.4))
+
+
+func muzzle_screen(cell: Vector2i) -> Vector2:
+	return _screen_of(_lifted(_muzzle_of(cell)))
+
+
+func foe_screen(i: int) -> Vector2:
+	if i < 0 or i >= s.enemies.size():
+		return Vector2(-1000.0, -1000.0)
+	var px: Vector2 = _ground._path_px(_ground._enemy_prog(s.enemies[i], i))
+	return _screen_of(_lifted(_body_of(px)))
+
+
+## 視線：從砲口到敵人身體中段的直線，沿線取樣（中間 10 點、頭尾各留一小段），任何一點低於那一格的地形頂面就是被擋住。
+## 高度**不乘 lift**（遊戲裡的實際高度，與傾斜多少無關：傾斜只是看的角度）。
+func sight_blocked(cell: Vector2i, i: int) -> bool:
+	if i < 0 or i >= s.enemies.size() or _rel.is_empty():
+		return false
+	var a := _muzzle_of(cell)
+	var b := _body_of(_ground._path_px(_ground._enemy_prog(s.enemies[i], i)))
+	return Relief.line_blocked(_rel, a, b)
 
 
 ## 炮口：塔頂（格；高度未乘 lift）。塔已經不在了就取一個普通的高度。
@@ -1324,7 +1367,7 @@ func shadow_count() -> int:
 
 
 func fx_triangles() -> int:
-	return Extrude.triangle_count(_fx_mesh) + Extrude.triangle_count(_fx_top_mesh)
+	return Extrude.triangle_count(_fx_mesh) + Extrude.triangle_count(_fx_top_mesh) + Extrude.triangle_count(_fx_glow_mesh)
 
 
 func hp_bar_triangles() -> int:

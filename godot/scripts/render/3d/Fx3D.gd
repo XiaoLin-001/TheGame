@@ -7,8 +7,8 @@ extends RefCounted
 ## 形狀的規格全部沿用 2D（`Stage2D._draw_shots()` 等），這裡沒有任何新的美術 token，也不新增任何模擬狀態。
 ##
 ## ── 兩種幾何 ────────────────────────────────────────────────────────────
-##   · **面向相機的**（billboard）：火花、碎片、閃光、護盾泡、血條。呼叫端給相機的右軸 `r` 與上軸 `u`（本舞台沒有旋轉，
-##     右軸恆為 +X），形狀在 (r, u) 平面上展開——不靠著色器的 billboard，所以位置可以先算好再 lift 一次。
+##   · **面向相機的**（billboard）：火花、碎片、閃光、護盾泡、血條。呼叫端給相機的右軸 `r` 與上軸 `u`（旋轉之後右軸不再恆為 +X，
+##     由 `Stage3D` 每幀給），形狀在 (r, u) 平面上展開——不靠著色器的 billboard，所以位置可以先算好再 lift 一次。
 ##   · **貼地的**：濺射環、落影——躺在水平面上（xz）。
 ##   彈道與光束是**帶狀**的（沿線、朝向相機的那一側加寬）。
 ## 單位一律是格；2D 的像素尺寸用 `px()` 換算。顏色帶 alpha（淡出）；著色器做 alpha 混合、不寫深度。
@@ -167,3 +167,131 @@ static func hp_bar(pen: Pen, c: Vector3, w: float, h: float, frac: float, r: Vec
 			c + r * -hw - u * hh, c + r * x1 - u * hh, c + r * x1 + u * hh, c + r * -hw + u * hh,
 			Palette.alpha(Palette.TIDE_MAGENTA, 1.0)
 		)
+
+
+# ── 攻擊特效（B4.4.2）：加亮的光暈、拖尾的彈、貫穿的光束、命中的火花與衝擊波 ─────────────────────────
+#
+# 使用者（2026-10-16）：「攻擊特效（包含射擊、命中特效）」要加強。以前的特效是幾條平塗的色帶與一顆四角星——
+# 彈是一段短線、命中是一顆星，沒有光、沒有拖尾、沒有衝擊。現在每個特效分兩層畫：
+#   · `pen`  ＝ 一般的 alpha 混合（實心的核、輪廓、碎片）；
+#   · `glow` ＝ **加亮**混合（`GLOW_SHADER`）：光暈、拖尾的亮部、命中的閃光。疊在一起會更亮，才讀得出「在發光」。
+# 形狀與時間軸仍由開火的資料決定（`s.shots` 的 `by`／`ttl`／`target`），這裡**沒有任何新的模擬狀態**，顏色仍全是既有的 token。
+# 規模由塔的傷害決定（`power`：傷害 18 ≈ 1.0、長哨 52 ≈ 1.6）——重砲的彈大一圈、命中的衝擊重一點。
+
+## 加亮混合：光暈、拖尾的亮部、命中的閃光。`ALPHA` 就是強度（疊加在底色上，不遮住東西）。
+const GLOW_SHADER := """
+shader_type spatial;
+render_mode unshaded, cull_disabled, depth_draw_never, blend_add;
+void fragment() {
+	ALBEDO = COLOR.rgb;
+	ALPHA = COLOR.a;
+}
+"""
+
+
+## 塔的火力 → 特效的規模（0.8–1.7）。
+static func power_of(dmg: float) -> float:
+	return clampf(0.55 + dmg / 40.0, 0.8, 1.7)
+
+
+## 砲口：一朵往前噴的閃光（朝 `dir` 的三道火舌 ＋ 四角星 ＋ 光暈）。`k` ＝ 1 → 0（越新越亮）。
+static func muzzle(pen: Pen, glow: Pen, at: Vector3, dir: Vector3, k: float, power: float, r: Vector3, u: Vector3, f: Vector3, col: Color) -> void:
+	glow.disc(at, px((5.0 + 6.0 * k) * power), r, u, Palette.alpha(col, 0.50 * k))
+	pen.poly(at, Shapes.star(Vector2.ZERO, px((3.0 + 6.0 * k) * power), px((1.2 + 2.4 * k) * power), 4, 0.0), r, u, Palette.alpha(Palette.TEXT_PRIMARY, 0.95 * k))
+	var d := dir.normalized()
+	for i in 3:
+		var s := (float(i) - 1.0) * 0.38
+		var side := d.cross(f)
+		var spread := (d + side.normalized() * s).normalized() if side.length_squared() > 1.0e-8 else d
+		var len := px((9.0 + 15.0 * k) * power) * (1.0 - 0.25 * absf(s))
+		glow.ribbon(at, at + spread * len, px(2.6 * power), f, Palette.alpha(col, 0.75 * k))
+
+
+## 彈：沿一道微微拋起的弧飛向目標，後面拖一條漸隱的尾，彈頭一顆亮核加光暈。
+## `t` ＝ 這一發的時間軸（0 出膛 → 1 結束）；0–0.6 在飛，之後只剩殘光。`arc` ＝ 弧的最高點（格，已乘 lift）。
+static func bolt(pen: Pen, glow: Pen, pa: Vector3, pb: Vector3, t: float, power: float, arc: float, r: Vector3, u: Vector3, f: Vector3, col: Color) -> void:
+	var total := pa.distance_to(pb)
+	if total < 0.001:
+		return
+	var fly := clampf(t / 0.6, 0.0, 1.0)
+	var s_head := 1.0 - pow(1.0 - fly, 2.0)  # ease out
+	var fade := 1.0 - clampf((t - 0.6) / 0.4, 0.0, 1.0)
+	var trail := minf(px(46.0 * power), total * 0.55) / total
+	var segs := 6
+	var prev := _arc_point(pa, pb, s_head, arc)
+	for j in range(1, segs + 1):
+		var sj := maxf(0.0, s_head - trail * float(j) / float(segs))
+		var p := _arc_point(pa, pb, sj, arc)
+		var k := 1.0 - float(j - 1) / float(segs)
+		var w := px(3.6 * power) * k
+		pen.ribbon(p, prev, w, f, Palette.alpha(col, 0.50 * k * fade))
+		glow.ribbon(p, prev, w * 2.4, f, Palette.alpha(col, 0.22 * k * fade))
+		prev = p
+	var head := _arc_point(pa, pb, s_head, arc)
+	glow.disc(head, px(8.5 * power), r, u, Palette.alpha(col, 0.55 * fade))
+	pen.disc(head, px(3.4 * power), r, u, Palette.alpha(Palette.TEXT_PRIMARY, fade), 10)
+
+
+## 光束（貫穿）：外圈光暈、亮核、沿線往目標跑的亮段；兩端各一圈。
+static func beam(pen: Pen, glow: Pen, pa: Vector3, pb: Vector3, t: float, power: float, r: Vector3, u: Vector3, f: Vector3, col: Color) -> void:
+	var fade := 1.0 - t
+	glow.ribbon(pa, pb, px(15.0 * power), f, Palette.alpha(col, 0.20 * fade))
+	glow.ribbon(pa, pb, px(7.0 * power), f, Palette.alpha(col, 0.45 * fade))
+	pen.ribbon(pa, pb, px((1.2 + 2.4 * fade) * power), f, Palette.alpha(Palette.TEXT_PRIMARY, 0.55 + 0.45 * fade))
+	var d := pb - pa
+	var total := d.length()
+	if total < 0.001:
+		return
+	# 三道亮段沿線往目標跑（速度比光束消退快：看得出方向）。
+	var dl := minf(px(26.0), total * 0.3) / total
+	for k in 3:
+		var s0 := fposmod(t * 2.4 + float(k) / 3.0, 1.0)
+		var s1 := minf(1.0, s0 + dl)
+		glow.ribbon(pa + d * s0, pa + d * s1, px(5.0 * power), f, Palette.alpha(Palette.TEXT_PRIMARY, 0.55 * fade))
+	glow.ring(pb, px((5.0 + 9.0 * t) * power), px(1.8), r, u, Palette.alpha(col, 0.6 * fade))
+
+
+## 命中：一團閃光、四角星、往四面八方射的火花線、一圈擴張的環。`k` ＝ 1 → 0（越新越亮）；`seed` 決定火花的角度（零 RNG）。
+static func impact(pen: Pen, glow: Pen, at: Vector3, k: float, power: float, seed_id: int, r: Vector3, u: Vector3, f: Vector3, col: Color) -> void:
+	var e := 1.0 - k
+	glow.disc(at, px((4.0 + 7.0 * e) * power), r, u, Palette.alpha(col, 0.50 * k))
+	pen.poly(at, Shapes.star(Vector2.ZERO, px((3.0 + 6.0 * e) * power), px((1.2 + 2.4 * e) * power), 4, PI * 0.25), r, u, Palette.alpha(Palette.TEXT_PRIMARY, 0.95 * k))
+	var n := 7
+	var base := float(seed_id) * 0.83
+	for i in n:
+		var a := base + TAU * float(i) / float(n)
+		var dv := r * cos(a) + u * sin(a)
+		var r0 := px((2.5 + 8.0 * e) * power)
+		var r1 := px((6.0 + 17.0 * e * (0.7 + 0.3 * float((i * 5) % 3) / 2.0)) * power)
+		glow.ribbon(at + dv * r0, at + dv * r1, px(1.7 * power) * (1.0 - 0.5 * e), f, Palette.alpha(Palette.TEXT_PRIMARY, 0.85 * k))
+	pen.ring(at, px((4.0 + 10.0 * e) * power), px(1.4), r, u, Palette.alpha(col, 0.5 * k))
+
+
+## 衝擊波（濺射、死亡）：貼地擴張的環 ＋ 一圈較快較淡的外環 ＋ 中心的閃光。`radius` ＝ 最終半徑（格）、`t` ＝ 0 → 1。
+static func shockwave(pen: Pen, glow: Pen, c: Vector3, radius: float, t: float, col: Color) -> void:
+	var e := 1.0 - pow(1.0 - clampf(t, 0.0, 1.0), 3.0)
+	var fade := 1.0 - t
+	pen.flat_ring(c, radius * e, px(2.4 + 3.0 * fade), Palette.alpha(col, 0.30 + 0.50 * fade))
+	glow.flat_ring(c, radius * minf(1.0, e * 1.12), px(5.0 + 5.0 * fade), Palette.alpha(col, 0.20 * fade))
+	if t < 0.5:
+		glow.flat_disc(c, radius * 0.45 * (1.0 - t * 1.6), Palette.alpha(col, 0.55 * (1.0 - t * 2.0)))
+
+
+## 碎片：`p` 這一刻的位置、`size` 邊長（格）、`kind` ＝ 0 三角碎片 / 1 菱形 / 2 小水珠；`spin` ＝ 自轉角。
+static func shard(pen: Pen, p: Vector3, size: float, kind: int, spin: float, r: Vector3, u: Vector3, col: Color) -> void:
+	match kind:
+		0:
+			pen.poly(p, PackedVector2Array([
+				Vector2(size * 1.4, 0.0).rotated(spin), Vector2(size, 0.0).rotated(spin + 2.3), Vector2(size * 0.8, 0.0).rotated(spin + 4.1),
+			]), r, u, col)
+		1:
+			pen.poly(p, PackedVector2Array([
+				Vector2(size * 1.3, 0.0).rotated(spin), Vector2(0.0, size * 0.55).rotated(spin), Vector2(-size * 1.3, 0.0).rotated(spin), Vector2(0.0, -size * 0.55).rotated(spin),
+			]), r, u, col)
+		_:
+			pen.disc(p, size * 0.7, r, u, col, 6)
+
+
+static func _arc_point(pa: Vector3, pb: Vector3, s: float, arc: float) -> Vector3:
+	return pa.lerp(pb, s) + Vector3(0.0, arc * 4.0 * s * (1.0 - s), 0.0)
+

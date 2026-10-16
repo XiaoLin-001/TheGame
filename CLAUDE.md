@@ -182,7 +182,7 @@ TL_CLICKTEST=1 TL_SHOT="C:/tmp/wire.png" TL_MUTE=1 TL_PICK=wire TL_PANEL=campaig
 # 地形是梯田（`Relief`），建築與敵人是手作的多材質造型（`Models`），導管是躺在地上的管子（`Wires`），特效與血條浮在 3D 裡（`Fx3D`），
 # 高度全乘 `lift`——傾斜 0° 就是 2D 那張圖。設定畫面有「傾斜視角（3D）」開關（`settings.tilt_stage`，預設開，下一局起生效）。
 # **有任何 `TL_*` 時預設平面舞台、沒有任何鉤子（玩家實玩）時預設傾斜舞台**；`TL_STAGE=3d｜2d` 明寫時照它。
-# `TL_TILT=<度>` 是起始傾斜角（0–62）、`TL_YAW=<度>` 是起始旋轉角（0＝北在上，正＝地圖順時針，B4.4）。`TL_STAGE=3d TL_CLICKTEST=1` 跑只問契約的 smoke（含傾斜與旋轉的進入點）；
+# `TL_TILT=<度>` 是起始傾斜角（0–62）、`TL_YAW=<度>` 是起始旋轉角（0＝北在上，正＝地圖順時針，B4.4）、`TL_AIM=1` 起始就開著砲塔瞄準線（B4.5；玩家用 `V` 鍵或「瞄準」鈕）。`TL_STAGE=3d TL_CLICKTEST=1` 跑只問契約的 smoke（含傾斜與旋轉的進入點）；
 # 舞台契約與造型的 headless 驗收是 `tests/stage3d_test.gd`。
 TL_STAGE=3d TL_TILT=50 TL_SHOT="C:/tmp/tilt.png" TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> --path godot --rendering-driver opengl3
 
@@ -297,7 +297,7 @@ TheGame/
     ├── scripts/render/        共用美術 token：Palette / Motion / Shapes
     │   ├── 2d/                2D 專用的幾何與繪製：Glyphs（節點幾何＋體積語言）/ Foes（敵人幾何，由欄位推導）/
     │   │                      Terrain（每張圖的地貌）/ TitleBackdrop（標題背景）/ Batch（同色圖形併成一個指令）
-    │   └── 3d/                3D 專用的網格：Extrude（積木＋烘焙光照＋徽章）/ Models（十四種建築與六種敵人的手作配方＋敵人動作）/
+    │   └── 3d/                3D 專用的網格：Extrude（積木＋烘焙光照＋徽章）/ Models（十四種建築與六種敵人的手作配方＋敵人動作）/ Creatures（B4.5：六類生物的放樣造型＋6 相位動畫）/
     │                          Relief（梯田地形：溝、岸、橋、平台、懸崖、擺設）/ Wires（導管：路徑貼地形、單位方盒實例）/
     │                          Fx3D（開火、碎片爆、護盾、血條的幾何）
     ├── scripts/ui/            UiKit

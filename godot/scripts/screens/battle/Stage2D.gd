@@ -1698,6 +1698,13 @@ func _enemy_prog(e: Dictionary, i: int) -> float:
 	return minf(float(e["progress"]) + ahead, float(s.path.size() - 1))
 
 
+## 第 `i` 隻敵人此刻在螢幕上的位置（瞄準線的終點）。
+func foe_screen(i: int) -> Vector2:
+	if i < 0 or i >= s.enemies.size():
+		return Vector2(-1000.0, -1000.0)
+	return to_screen(_path_px(_enemy_prog(s.enemies[i], i)))
+
+
 ## 路徑上的連續位置 → 地圖 px。
 func _path_px(prog: float) -> Vector2:
 	return Tide.pos_of(s.path, prog) * Shapes.GRID + Vector2(Shapes.GRID, Shapes.GRID) * 0.5

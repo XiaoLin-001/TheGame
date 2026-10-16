@@ -10,6 +10,7 @@ const SessionState := preload("res://scripts/game/SessionState.gd")
 const Motion := preload("res://scripts/render/Motion.gd")
 const Stage := preload("res://scripts/screens/battle/Stage.gd")
 const Prof := preload("res://scripts/core/Prof.gd")
+const AimLines := preload("res://scripts/screens/battle/AimLines.gd")
 
 ## 擁有這個模組的局內畫面（`screens/Battle.gd`）。由它在建立時指派。
 var scr: Control = null
@@ -59,6 +60,7 @@ func _ready() -> void:
 ## 所以整層都蓋在遮罩（`_draw_frame_matte`）之上。
 func _draw() -> void:
 	Prof.mark()
+	_draw_aim_lines()
 	_draw_arrows()
 	_draw_minimap()
 	_draw_energy_bar()
@@ -69,6 +71,9 @@ func _draw() -> void:
 ##   跑了幾幀，會倒數的話同一組參數在不同機器上會拍出「有／沒有小地圖」
 ##   兩種圖，截圖就不能拿來回歸比對了（和模擬凍結同一條理由）。
 func tick(delta: float) -> void:
+	# 瞄準線的終點跟著敵人走，所以開著的時候每幀重畫（它很便宜：一座塔一條線）。
+	if scr.aim_lines:
+		queue_redraw()
 	if mini_ttl > 0.0 and Hooks.shot_path == "":
 		mini_ttl = maxf(0.0, mini_ttl - delta)
 		if mini_ttl <= 0.0:
@@ -233,6 +238,66 @@ func mini_seek(pos: Vector2) -> void:
 	var r := minimap_rect()
 	var k := r.size.x / (float(s.map["size"].x) * Shapes.GRID)
 	stage.center_view_on(Shapes.to_grid((pos - r.position) / k))
+
+
+# ── 瞄準線（B4.5）─────────────────────────────────────────────────────────────
+#
+# 使用者（2026-10-16）：「新增一個 overlay 是顯示目前砲塔的目視方向與距離（就用一條線條顯示）」。
+# 每座**有目標**的塔一條線，從砲口指向它**下一發會打的那一隻**，線上標距離（格）。目標選擇與 `BattleController._fire()`
+# 是同一組函式（最前；稜鏡走最多敵人的那條軸，取最遠的那一隻當線的終點），所以畫的就是實際會打的，不是另一套猜測。
+# 線色：**青**＝看得到目標；**橙色虛線**＝中間隔著地形（3D 才有起伏）。⚠ 橙色只是畫面上的視線：模擬層的射程判定不看地形，
+# 被擋住的塔照樣打得到（`10_GDD.md` §3.3「射程內即攻擊」）——要不要讓地形真的擋住是使用者的設計決定，還沒做。
+# 被選取的那座塔畫粗一點、亮一點。潮鳴與霜礁（光環，沒有目標）不畫。
+
+
+## 每座有目標的塔此刻的瞄準線（資料在 `AimLines`：目標選擇與開火同一組函式，拆出去是為了能在沒有 autoload 的測試裡驗）。
+func aim_targets() -> Array:
+	return AimLines.targets(s, stage)
+
+
+func _draw_aim_lines() -> void:
+	if not scr.aim_lines:
+		return
+	var font := get_theme_default_font()
+	for a: Dictionary in aim_targets():
+		var p0 := stage.muzzle_screen(a["cell"])
+		var p1 := stage.foe_screen(int(a["foe"]))
+		if not stage.FRAME.grow(40.0).has_point(p0) and not stage.FRAME.grow(40.0).has_point(p1):
+			continue
+		var picked: bool = scr.selected == (a["cell"] as Vector2i)
+		var blocked: bool = a["blocked"]
+		var col := Palette.WARN_ORANGE if blocked else Palette.ORDER_CYAN
+		var w := 2.5 if picked else 1.5
+		var alpha := 0.95 if picked else 0.62
+		# 先一條暗的底線，亮線疊上去：在亮的地面與管子上才讀得出來。
+		if blocked:
+			_dashed(p0, p1, Palette.alpha(Palette.BG_DEEP, 0.7), w + 2.0)
+			_dashed(p0, p1, Palette.alpha(col, alpha), w)
+		else:
+			draw_line(p0, p1, Palette.alpha(Palette.BG_DEEP, 0.7), w + 2.0, true)
+			draw_line(p0, p1, Palette.alpha(col, alpha), w, true)
+		draw_arc(p1, 6.0, 0.0, TAU, 20, Palette.alpha(col, alpha), 1.5, true)
+		# 距離（格）：標在線中間，往線的法線方向挪開一點；字有深色描邊。
+		var mid := (p0 + p1) * 0.5
+		var dir := (p1 - p0)
+		var nrm := Vector2(-dir.y, dir.x).normalized() * 9.0 if dir.length_squared() > 1.0 else Vector2(0.0, -9.0)
+		var label := "%.1f" % float(a["dist"])
+		var at := mid + nrm + Vector2(-8.0, 4.0)
+		draw_string_outline(font, at, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, 3, Palette.alpha(Palette.BG_DEEP, 0.9))
+		draw_string(font, at, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Palette.alpha(col.lightened(0.25), minf(1.0, alpha + 0.2)))
+
+
+## 虛線（被地形擋住的視線）：6 px 畫、4 px 空。
+func _dashed(a: Vector2, b: Vector2, col: Color, w: float) -> void:
+	var d := b - a
+	var len := d.length()
+	if len < 1.0:
+		return
+	var dir := d / len
+	var x := 0.0
+	while x < len:
+		draw_line(a + dir * x, a + dir * minf(x + 6.0, len), col, w, true)
+		x += 10.0
 
 
 ## ★ 能量列（`10_GDD.md` §6.2 硬性要求 1）：**全畫面最醒目的元件，而且是一條

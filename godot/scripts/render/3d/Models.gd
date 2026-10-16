@@ -45,7 +45,7 @@ const HEIGHT := {
 }
 const HEIGHT_PER_LEVEL := 0.03
 ## 敵人身高（格）：不超過路徑旁一格的建築。
-const FOE_HEIGHT := 0.46
+const FOE_HEIGHT := 0.60
 ## 敵人的最小半徑（格）：2D 裡最小的（苔群 5px、潛涌 6px）靠亮核與輪廓撐得起來，3D 的小東西沒有那些，要大一點才看得見。
 const MIN_FOE_RADIUS := 0.24
 
@@ -364,11 +364,12 @@ static func _ballast(sp: E.Soup, pw: int, rof: int, rng: int) -> void:
 
 # ── 敵人 ────────────────────────────────────────────────────────────────
 
-## 一種敵人的網格。**由機制欄位推導，沒有以型別名為鍵的 `match`**：`armor` → 殼與骨刺、`swift` → 鏢形與側鰭、
-## `speed > SWIFT_SPEED` → 流線型與尾鰭、`regen` → 發光的心與縫線、`pack` → 三瓣、預設 → 柔軟的漂蟲（眼睛與觸足）。
+## 一種敵人的網格（B4.5：生物造型，見 `Creatures.gd`）。**哪一類生物由機制欄位推導，沒有以型別名為鍵的 `match`**
+## （`Creatures.kind_of()`）：`armor` → 螃蟹、`swift` → 魟、高速 → 鰻、`regen` → 蝸牛、`pack` → 一團蛞蝓、預設 → 水母。
 ## `variant`（0..3，呼叫端用敵人 id 取）讓同一型的幾隻**長得不完全一樣**：色相在品紅帶內小幅位移、明度略不同。
+## `frame`（0..`Creatures.FRAMES`-1）＝動作循環的第幾張（腿的步態、觸手的擺動、翅的拍動）；0 ＝ 靜止的樣子。
 ## 朝 +X；原點在地面。
-static func foe(def: Dictionary, variant: int = 0) -> ArrayMesh:
+static func foe(def: Dictionary, variant: int = 0, frame: int = 0) -> ArrayMesh:
 	var sp := E.Soup.new()
 	var r := maxf(float(def.get("radius", 9.0)) / Shapes.GRID, MIN_FOE_RADIUS)
 	var armored: bool = float(def.get("armor", 0.0)) > 0.0
@@ -404,82 +405,15 @@ static func foe(def: Dictionary, variant: int = 0) -> ArrayMesh:
 	var v := variant % 4
 	body = _vary(body, v)
 	accent = _vary(accent, v + 1)
-
-	if pack > 1:
-		for k in mini(pack, 3):
-			var a := TAU * float(k) / float(mini(pack, 3)) + 0.5
-			var off := Vector3(cos(a) * r * 0.42, 0.0, sin(a) * r * 0.42)
-			_blob(sp, off, r * 0.62, 1.0, 0.85, body, belly, accent, true)
-			for s: float in [-1.0, 1.0]:
-				E.dome(sp, off + Vector3(r * 0.62 * 0.5, r * 0.62 * 0.5, s * r * 0.62 * 0.3), Vector3(r * 0.07, r * 0.07, r * 0.07), Palette.FOE_EYE, 2, 5, false)
-		return sp.to_mesh()
-
-	var len_k := 1.0
-	var wid_k := 0.9
-	var hgt_k := 0.78
-	if swift:
-		len_k = 1.3
-		wid_k = 0.62
-		hgt_k = 0.72
-	elif fast:
-		len_k = 1.2
-		wid_k = 0.66
-		hgt_k = 0.74
-	elif armored:
-		len_k = 1.0
-		wid_k = 1.0
-		hgt_k = 0.85
-	_blob(sp, Vector3.ZERO, r, len_k, wid_k, body, belly, accent, true, hgt_k)
-
-	if armored:
-		# 殼：背上三片隆起的甲板（暗李紫）＋ 緋紅的縫 ＋ 一排骨刺。
-		for k in 3:
-			var x := (float(k) - 1.0) * r * 0.46
-			E.dome(sp, Vector3(x, r * hgt_k * 0.55, 0), Vector3(r * 0.30, r * 0.34, r * 0.66), Palette.FOE_SHELL.darkened(0.12), 2, 8, true, false, 1)
-			E.box(sp, Vector3(x + r * 0.23, r * hgt_k * 0.50, 0), Vector2(r * 0.02, r * 0.55), r * 0.30, accent, 0.0, 1.0, true, 2)
-		for k in 4:
-			var x := (float(k) - 1.5) * r * 0.38
-			E.spike(sp, Vector3(x, r * hgt_k * 0.92, 0), Vector3(-0.2, 1.0, 0.0), r * 0.34, r * 0.07, Palette.FOE_BONE, 4)
-	if swift:
-		# 鏢：前端一根尖、兩側的鰭往後掠、尾部發光。
-		E.spike(sp, Vector3(r * len_k * 0.7, r * hgt_k * 0.3, 0), Vector3.RIGHT, r * 0.8, r * 0.16, accent, 4)
-		for s: float in [-1.0, 1.0]:
-			E.spike(sp, Vector3(-r * 0.1, r * hgt_k * 0.35, s * r * wid_k * 0.8), Vector3(-1.0, 0.1, s * 1.3), r * 0.8, r * 0.07, accent, 3)
-		E.dome(sp, Vector3(-r * len_k * 0.85, r * hgt_k * 0.35, 0), Vector3(r * 0.14, r * 0.14, r * 0.14), Palette.FOE_HEART, 2, 6, false)
-	elif fast:
-		# 流線型：尾鰭往後翹、背上一道亮痕。
-		E.spike(sp, Vector3(-r * len_k * 0.8, r * hgt_k * 0.25, 0), Vector3(-1.0, 0.7, 0.0), r * 0.7, r * 0.12, Palette.FOE_VIOLET, 3)
-		E.box(sp, Vector3(0.0, r * hgt_k * 0.74, 0), Vector2(r * len_k * 0.55, r * 0.07), r * 0.06, accent, 0.0, 0.8, false, 2)
-	if regen:
-		# 發光的心（背上一顆）＋ 一圈縫線點。
-		E.dome(sp, Vector3(0.0, r * hgt_k * 0.62, 0), Vector3(r * 0.34, r * 0.30, r * 0.34), Palette.FOE_HEART, 2, 8, false)
-		for k in 6:
-			var a := TAU * float(k) / 6.0
-			E.dome(sp, Vector3(cos(a) * r * 0.55, r * hgt_k * 0.50, sin(a) * r * 0.55), Vector3(r * 0.07, r * 0.05, r * 0.07), Palette.FOE_BONE, 2, 5, false)
-	if not (armored or swift or fast or regen):
-		# 柔軟的漂蟲：一圈短短的觸足 ＋ 背上兩顆淺色的斑。
-		for k in 7:
-			var a := TAU * float(k) / 7.0 + 0.3
-			E.spike(sp, Vector3(cos(a) * r * 0.82, 0.02, sin(a) * r * 0.78), Vector3(cos(a), -0.2, sin(a)), r * 0.38, r * 0.09, belly, 3)
-		for k in 2:
-			E.dome(sp, Vector3(-r * 0.15 + r * 0.3 * float(k), r * hgt_k * 0.72, (float(k) - 0.5) * r * 0.5), Vector3(r * 0.11, r * 0.06, r * 0.11), accent, 2, 6, true)
-	# 眼睛（兩顆發光的點，朝前）。
-	var ex := r * len_k * 0.55
-	var ey := r * hgt_k * 0.58
-	for s: float in [-1.0, 1.0]:
-		E.dome(sp, Vector3(ex, ey, s * r * wid_k * 0.36), Vector3(r * 0.11, r * 0.11, r * 0.11), Palette.FOE_EYE, 2, 6, false)
+	Creatures.build(Creatures.kind_of(def), sp, r, body, belly, accent, frame)
 	return sp.to_mesh()
 
 
-## 一只半橢球的身子（`_blob`）：上半是身（受光），下緣一圈暗的腹裙，背上加一圈亮的描邊；`cap_eyes` 預留。
-static func _blob(
-	sp: E.Soup, off: Vector3, r: float, len_k: float, wid_k: float, body: Color, belly: Color,
-	accent: Color, _eyes: bool, hgt_k: float = 0.78
-) -> void:
-	E.frustum(sp, off, Vector2(r * len_k, r * wid_k), Vector2(r * len_k * 0.97, r * wid_k * 0.97), r * 0.10, 9, belly, 0.0)
-	E.dome(sp, off + Vector3(0.0, r * 0.10, 0.0), Vector3(r * len_k * 0.97, r * hgt_k, r * wid_k * 0.97), body, 3, 9)
-	# 背上一圈淡淡的亮帶（不發光，只是明度高一階）。
-	E.dome(sp, off + Vector3(0.0, r * 0.10 + r * hgt_k * 0.86, 0.0), Vector3(r * len_k * 0.42, r * hgt_k * 0.16, r * wid_k * 0.42), accent.lerp(body, 0.35), 2, 8, true, false, 1)
+## 這一刻、這一隻該用動作循環的第幾張網格。`m` ＝ `foe_motion()`（`rate` 是角頻率 rad/s），`phase` ＝ 每隻自己的相位。
+## 一個動作循環跑完是 `rate / TAU` 秒的倒數——走得快的（魟、鰻）腿與翅拍得快，慢的（螃蟹、蝸牛）慢。
+static func foe_frame(m: Dictionary, t: float, phase: float) -> int:
+	var cycles := t * float(m["rate"]) / TAU + phase / TAU
+	return posmod(floori(cycles * float(Creatures.FRAMES)), Creatures.FRAMES)
 
 
 # ── 敵人的動作 ──────────────────────────────────────────────────────────

@@ -38,6 +38,10 @@ const ORE_RISE := 0.083
 const BRIDGE := 0.24
 ## 地圖四周的側壁往下延伸多少（格）。
 const SLAB_DEPTH := 0.30
+## 視線取樣：中間幾點、頭尾各留多少比例、擋住的寬容（格）。
+const LOS_SAMPLES := 10
+const LOS_ENDS := 0.08
+const LOS_MARGIN := 0.02
 ## 礦點的框（台地頂面上的亮青環）：外半徑、內半徑、高（格）。
 const ORE_RING_OUT := 0.47
 const ORE_RING_IN := 0.41
@@ -45,14 +49,14 @@ const ORE_RING_H := 0.012
 
 ## 地貌 → [振幅（格）, 頻率（每格）, 疊幾層, 量化倍數]。
 const PROFILE := {
-	"shoal": [0.24, 0.10, 2, 1],
-	"reef": [0.50, 0.17, 3, 2],
-	"slag": [0.42, 0.13, 3, 1],
-	"moss": [0.34, 0.11, 3, 1],
-	"shell": [0.32, 0.15, 2, 3],
-	"current": [0.22, 0.08, 2, 1],
-	"riptide": [0.34, 0.14, 3, 1],
-	"trench": [0.40, 0.09, 2, 2],
+	"shoal": [0.42, 0.10, 2, 1],
+	"reef": [0.78, 0.17, 3, 2],
+	"slag": [0.74, 0.13, 3, 1],
+	"moss": [0.60, 0.11, 3, 1],
+	"shell": [0.56, 0.15, 2, 3],
+	"current": [0.40, 0.08, 2, 1],
+	"riptide": [0.60, 0.14, 3, 1],
+	"trench": [0.72, 0.09, 2, 2],
 }
 
 
@@ -122,7 +126,7 @@ static func build(map: Dictionary) -> Dictionary:
 				if d <= 1 or flat.has(c):
 					t = BANK
 				else:
-					var hn := amp * _fbm(float(x) * freq, float(y) * freq, salt, oct)
+					var hn := amp * _stretch(_fbm(float(x) * freq, float(y) * freq, salt, oct))
 					t = lerpf(BANK, hn, smoothstep(1.0, 3.5, float(d)))
 					t = roundf(t / quant) * quant
 				f = t
@@ -150,6 +154,18 @@ static func build(map: Dictionary) -> Dictionary:
 		"w": w, "h": h, "top": top, "floor": flr, "max": max_top,
 		"path": is_path, "cross": cross, "biome": biome,
 	}
+
+
+## ★ 視線（B4.5）：`a` → `b`（格座標、遊戲裡的實際高度）的直線有沒有被地形擋住。沿線取樣 `LOS_SAMPLES` 點（頭尾各留 `LOS_ENDS`
+## 的一段，免得被自己腳下那一格與目標所在的那一格擋住），任何一點比那一格的頂面低（`LOS_MARGIN` 的寬容）就是擋住。
+## 純函式、零 RNG；**目前只用在畫面**（瞄準線的虛實），模擬層的射程判定不看它。
+static func line_blocked(rel: Dictionary, a: Vector3, b: Vector3) -> bool:
+	for k in range(1, LOS_SAMPLES + 1):
+		var t := LOS_ENDS + (1.0 - 2.0 * LOS_ENDS) * float(k) / float(LOS_SAMPLES + 1)
+		var p := a.lerp(b, t)
+		if top_at(rel, Vector2i(floori(p.x), floori(p.z))) > p.y + LOS_MARGIN:
+			return true
+	return false
 
 
 static func top_at(rel: Dictionary, c: Vector2i) -> float:
@@ -392,6 +408,13 @@ static func _area(pts: PackedVector2Array) -> float:
 
 
 # ── 雜訊 ────────────────────────────────────────────────────────────────
+
+## 把雜訊的對比拉開：值雜訊疊幾層之後多半擠在 0.3–0.7 之間，直接乘振幅，整張圖只剩振幅的一小截（量過：熔渣關最高 0.33 格，
+## 振幅明明是 0.42）。以 0.5 為中心放大再過 smoothstep，高處更高、低處更低、中間是緩坡，起伏才真的撐滿 `amp`。
+static func _stretch(v: float) -> float:
+	var k := clampf((v - 0.5) * 2.2 + 0.5, 0.0, 1.0)
+	return k * k * (3.0 - 2.0 * k)
+
 
 ## 疊幾層的值雜訊 → [0, 1)。
 static func _fbm(x: float, y: float, salt: int, oct: int) -> float:

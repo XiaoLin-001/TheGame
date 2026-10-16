@@ -189,3 +189,20 @@ func in_view(p: Vector2) -> bool:
 func invalidate() -> void:
 	pass
 
+
+## ── 瞄準線（B4.5）：覆蓋層畫「每座塔現在看著誰」──────────────────────────────────────────
+## 塔 `cell` 的砲口在螢幕上的位置（瞄準線的起點）。2D ＝ 格心；3D ＝ 塔頂。
+func muzzle_screen(cell: Vector2i) -> Vector2:
+	return to_screen(center(cell))
+
+
+## 第 `i` 隻敵人身上的一點在螢幕上的位置（瞄準線的終點，已含 tick 內插）。3D ＝ 身體中段。
+func foe_screen(_i: int) -> Vector2:
+	return Vector2(-1000.0, -1000.0)
+
+
+## 從塔 `cell` 看過去，到第 `i` 隻敵人之間被地形擋住了嗎？2D 沒有起伏，永遠不擋。
+## ★ 這只是**畫面上的視線**：目前模擬層的射程判定不看地形（射程內即攻擊，`10_GDD.md` §3.3）——被擋住的塔照樣打得到。
+func sight_blocked(_cell: Vector2i, _i: int) -> bool:
+	return false
+

@@ -56,6 +56,7 @@ func build_panel() -> void:
 		lines.insert(7, "　視　角：左上角「3D」鈕與滑桿；按住右鍵上下拖、Shift＋滾輪、或（觸控板／觸控）雙指上下拖，把視角從俯瞰轉向側面")
 		if scr.stage.can_rotate():
 			lines.insert(8, "　旋　轉：↺／↻ 各轉 45°，中間的羅盤按一下轉回北；按住右鍵左右拖、Ctrl＋滾輪、Q／E、雙指左右拖也轉得動")
+	lines.insert(9 if scr.stage.can_tilt() else 7, "　瞄準線：按 V（或 3D 控制盒的「瞄準」）每座塔一條線指向它現在看著的敵人，標距離（格）；橙色虛線＝中間隔著地形")
 	for line: String in lines:
 		if line == "":
 			col.add_child(buildbar.spacer(6))

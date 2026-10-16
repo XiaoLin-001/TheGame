@@ -355,6 +355,78 @@ static func poly_mound(
 	sp.face(top, Vector3.UP, col, lit, layer)
 
 
+## ★ 放樣（B4.5，生物造型用）：沿一串中心點 `spine`，每個點一圈 `sides` 邊的橢圓截面，相鄰兩圈接成面。
+## `radii[i]` ＝ 第 i 圈的（側向半徑, 縱向半徑）；截面的「上」盡量貼著 `up`（預設世界上方），所以一條沿 +X 的脊線，
+## 側向就是 z、縱向就是 y。腹面（法線朝下）上 `belly` 色，背面上 `col`——生物的反影（counter-shading）：
+## 一隻東西背深腹淺（或反過來），低多邊形也讀得出「肚子」在哪。`cap_a`／`cap_b` ＝ 兩端用一個平面封口。
+## 面是平面著色（和積木一樣的手感），所以 `sides` 取 8–10 就夠圓；脊線的點越多彎得越順。
+static func loft(
+	sp: Soup, spine: Array, radii: Array, sides: int, col: Color, belly: Color = Color.TRANSPARENT,
+	up: Vector3 = Vector3.UP, cap_a: bool = true, cap_b: bool = true, lit: bool = true, layer: int = 0
+) -> void:
+	var n := spine.size()
+	if n < 2 or radii.size() < n or sides < 3:
+		return
+	var use_belly := belly.a > 0.0
+	var rings: Array = []
+	for i in n:
+		var p: Vector3 = spine[i]
+		var t: Vector3 = (spine[mini(i + 1, n - 1)] as Vector3) - (spine[maxi(i - 1, 0)] as Vector3)
+		if t.length_squared() < 1.0e-10:
+			t = Vector3.RIGHT
+		t = t.normalized()
+		var side := t.cross(up)
+		if side.length_squared() < 1.0e-6:
+			side = t.cross(Vector3.RIGHT)
+		side = side.normalized()
+		var upv := side.cross(t).normalized()
+		var rr: Vector2 = radii[i]
+		var ring: Array[Vector3] = []
+		for k in sides:
+			var a := TAU * float(k) / float(sides)
+			ring.append(p + side * (cos(a) * rr.x) + upv * (sin(a) * rr.y))
+		rings.append(ring)
+	for i in n - 1:
+		var lo: Array = rings[i]
+		var hi: Array = rings[i + 1]
+		var inside: Vector3 = ((spine[i] as Vector3) + (spine[i + 1] as Vector3)) * 0.5
+		for k in sides:
+			var j := (k + 1) % sides
+			var q: Array[Vector3] = [lo[k], lo[j], hi[j], hi[k]]
+			var c := col
+			if use_belly:
+				var mid := (q[0] + q[1] + q[2] + q[3]) * 0.25
+				if (mid - inside).normalized().y < -0.35:
+					c = belly
+			sp.poly(q, inside, c, lit, layer)
+	if cap_a:
+		sp.poly(rings[0], spine[1], belly if use_belly else col, lit, layer)
+	if cap_b:
+		sp.poly(rings[n - 1], spine[n - 2], belly if use_belly else col, lit, layer)
+
+
+## 沿 `pts` 的錐形圓管（觸手、腿、尾）：半徑從 `r0` 線性縮到 `r1`；`sides` 邊。`loft` 的特例。
+static func tube(
+	sp: Soup, pts: Array, r0: float, r1: float, col: Color, sides: int = 5, lit: bool = true, layer: int = 0
+) -> void:
+	var radii: Array = []
+	var n := pts.size()
+	for i in n:
+		var r := lerpf(r0, r1, float(i) / float(maxi(n - 1, 1)))
+		radii.append(Vector2(r, r))
+	loft(sp, pts, radii, sides, col, Color.TRANSPARENT, Vector3.UP, true, true, lit, layer)
+
+
+## 二次貝茲曲線上取 `n + 1` 個點（`p0` → `p2`，控制點 ＝ 兩端中點 ＋ `bend`）：把觸手與腿彎出來。
+static func curve(p0: Vector3, p2: Vector3, bend: Vector3, n: int) -> Array:
+	var out: Array = []
+	var c := (p0 + p2) * 0.5 + bend
+	for i in n + 1:
+		var t := float(i) / float(n)
+		out.append(p0 * ((1.0 - t) * (1.0 - t)) + c * (2.0 * (1.0 - t) * t) + p2 * (t * t))
+	return out
+
+
 # ── 後備：把 2D 零件清單直接擠出 ───────────────────────────────────────
 
 ## 一座節點的後備網格：`parts` 是 `Glyphs.build()` 的輸出（座標以**原點**為中心，所以呼叫端傳 `p = Vector2.ZERO`）；

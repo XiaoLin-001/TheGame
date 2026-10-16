@@ -156,6 +156,9 @@ var _tilting: bool = false
 var _tilt_slider: VSlider = null
 var _tilt_button: Button = null
 var _yaw_button: Button = null    # 羅盤：寫著現在的朝向，按下去轉回北在上
+## ★ B4.5：顯示砲塔的瞄準線（覆蓋層 `Overlay2D._draw_aim_lines()` 讀它）。初值讀設定（預設關）或 `TL_AIM=1`。
+var aim_lines: bool = false
+var _aim_button: Button = null
 
 var hover: Vector2i = Vector2i(-999, -999)
 
@@ -196,6 +199,7 @@ func _ready() -> void:
 	# `Motion.reduce` 由 `GameState.apply_settings()` 統一設定（B1.4）——
 	# 開機一次、設定畫面改一次動一次。這裡不再各讀一份。
 	s = SessionState.new()
+	aim_lines = Hooks.aim or bool((GameState.data["settings"] as Dictionary).get("aim_lines", false))
 	# 模組要在 `_setup_session()` 之前就位——它一開頭就要重設視野與音訊。
 	_build_modules()
 	# `TL_PANEL=sandbox`：沙盤「靜水」（`data/Maps.gd`）。**合金那一列流動珠
@@ -217,10 +221,15 @@ func _ready() -> void:
 			selftest.click_selftest.call_deferred()
 
 
-## 鍵盤：Q／E ＝ 旋轉視角（逆／順時針各 45°）。只有能旋轉的舞台才有作用；方向鍵與其他鍵不在這裡。
+## 鍵盤：Q／E ＝ 旋轉視角（逆／順時針各 45°，只有能旋轉的舞台才有作用）；V ＝ 顯示／收起砲塔的瞄準線（兩種舞台都有）。
 func _unhandled_key_input(event: InputEvent) -> void:
 	var ke := event as InputEventKey
-	if ke == null or not ke.pressed or ke.echo or not stage.can_rotate():
+	if ke == null or not ke.pressed or ke.echo:
+		return
+	if ke.keycode == KEY_V:
+		toggle_aim_lines()
+		return
+	if not stage.can_rotate():
 		return
 	if ke.keycode == KEY_Q:
 		stage.yaw_by(-stage.YAW_STEP)
@@ -740,10 +749,27 @@ func _build_tilt_bar() -> void:
 		right.text = "↻"
 		right.pressed.connect(func() -> void: stage.yaw_by(stage.YAW_STEP))
 		row.add_child(UiKit.touchable(right))
+		# 瞄準線：一顆開關鈕（和 V 鍵、設定畫面的核取框是同一個狀態）。
+		_aim_button = Button.new()
+		_aim_button.text = "瞄準"
+		_aim_button.toggle_mode = true
+		_aim_button.button_pressed = aim_lines
+		_aim_button.toggled.connect(func(on: bool) -> void: toggle_aim_lines(on))
+		col.add_child(UiKit.touchable(_aim_button))
 		# 3D 鈕與滑桿維持一個鈕寬，不被旋轉那一排撐寬。
 		_tilt_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		_tilt_slider.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	refresh_tilt()
+
+
+## 顯示／收起砲塔的瞄準線，並存進設定（下一局沿用）。
+func toggle_aim_lines(on: Variant = null) -> void:
+	aim_lines = (not aim_lines) if on == null else bool(on)
+	(GameState.data["settings"] as Dictionary)["aim_lines"] = aim_lines
+	SaveService.save_from(GameState.data)
+	if _aim_button != null:
+		_aim_button.set_pressed_no_signal(aim_lines)
+	overlay.queue_redraw()
 
 
 ## 讓傾斜控制跟上舞台（鈕上的字、滑桿的位置）。舞台的傾斜會緩動，滑桿跟著動而不回頭觸發它。
