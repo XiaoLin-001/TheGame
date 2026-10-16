@@ -24,6 +24,7 @@ const Models := preload("res://scripts/render/3d/Models.gd")
 const Relief := preload("res://scripts/render/3d/Relief.gd")
 const Wires := preload("res://scripts/render/3d/Wires.gd")
 const Fx3D := preload("res://scripts/render/3d/Fx3D.gd")
+const CampaignData := preload("res://data/Campaign.gd")
 
 
 ## 主畫面的替身：契約的實作只會問它這幾件事。
@@ -56,7 +57,7 @@ func _initialize() -> void:
 
 ## 要等一個 process frame：`--script` 模式下 `_initialize()` 裡加進樹的節點，`_ready()` 要到主迴圈開始才跑。
 func _run() -> void:
-	var t := T.new("stage3d_test", 150)
+	var t := T.new("stage3d_test", 190)
 	var s := SessionState.new()
 	s.setup(Maps.SHOAL)
 	var scr := ScrStub.new()
@@ -511,6 +512,7 @@ func _run() -> void:
 	t.ok(Stage.FRAME.has_point(st2.to_screen(st2.center(far))), "大圖傾斜 50°：跳過去之後那一格仍在畫面框架內")
 
 	_b43(t, st, s, m, scr)
+	await _b44(t, st, s, m, scr)
 	quit(t.report())
 
 
@@ -534,13 +536,14 @@ func _b43(t: Object, st: Stage3D, s: SessionState, m: Vector2i, scr: Control) ->
 	t.ok(rt.size() >= 2, "Wires.route：至少兩個點（%d）" % rt.size())
 	t.ok(absf(rt[0].x - 3.5) < 0.001 and absf(rt[rt.size() - 1].x - 9.5) < 0.001, "★ Wires.route：兩端落在節點格的中心")
 	var above := true
-	for i in rt.size():
+	for i in range(0, int(Wires.length_of(rt) / 0.1) + 1):
+		var qx := 3.5 + 0.1 * float(i)
 		var floor_y := 0.0
-		for dx: float in [-0.3, 0.3]:
-			for dy: float in [-0.3, 0.3]:
-				floor_y = maxf(floor_y, Relief.top_at(rel, Vector2i(floori(rt[i].x + dx), floori(rt[i].z + dy))))
-		above = above and rt[i].y >= floor_y
-	t.ok(above, "★ Wires.route：管底永遠在地形之上（過梯田不鑽進去）")
+		for dy: float in [-0.14, 0.14]:
+			for dx: float in [-0.14, 0.14]:
+				floor_y = maxf(floor_y, Relief.top_at(rel, Vector2i(floori(qx + dx), floori(2.5 + dy))))
+		above = above and Wires.height_on(rt, 0.1 * float(i)) >= floor_y - 0.008
+	t.ok(above, "★ Wires.route：管底永遠在地形之上（沿線每 0.1 格取樣，過梯田不鑽進去）")
 	t.ok(is_equal_approx(Wires.height_on(rt, 0.0), rt[0].y) and is_equal_approx(Wires.height_on(rt, 99.0), rt[rt.size() - 1].y), "Wires.height_on：兩端取端點、超出夾住")
 	t.ok(Wires.length_of(rt) > 5.9 and Wires.length_of(rt) < 6.1, "Wires.length_of：水平長度 ≈ 6 格（%.2f）" % Wires.length_of(rt))
 	# 橋：跨越點上的管底在橋面之上。
@@ -742,3 +745,240 @@ func _b43(t: Object, st: Stage3D, s: SessionState, m: Vector2i, scr: Control) ->
 	st.tilt_to(0.0, true)
 	if tower < 0:
 		t.ok(false, "（探針）塔沒蓋成")
+
+
+## ★ B4.4：左右旋轉、導管不鑽進地形、礦點台地、擺設不長在建築與導管底下。
+func _b44(t: Object, st: Stage3D, s: SessionState, m: Vector2i, scr: Control) -> void:
+	s.nodes.clear()
+	s.conduits.clear()
+	s.enemies.clear()
+	s.shots.clear()
+	s.bursts.clear()
+	s.shields.clear()
+	s.rev += 1
+	var mpx := Vector2(m) * 32.0
+	st.tilt_to(0.0, true)
+	st.yaw_to(0.0, true)
+	st.reset_view()
+	st._process(0.0)
+
+	# ── 旋轉：契約 ──
+	t.ok(st.can_rotate(), "can_rotate：傾斜舞台能旋轉")
+	var plain := Stage.new()
+	t.ok(not plain.can_rotate() and is_equal_approx(plain.yaw_goal(), 0.0), "★ 契約的預設：不能旋轉、朝向恆 0（2D 舞台不必實作）")
+	plain.free()
+	t.near(st.yaw, 0.0, "起點：北在上（yaw ＝ 0）")
+	st.yaw_to(90.0, true)
+	t.ok(is_equal_approx(st.yaw, 90.0) and is_equal_approx(st.yaw_goal(), 90.0), "yaw_to(immediate)：當場到位")
+	st.yaw_to(-90.0, true)
+	t.near(st.yaw, 270.0, "yaw_to：負角度折回 0..360（−90 ＝ 270）")
+	st.yaw_by(100.0, true)
+	t.near(st.yaw, 10.0, "yaw_by：累加並折回（270 ＋ 100 ＝ 10）")
+	var moved0 := _moved
+	st.yaw_to(45.0)
+	t.ok(_moved > moved0 and is_equal_approx(st.yaw_goal(), 45.0) and is_equal_approx(st.yaw, 10.0), "yaw_to（緩動）：發出 view_moved、目標先到、目前角度還在原地")
+	for _i in 300:
+		st.tick_view(0.016)
+	t.near(st.yaw, 45.0, "tick_view：緩動走到目標")
+	st.yaw_to(350.0, true)
+	st.yaw_to(10.0)
+	st.tick_view(0.05)
+	t.ok(st.yaw > 350.0 or st.yaw < 10.0, "★ 緩動走最短的那一邊（350 → 10 是往前 20 度，不是倒轉 340 度）（%.1f）" % st.yaw)
+	st.yaw_to(0.0, true)
+
+	# ── 相機的三個軸互相垂直、單位長，右軸貼地；轉 360° 回到原樣 ──
+	var axes_ok := true
+	for tl_deg: float in [0.0, 30.0, 62.0]:
+		for yw_deg: float in [0.0, 33.0, 90.0, 180.0, 271.0]:
+			var pose := Stage3D._pose(20.0, tl_deg, Vector2(10.0, 8.0), yw_deg)
+			var pf: Vector3 = pose[1]
+			var pu: Vector3 = pose[2]
+			var pr: Vector3 = pose[4]
+			axes_ok = axes_ok and absf(pf.dot(pu)) < 1.0e-5 and absf(pf.dot(pr)) < 1.0e-5 and absf(pu.dot(pr)) < 1.0e-5
+			axes_ok = axes_ok and absf(pf.length() - 1.0) < 1.0e-5 and absf(pu.length() - 1.0) < 1.0e-5 and absf(pr.length() - 1.0) < 1.0e-5
+			axes_ok = axes_ok and absf(pr.y) < 1.0e-6
+	t.ok(axes_ok, "★ Stage3D._pose：前／上／右互相垂直、單位長、右軸貼地（每個傾斜角 × 旋轉角）")
+	var vr0 := st.view_world_rect()
+	st.yaw_to(360.0, true)
+	t.ok(is_equal_approx(st.yaw, 0.0) and st.view_world_rect().position.distance_to(vr0.position) < 0.01, "轉滿 360°：回到原本的視野")
+
+	# ── 方向：順時針轉 90° 時，北在畫面右邊 ──
+	var mid := Vector2i(m.x / 2, m.y / 2)
+	var north := mid + Vector2i(0, -3)
+	var east := mid + Vector2i(3, 0)
+	var p_mid := st.to_screen(st.center(mid))
+	t.ok(absf(st.to_screen(st.center(north)).x - p_mid.x) < 0.5 and st.to_screen(st.center(north)).y < p_mid.y - 5.0, "yaw ＝ 0：北在正上方")
+	st.yaw_to(90.0, true)
+	t.ok(st.to_screen(st.center(north)).x > p_mid.x + 5.0 and absf(st.to_screen(st.center(north)).y - st.to_screen(st.center(mid)).y) < 0.5, "★ 順時針轉 90°：北在畫面右邊")
+	t.ok(st.to_screen(st.center(east)).y > st.to_screen(st.center(mid)).y + 5.0, "★ 順時針轉 90°：東在畫面下方")
+	st.yaw_to(180.0, true)
+	t.ok(st.to_screen(st.center(north)).y > st.to_screen(st.center(mid)).y + 5.0, "轉 180°：北在畫面下方")
+
+	# ── 每個傾斜角 × 旋轉角：投影往返、全景框住整張圖、不算大過一屏 ──
+	var round_ok := true
+	var fit_ok := true
+	var quad_ok := true
+	var probe := ""
+	for tl_deg: float in [0.0, 25.0, 50.0, Stage.TILT_MAX]:
+		for yw_deg: float in [0.0, 20.0, 45.0, 90.0, 135.0, 180.0, 225.0, 300.0]:
+			st.tilt_to(tl_deg, true)
+			st.yaw_to(yw_deg, true)
+			st.reset_view()
+			for x in range(1, m.x, 4):
+				for y in range(1, m.y, 4):
+					var c := Vector2i(x, y)
+					if st.cell_at(st.to_screen(st.center(c))) != c:
+						round_ok = false
+						probe = "%d°/%d° %s" % [int(tl_deg), int(yw_deg), str(c)]
+			for corner: Vector2 in [Vector2(0, 0), Vector2(mpx.x, 0), mpx, Vector2(0, mpx.y)]:
+				if not Stage.FRAME.grow(0.5).has_point(st.to_screen(corner)):
+					fit_ok = false
+					probe = "框 %d°/%d° %s" % [int(tl_deg), int(yw_deg), str(corner)]
+			fit_ok = fit_ok and not st.oversized() and is_equal_approx(st.zoom, st.fit)
+			var quad := st.view_quad()
+			quad_ok = quad_ok and quad.size() == 4 and st.in_view(mpx * 0.5) and not st.in_view(mpx * 9.0)
+	t.ok(round_ok, "★ 每個傾斜角 × 旋轉角：cell_at(to_screen(center(c))) == c（%s）" % probe)
+	t.ok(fit_ok, "★ 每個傾斜角 × 旋轉角：全景框住整張圖、不出小地圖（%s）" % probe)
+	t.ok(quad_ok, "view_quad 四個角、in_view（地圖中心在、遠處不在）")
+
+	# ── 旋轉著縮放與平移：錨點底下那一點不動；拖曳＝抓著地面 ──
+	st.tilt_to(40.0, true)
+	st.yaw_to(70.0, true)
+	st.reset_view()
+	var anchor := st.to_screen(st.center(Vector2i(int(m.x * 0.6), int(m.y * 0.4))))
+	var under_before := st.point_at(anchor)
+	st.zoom_by(2.0, anchor)
+	t.ok(st.point_at(anchor).distance_to(under_before) < 0.08, "★ 旋轉著縮放：錨點底下那一點留在原地（%.3f 格）" % st.point_at(anchor).distance_to(under_before))
+	var cctr := Stage.FRAME.position + Stage.FRAME.size * 0.5
+	var grab := st.point_at(cctr - Vector2(60.0, 20.0))
+	st.pan_by(Vector2(60.0, 20.0))
+	t.ok(st.point_at(cctr).distance_to(grab) < 0.35, "★ 旋轉著拖曳：抓著地面走（螢幕中心換成原本在左上方的那一點，差 %.3f 格）" % st.point_at(cctr).distance_to(grab))
+	st.reset_view()
+	st.yaw_to(0.0, true)
+	st.tilt_to(0.0, true)
+
+	# ── 導管路徑：永遠不鑽進腳印底下的地形、離地有上限（十張戰役圖 × 一堆隨機導管） ──
+	var clip_worst := 0.0
+	var gap_worst := 0.0
+	var routes := 0
+	var flat_routes := 0
+	for i in CampaignData.count():
+		var cmap: Dictionary = CampaignData.at(i)["map"]
+		var crel := Relief.build(cmap)
+		var cw: int = crel["w"]
+		var ch: int = crel["h"]
+		for k in 60:
+			var ra := Vector2i(int(Terrain.noise(k, 1, 11 + i) * cw), int(Terrain.noise(k, 2, 11 + i) * ch))
+			var rb := Vector2i(
+				clampi(ra.x + int(Terrain.noise(k, 3, 11 + i) * 9.0) - 4, 0, cw - 1),
+				clampi(ra.y + int(Terrain.noise(k, 4, 11 + i) * 9.0) - 4, 0, ch - 1)
+			)
+			if ra == rb:
+				continue
+			var rt := Wires.route(crel, ra, rb)
+			routes += 1
+			var pa := Vector2(rt[0].x, rt[0].z)
+			var dirv := (Vector2(rt[rt.size() - 1].x, rt[rt.size() - 1].z) - pa).normalized()
+			var span := Wires.length_of(rt)
+			var d := 0.0
+			while d <= span:
+				var q := pa + dirv * d
+				var lo_t := 9.0
+				var hi_t := -1.0
+				for dx: float in [-0.14, 0.14]:
+					for dy: float in [-0.14, 0.14]:
+						var tt := Relief.top_at(crel, Vector2i(floori(q.x + dx), floori(q.y + dy)))
+						lo_t = minf(lo_t, tt)
+						hi_t = maxf(hi_t, tt)
+				var by := Wires.height_on(rt, d)
+				clip_worst = maxf(clip_worst, hi_t - by)
+				gap_worst = maxf(gap_worst, by - lo_t)
+				d += 0.25
+			if rt.size() == 2:
+				flat_routes += 1
+	t.ok(routes > 400, "（探針）取樣夠多條導管（%d）" % routes)
+	t.ok(clip_worst <= 0.012, "★ Wires.route：管底不低於腳印底下的任何地形（最多鑽進 %.3f 格，舊版 0.128）" % clip_worst)
+	t.ok(gap_worst <= 0.40, "Wires.route：管底離腳印底下最低的地面不超過 0.40 格（%.3f）" % gap_worst)
+	t.ok(flat_routes > routes / 4, "平地上的導管就是一段直線（兩個點；%d / %d 條）" % [flat_routes, routes])
+
+	# ── 礦點台地：每一個礦點都比周圍（溝以外）八格高，不再陷在坑裡 ──
+	var pads_ok := true
+	var ores := 0
+	var pad_probe := ""
+	for i in CampaignData.count():
+		var omap: Dictionary = CampaignData.at(i)["map"]
+		var orel := Relief.build(omap)
+		var opath: Dictionary = orel["path"]
+		for oc: Vector2i in omap.get("ore", []):
+			if opath.has(oc):
+				continue
+			ores += 1
+			var ot := Relief.top_at(orel, oc)
+			for dx in range(-1, 2):
+				for dy in range(-1, 2):
+					var nc := oc + Vector2i(dx, dy)
+					if nc == oc or opath.has(nc) or nc.x < 0 or nc.y < 0 or nc.x >= int(orel["w"]) or nc.y >= int(orel["h"]):
+						continue
+					if ot < Relief.top_at(orel, nc) + Relief.ORE_RISE - Relief.STEP:
+						pads_ok = false
+						pad_probe = "第 %d 關 %s（%.3f 對 %.3f）" % [i + 1, str(oc), ot, Relief.top_at(orel, nc)]
+	t.ok(ores >= 20, "（探針）十張戰役圖的礦點夠多（%d）" % ores)
+	t.ok(pads_ok, "★ 礦點是台地：比周圍每一格高至少 ORE_RISE（%s）" % pad_probe)
+
+	# ── 擺設：岩石不長在建築與導管底下；礦點上蓋了東西水晶就不畫 ──
+	var map5: Dictionary = CampaignData.at(3)["map"]  # 熔渣：岩石最多
+	var rel5 := Relief.build(map5)
+	var parts := Terrain.build(map5, 32.0, 1)
+	var tri_all := Extrude.triangle_count(Relief.scenery_mesh(map5, rel5, {}, parts))
+	var rock_cell := Vector2i(-1, -1)
+	var ore_zone: Dictionary = {}  # 礦點與它周圍一圈本來就不擺岩石（`keep_clear`）：挑的那塊岩石要在這之外
+	for oz: Vector2i in map5.get("ore", []):
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				ore_zone[oz + Vector2i(dx, dy)] = true
+	for part: Dictionary in parts:
+		if String(part["kind"]) != "fill" or (part["col"] as Color).a < 0.5 or (part["pts"] as PackedVector2Array).size() < 4:
+			continue
+		var mid_p := Vector2.ZERO
+		for v: Vector2 in part["pts"]:
+			mid_p += v
+		mid_p /= float((part["pts"] as PackedVector2Array).size())
+		var cand := Vector2i(floori(mid_p.x / 32.0), floori(mid_p.y / 32.0))
+		if Relief._area(part["pts"]) >= 50.0 and not (rel5["path"] as Dictionary).has(cand) and not Relief._footprint_taken(part["pts"], 32.0, {}, ore_zone):
+			rock_cell = cand
+			break
+	t.ok(rock_cell.x >= 0, "（探針）找得到一塊岩石")
+	var tri_cover := Extrude.triangle_count(Relief.scenery_mesh(map5, rel5, {rock_cell: 1}, parts))
+	t.ok(tri_cover < tri_all, "★ 擺設：建築蓋在岩石那一格 → 那塊岩石不畫（%d → %d 個三角形）" % [tri_all, tri_cover])
+	var ore5: Vector2i = (map5["ore"] as Array)[0]
+	var tri_ore := Extrude.triangle_count(Relief.scenery_mesh(map5, rel5, {ore5: 1}, parts))
+	t.ok(tri_ore < tri_all, "★ 擺設：礦點上蓋了東西 → 水晶不畫（不從建築裡穿出來；%d → %d）" % [tri_all, tri_ore])
+
+	# ── 舞台：蓋東西會讓擺設重蓋、拆掉會還原；佔用沒變就不重蓋 ──
+	var g := Stage3D.new()
+	g.ground_draw = false
+	g.scr = scr
+	var s5 := SessionState.new()
+	s5.setup(map5)
+	g.s = s5
+	scr.add_child(g)
+	await process_frame
+	await process_frame
+	g.tilt_to(50.0, true)
+	g._process(0.0)
+	var tris0 := Extrude.triangle_count(g._scenery.mesh as ArrayMesh)
+	s5.add_node("relay", rock_cell)
+	s5.rev += 1
+	g._process(0.0)
+	var tris1 := Extrude.triangle_count(g._scenery.mesh as ArrayMesh)
+	t.ok(tris1 < tris0, "★ 舞台：在岩石那一格蓋了建築 → 擺設網格重蓋、岩石不見（%d → %d）" % [tris0, tris1])
+	var key_before: Array = g._scenery_key.duplicate()
+	var occ_before: Dictionary = g._scenery_occ.duplicate()
+	s5.rev += 1
+	g._process(0.0)
+	t.ok(g._scenery_key != key_before and g._scenery_occ == occ_before, "佔用的格沒變（只是 rev 動了，例如升級）：不重蓋網格")
+	s5.remove_node_at(rock_cell)
+	s5.rev += 1
+	g._process(0.0)
+	t.eq(Extrude.triangle_count(g._scenery.mesh as ArrayMesh), tris0, "拆掉之後擺設還原")
+	g.queue_free()

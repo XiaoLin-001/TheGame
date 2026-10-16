@@ -54,6 +54,8 @@ func build_panel() -> void:
 	# 傾斜舞台才有的操作（B4.1）：放在「移動」那一行後面。
 	if scr.stage.can_tilt():
 		lines.insert(7, "　視　角：左上角「3D」鈕與滑桿；按住右鍵上下拖、Shift＋滾輪、或（觸控板／觸控）雙指上下拖，把視角從俯瞰轉向側面")
+		if scr.stage.can_rotate():
+			lines.insert(8, "　旋　轉：↺／↻ 各轉 45°，中間的羅盤按一下轉回北；按住右鍵左右拖、Ctrl＋滾輪、Q／E、雙指左右拖也轉得動")
 	for line: String in lines:
 		if line == "":
 			col.add_child(buildbar.spacer(6))

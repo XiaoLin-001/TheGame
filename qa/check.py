@@ -33,6 +33,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import desk  # noqa: E402  私有桌面上跑有視窗的行程（見 qa/desk.py）
+
 sys.stdout.reconfigure(encoding="utf-8")  # 與 qa/gd_lint.py 同一個慣例
 ROOT = Path(__file__).resolve().parent.parent
 GODOT = Path(os.environ.get("TL_GODOT", ROOT / "tools" / "godot" / "Godot_v4.7-stable_win64_console.exe"))
@@ -92,6 +95,12 @@ SHOTS: dict[str, dict[str, str]] = {
     "tilt50_naked": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_NAKED": "1", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO},
     # B4.3：同一個開火瞬間（第 5 關第 581 tick），傾斜 50° 放大 3 倍——彈道從塔頂、碎片爆、血條、3D 導管與珠子、敵人落影。
     "tilt50_fx_focus": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_PANEL": "campaign", "TL_LEVEL": "5", "TL_DEMO_TICKS": "581", "TL_FOCUS": "30,15,3"},
+    # B4.4：旋轉（TL_YAW，度，正＝地圖順時針）、礦點台地與水晶框（沒蓋採集器的那一個）、導管過梯田與岩石。
+    "yaw35_tilt50_L4": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_YAW": "35", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO},
+    "yaw90_tilt0_L4": {"TL_STAGE": "3d", "TL_TILT": "0", "TL_YAW": "90", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO},
+    "yaw200_tilt50_L10": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_YAW": "200", "TL_PANEL": "campaign", "TL_LEVEL": "10", **_DEMO},
+    "ore_focus_L4": {"TL_STAGE": "3d", "TL_TILT": "50", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO, "TL_FOCUS": "5,12,3"},
+    "pipes_focus_L4": {"TL_STAGE": "3d", "TL_TILT": "58", "TL_PANEL": "campaign", "TL_LEVEL": "4", **_DEMO, "TL_FOCUS": "13,8,2.4"},
 }
 
 
@@ -110,25 +119,12 @@ PERF: dict[str, dict[str, str]] = {
 def _godot(args: list[str], env_extra: dict[str, str], timeout: int, project: Path | None = None) -> tuple[int, str, float]:
     if not GODOT.exists():
         sys.exit(f"找不到 Godot：{GODOT}\n先跑 `python dev/setup.py`，或設環境變數 TL_GODOT。")
-    env = {k: v for k, v in os.environ.items() if not k.startswith("TL_") or k == "TL_GODOT"}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("TL_") or k in ("TL_GODOT", "TL_VISIBLE")}
     env.update(env_extra)
-    t0 = time.time()
-    # Popen 而不是 run：`*_console.exe` 只是個轉接殼，真正的遊戲是它的子行程。
-    # `subprocess.run(timeout=)` 逾時只殺殼，**視窗會一直留在使用者的桌面上**（B3.14 踩到）。
-    p = subprocess.Popen(
-        [str(GODOT), *args], cwd=project or ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding="utf-8", errors="replace",
-    )
-    try:
-        out, err = p.communicate(timeout=timeout)
-        return p.returncode, (out or "") + (err or ""), time.time() - t0
-    except subprocess.TimeoutExpired:
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True)
-        else:
-            p.kill()
-        out, err = p.communicate()
-        return 124, (out or "") + (err or "") + "\n[check.py] 逾時（已連同子行程一起結束）", time.time() - t0
+    # ★ 有視窗的行程一律開在**私有桌面**上（`qa/desk.py`）：視窗不會出現在使用者的螢幕上、不搶焦點。
+    #   `--headless` 跑在 dummy display server，沒有視窗，直接走一般路徑。`TL_VISIBLE=1` 才開在使用者桌面。
+    #   逾時處理（連同子行程一起結束）也在那一支裡：`*_console.exe` 只是個轉接殼，真正的遊戲是它的子行程。
+    return desk.run_hidden([str(GODOT), *args], env=env, cwd=str(project or ROOT), timeout=timeout)
 
 
 def cmd_lint(_a: argparse.Namespace) -> int:

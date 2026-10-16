@@ -10,7 +10,7 @@ extends Control
 const CampaignData := preload("res://data/Campaign.gd")
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const Enemies := preload("res://data/Enemies.gd")
-const BattleScreen := preload("res://scripts/screens/Battle.gd")
+const BattleLoader := preload("res://scripts/screens/BattleLoader.gd")
 const TechScreen := preload("res://scripts/screens/Tech.gd")
 const Glyphs := preload("res://scripts/render/2d/Glyphs.gd")
 
@@ -103,7 +103,7 @@ func _click_selftest() -> void:
 	# 真的進了局內畫面嗎？（卡片被清掉、Battle 掛上來了）
 	var battle: Node = null
 	for c: Node in get_children():
-		if c.get_script() == BattleScreen:
+		if c.get_script() == BattleLoader.script():
 			battle = c
 	var entered: bool = battle != null
 
@@ -321,7 +321,7 @@ func _enter_tech() -> void:
 
 func _enter(index: int) -> void:
 	UiKit.clear(self)
-	var battle := BattleScreen.new()
+	var battle: Control = BattleLoader.script().new()
 	# ★ 指派要在 `add_child()` **之前**——`_ready()` 一進來就會讀 `level`。
 	battle.level = CampaignData.at(index)
 	battle.on_exit = _build

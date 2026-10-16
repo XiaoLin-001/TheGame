@@ -48,6 +48,7 @@ const MARGIN_TILT := 0.05
 const ZOOM_MAX_MULT := 3.0
 const PAN_EASE := 14.0
 const TILT_EASE := 10.0
+const YAW_EASE := 10.0
 ## 傾斜到這個角度時，建築長到全高（之前以平滑曲線過渡）。
 const LIFT_FULL_DEG := 38.0
 ## lift 小於它就不畫 3D（露出貼圖裡的 2D 本尊）。
@@ -156,6 +157,9 @@ var _node_meshes: Dictionary = {} # 網格快取：key → ArrayMesh
 var _foe_meshes: Dictionary = {}  # 「型別|變體」→ ArrayMesh
 var _boxes: Array = []            # 拾取用：[{cell, base, h, lo, hi}]（base 是地形頂面、h 是建築高，兩者都乘 lift）
 var _rel: Dictionary = {}         # 這張圖的起伏（`Relief.build()`）
+var _scenery_parts: Array = []    # 這張圖的擺設零件（`Terrain.build()`，同一張圖不變）
+var _scenery_key: Array = []
+var _scenery_occ: Dictionary = {} # 蓋住擺設的格（建築 1、導管 2）；沒變就不重蓋網格
 var _no_mesh: Dictionary = {}     # 沒有造型的型別（`stage3d_test` 要它是空的）
 var _node_key: Array = []
 var _map_id: String = "<none>"
@@ -165,6 +169,8 @@ var _gmap: Vector2 = Vector2.ZERO
 
 ## 目前的傾斜目標；`tilt`（契約）是緩動中的目前值。
 var _goal_tilt: float = 0.0
+## 目前的旋轉目標（0..360）；`yaw`（契約）是緩動中的目前值。
+var _goal_yaw: float = 0.0
 ## 目標點（格為單位）與它的追趕目標。
 var _target: Vector2 = Vector2.ZERO
 var _goal: Vector2 = Vector2.ZERO
@@ -175,10 +181,10 @@ var _view_h: float = 20.0
 var _fit_h: float = 20.0
 var _whole_h: float = 20.0
 var _dist: float = 40.0
-var _fit_cache_tilt: float = -1.0
-var _fit_cache_map: Vector2 = Vector2.ZERO
-## 目前的相機姿態（與 `Camera3D` 同一組）：位置、前方、上方。右方恆為 +X。
+var _fit_cache: Dictionary = {}    # （傾斜, 旋轉, 圖大小）→ 剛好框住整張圖的高度（`_fit_view_h()`）
+## 目前的相機姿態（與 `Camera3D` 同一組）：位置、前方、上方、右方（旋轉之後右方不再恆為 +X）。
 var _pos: Vector3 = Vector3(0.0, 40.0, 0.0)
+var _r: Vector3 = Vector3.RIGHT
 var _f: Vector3 = Vector3(0.0, -1.0, 0.0)
 var _u: Vector3 = Vector3(0.0, 0.0, -1.0)
 var _th: float = tan(deg_to_rad(FOV_DEG * 0.5))
@@ -418,6 +424,13 @@ func tick_view(delta: float) -> void:
 		if absf(tilt - _goal_tilt) < 0.05:
 			tilt = _goal_tilt
 		moved = true
+	if not is_equal_approx(yaw, _goal_yaw):
+		var dy := wrapf(_goal_yaw - yaw, -180.0, 180.0)
+		if absf(dy) < 0.05:
+			yaw = _goal_yaw
+		else:
+			yaw = fposmod(yaw + dy * (1.0 - exp(-YAW_EASE * delta)), 360.0)
+		moved = true
 	if moved:
 		_clamp_target()
 		_apply_camera()
@@ -437,10 +450,21 @@ func view_world_rect() -> Rect2:
 	return Rect2(lo * Shapes.GRID, (hi - lo) * Shapes.GRID)
 
 
+## 看到的比整張圖少嗎？**用相機高度比，不用外接矩形**：旋轉之後外接矩形比真正看到的大，而「整張圖剛好裝進框架」
+## 的 `_whole_h` 是跟著旋轉算的（`_fit_view_h()`）。放大或被可讀性地板限制時 `_view_h` 都小於它。
 func oversized() -> bool:
-	var v := view_world_rect()
-	var m := _map_cells() * Shapes.GRID
-	return v.size.x < m.x - 0.5 or v.size.y < m.y - 0.5
+	return _view_h < _whole_h - 0.001
+
+
+func view_quad() -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for p: Vector2 in [FRAME.position, FRAME.position + Vector2(FRAME.size.x, 0.0), FRAME.end, FRAME.position + Vector2(0.0, FRAME.size.y)]:
+		out.append(_ground_at(p) * Shapes.GRID)
+	return out
+
+
+func in_view(p: Vector2) -> bool:
+	return FRAME.has_point(to_screen(p))
 
 
 # ── 契約：傾斜 ─────────────────────────────────────────────────────────
@@ -465,6 +489,31 @@ func tilt_by(deg: float, immediate: bool = false) -> void:
 
 func tilt_toggle() -> void:
 	tilt_to(0.0 if _goal_tilt > 5.0 else TILT_DEFAULT)
+
+
+# ── 契約：旋轉 ─────────────────────────────────────────────────────────
+
+func can_rotate() -> bool:
+	return true
+
+
+func yaw_to(deg: float, immediate: bool = false) -> void:
+	_goal_yaw = fposmod(deg, 360.0)
+	if immediate or Motion.reduce:
+		yaw = _goal_yaw
+		_clamp_target()
+		_apply_camera()
+	view_moved.emit()
+	scr.redraw()
+
+
+func yaw_by(deg: float, immediate: bool = false) -> void:
+	yaw_to(_goal_yaw + deg, immediate)
+
+
+## 目標角度（`yaw` 是緩動中的目前值）。
+func yaw_goal() -> float:
+	return _goal_yaw
 
 
 ## 目標角度（`tilt` 是緩動中的目前值）。
@@ -558,6 +607,8 @@ func _process(delta: float) -> void:
 	Prof.lap("s3d.nodes")
 	_sync_wires()
 	Prof.lap("s3d.wires")
+	_sync_scenery()
+	Prof.lap("s3d.scenery")
 	_sync_foes()
 	Prof.lap("s3d.foes")
 	_sync_fx()
@@ -595,8 +646,11 @@ func _sync_map() -> void:
 	_rfloor = _rel["floor"]
 	_ground_mesh.mesh = Relief.ground_mesh(_rel)
 	_cliffs.mesh = Relief.cliff_mesh(_rel)
-	_scenery.mesh = Relief.scenery_mesh(s.map, _rel)
-	_fit_cache_tilt = -1.0
+	_scenery_parts = Terrain.build(s.map, Shapes.GRID, 1)
+	_scenery_occ = {}
+	_scenery_key = []
+	_scenery.mesh = Relief.scenery_mesh(s.map, _rel, {}, _scenery_parts)
+	_fit_cache.clear()
 	_gwin = Vector2.ZERO
 	_apply_ground_window()
 
@@ -760,6 +814,41 @@ func _node_mesh(n: Dictionary, type: String, lv: int, mkey: String) -> ArrayMesh
 		mesh = Extrude.glyph_mesh(parts, Models.height_of(type, lv), Glyphs.scale_for(n))
 	_node_meshes[mkey] = mesh
 	return mesh
+
+
+## 擺設（岩石、貝殼、苔、礦點的水晶）是一張靜態網格。玩家蓋了東西（`s.rev` 變了）才檢查要不要重蓋：
+## 岩石不長在建築與導管底下（`Relief.scenery_mesh()` 的 `occ`）。佔用的格沒變就不重蓋（升級、改線寬不會讓它重蓋）。
+func _sync_scenery() -> void:
+	var key := [s.get_instance_id(), s.rev, _map_id]
+	if key == _scenery_key:
+		return
+	_scenery_key = key
+	var occ := _occupied()
+	if occ == _scenery_occ:
+		return
+	_scenery_occ = occ
+	_scenery.mesh = Relief.scenery_mesh(s.map, _rel, occ, _scenery_parts)
+
+
+## 玩家蓋了東西的格：建築 ＝ 1；導管經過的格（沿線每 0.25 格、兩側各 0.2 格的腳印）＝ 2。
+func _occupied() -> Dictionary:
+	var occ: Dictionary = {}
+	for c: Dictionary in s.conduits:
+		var ca: Vector2i = c["a"]
+		var cb: Vector2i = c["b"]
+		var pa := Vector2(ca) + Vector2(0.5, 0.5)
+		var pb := Vector2(cb) + Vector2(0.5, 0.5)
+		var n := maxi(1, ceili(pa.distance_to(pb) / 0.25))
+		var dir := (pb - pa).normalized() if pa != pb else Vector2.RIGHT
+		var perp := Vector2(-dir.y, dir.x)
+		for i in n + 1:
+			var p := pa.lerp(pb, float(i) / float(n))
+			for lat: float in [-0.2, 0.0, 0.2]:
+				var q := p + perp * lat
+				occ[Vector2i(floori(q.x), floori(q.y))] = 2
+	for nd: Dictionary in s.nodes:
+		occ[nd["cell"]] = 1
+	return occ
 
 
 func _sync_foes() -> void:
@@ -979,7 +1068,7 @@ func _sync_fx() -> void:
 		return
 	var pen := Fx3D.Pen.new()
 	var top := Fx3D.Pen.new()
-	var r := Vector3.RIGHT
+	var r := _r
 	var u := _u
 	var frac: float = scr.accum / BattleController.TICK
 	_ground._enemy_index = _ground._index_enemies()   # 彈丸要找得到「此刻」的敵人
@@ -1262,13 +1351,17 @@ func _map_cells() -> Vector2:
 	return Vector2(s.map["size"]) if s != null and not s.map.is_empty() else Vector2(10.0, 10.0)
 
 
-## 相機姿態：位置、前方、上方、離目標點的距離。`tilt_deg` ＝ 0 時正俯瞰。
-static func _pose(view_h: float, tilt_deg: float, target: Vector2) -> Array:
+## 相機姿態：`[位置, 前方, 上方, 離目標點的距離, 右方]`。`tilt_deg` ＝ 0 時正俯瞰；`yaw_deg` ＝ 地圖在畫面上順時針轉過的角度。
+## 畫面上「上」在地面上的方向 `h` 與「右」`r`：yaw ＝ 0 時 h ＝ −z（北）、r ＝ +x；順時針轉 ψ 時 r ＝ (cosψ, 0, −sinψ)、h ＝ (−sinψ, 0, −cosψ)。
+static func _pose(view_h: float, tilt_deg: float, target: Vector2, yaw_deg: float = 0.0) -> Array:
 	var p := deg_to_rad(90.0 - tilt_deg)
-	var f := Vector3(0.0, -sin(p), -cos(p))
-	var u := Vector3(0.0, cos(p), -sin(p))
+	var psi := deg_to_rad(yaw_deg)
+	var r := Vector3(cos(psi), 0.0, -sin(psi))
+	var h := Vector3(-sin(psi), 0.0, -cos(psi))
+	var f := h * cos(p) + Vector3(0.0, -sin(p), 0.0)
+	var u := Vector3(0.0, cos(p), 0.0) + h * sin(p)
 	var dist := view_h * 0.5 / tan(deg_to_rad(FOV_DEG * 0.5))
-	return [Vector3(target.x, 0.0, target.y) - f * dist, f, u, dist]
+	return [Vector3(target.x, 0.0, target.y) - f * dist, f, u, dist, r]
 
 
 ## 世界點 → NDC（x, y ∈ [-1, 1] 在畫面內）＋ 深度。深度 ≤ 0 ＝ 在相機後面。
@@ -1276,21 +1369,24 @@ static func _ndc(pose: Array, aspect: float, x: Vector3) -> Vector3:
 	var pos: Vector3 = pose[0]
 	var f: Vector3 = pose[1]
 	var u: Vector3 = pose[2]
+	var r: Vector3 = pose[4]
 	var th := tan(deg_to_rad(FOV_DEG * 0.5))
 	var v := x - pos
 	var zc := v.dot(f)
 	if zc < 0.001:
 		return Vector3(INF, INF, zc)
-	return Vector3(v.x / (zc * th * aspect), v.dot(u) / (zc * th), zc)
+	return Vector3(v.dot(r) / (zc * th * aspect), v.dot(u) / (zc * th), zc)
 
 
-## 這個傾斜角下，剛好框住整張圖（含 `MARGIN`）所需的畫面高度（格）。二分搜尋：距離變大，
+## 這個傾斜角、旋轉角下，剛好框住整張圖（含 `MARGIN`）所需的畫面高度（格）。二分搜尋：距離變大，
 ## 四個角單調地往畫面中心收，所以「塞得下」對距離是單調的。四個角取**地形最高處**那個高度（隆起的圖邊緣最容易出框）。
-func _fit_view_h(t_deg: float) -> float:
+## 結果依（傾斜、旋轉、圖大小）快取——旋轉時每幀換一個角度，所以快取是一張小表，不是單一格。
+func _fit_view_h(t_deg: float, yaw_deg: float) -> float:
 	var margin := 1.0 + MARGIN_TILT * clampf(t_deg / TILT_MAX, 0.0, 1.0)
 	var m := _map_cells()
-	if is_equal_approx(t_deg, _fit_cache_tilt) and m == _fit_cache_map:
-		return _whole_h
+	var key := Vector3(snappedf(t_deg, 0.01), snappedf(yaw_deg, 0.01), m.x * 4096.0 + m.y)
+	if _fit_cache.has(key):
+		return _fit_cache[key]
 	var c := m * 0.5
 	var y := float(_rel.get("max", 0.0)) * _lift_of(t_deg)
 	var corners: Array[Vector3] = [
@@ -1300,7 +1396,7 @@ func _fit_view_h(t_deg: float) -> float:
 	var hi := 800.0
 	for _i in 32:
 		var mid := (lo + hi) * 0.5
-		var pose := _pose(mid, t_deg, c)
+		var pose := _pose(mid, t_deg, c, yaw_deg)
 		var ok := true
 		for x: Vector3 in corners:
 			var n := _ndc(pose, _aspect, x)
@@ -1311,9 +1407,9 @@ func _fit_view_h(t_deg: float) -> float:
 			hi = mid
 		else:
 			lo = mid
-	_fit_cache_tilt = t_deg
-	_fit_cache_map = m
-	_whole_h = hi
+	if _fit_cache.size() > 96:
+		_fit_cache.clear()
+	_fit_cache[key] = hi
 	return hi
 
 
@@ -1321,16 +1417,22 @@ func _fit_view_h(t_deg: float) -> float:
 func _apply_camera() -> void:
 	if _cam == null:
 		return
-	var whole := _fit_view_h(tilt)
-	# 可讀性地板：一格至少 `MIN_READABLE_CELL` px ⇒ 畫面最多涵蓋這麼多格。一屏可見的戰役關卡永遠 whole ≤ 地板。
-	_fit_h = minf(whole, FRAME.size.y / Shapes.MIN_READABLE_CELL)
+	var whole := _fit_view_h(tilt, yaw)
+	_whole_h = whole
+	# 可讀性地板：一格至少 `MIN_READABLE_CELL` px ⇒ 畫面最多涵蓋這麼多格。一屏可見的戰役關卡在不旋轉時永遠 whole ≤ 地板。
+	# ★ 地板只管**大圖**（不旋轉也塞不進地板的）：一屏可見的圖旋轉之後，外接的範圍會變大（轉 45° 的 30×18 要 34 格高），
+	#   硬守地板的話整張圖就看不全——旋轉是玩家自己選的，選了就該看得到整張圖，所以旋轉時讓全景一格小於地板（最小約 15 px）。
+	var floor_h := FRAME.size.y / Shapes.MIN_READABLE_CELL
+	var fits_unrotated: bool = _fit_view_h(tilt, 0.0) <= floor_h + 0.001
+	_fit_h = whole if fits_unrotated else minf(whole, floor_h)
 	_view_h = _fit_h / maxf(zoom, 1.0)
-	var pose := _pose(_view_h, tilt, _target)
+	var pose := _pose(_view_h, tilt, _target, yaw)
 	_pos = pose[0]
 	_f = pose[1]
 	_u = pose[2]
 	_dist = pose[3]
-	_cam.transform = Transform3D(Basis(Vector3.RIGHT, _u, -_f), _pos)
+	_r = pose[4]
+	_cam.transform = Transform3D(Basis(_r, _u, -_f), _pos)
 	var diag := _map_cells().length()
 	_cam.near = maxf(0.05, _dist * 0.3)
 	_cam.far = _dist * 2.6 + diag
@@ -1383,7 +1485,7 @@ func _place_nodes() -> void:
 func _ray(pos: Vector2) -> Array:
 	var nx := (pos.x - FRAME.position.x) / FRAME.size.x * 2.0 - 1.0
 	var ny := 1.0 - (pos.y - FRAME.position.y) / FRAME.size.y * 2.0
-	var dir := Vector3.RIGHT * (nx * _th * _aspect) + _u * (ny * _th) + _f
+	var dir := _r * (nx * _th * _aspect) + _u * (ny * _th) + _f
 	return [_pos, dir.normalized()]
 
 
@@ -1459,7 +1561,7 @@ static func _ray_box(o: Vector3, d: Vector3, lo: Vector3, hi: Vector3) -> float:
 
 ## 世界點 → 螢幕座標。
 func _screen_of(x: Vector3) -> Vector2:
-	var n := _ndc([_pos, _f, _u, _dist], _aspect, x)
+	var n := _ndc([_pos, _f, _u, _dist, _r], _aspect, x)
 	if not is_finite(n.x):
 		return Vector2(-1000.0, -1000.0)
 	return FRAME.position + Vector2((n.x * 0.5 + 0.5) * FRAME.size.x, (0.5 - n.y * 0.5) * FRAME.size.y)

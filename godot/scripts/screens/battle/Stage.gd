@@ -55,6 +55,13 @@ const TILT_MAX := 62.0
 const TILT_DEFAULT := 50.0
 var tilt: float = 0.0
 
+## ── 旋轉（B4.4）：左右轉動視角 ──────────────────────────────────────────────────
+## `yaw` ＝ 地圖在畫面上**順時針**轉過的角度（度，0 ＝ 北在上，與 2D 那張圖一樣；往右拖＝順時針）。
+## 2D 舞台沒有這個維度（`can_rotate()` 為假、`yaw` 恆為 0），HUD 據此決定要不要放旋轉的控制。
+## `yaw` 是**目前**的角度（會緩動，走最短的那一邊）；目標用 `yaw_to()` 設。
+const YAW_STEP := 45.0
+var yaw: float = 0.0
+
 ## 本幀交戰中的塔 `{id: bool}`、正在被啃的格 `{cell: true}`。**舞台自己算**——
 ## 它要畫的是「誰正在吃電」「哪裡正在被啃」，模擬層只留了一個座數。HUD 與小地圖會讀它們。
 var engaged: Dictionary = {}
@@ -144,6 +151,38 @@ func tilt_to(_deg: float, _immediate: bool = false) -> void:
 ## 俯瞰 ↔ 傾斜的切換鈕（「3D」）。
 func tilt_toggle() -> void:
 	pass
+
+
+## 這個舞台能左右旋轉嗎？
+func can_rotate() -> bool:
+	return false
+
+
+## 旋轉一個相對量（度；正＝地圖順時針）。滑鼠拖曳、鍵盤與按鈕走這條。
+func yaw_by(_deg: float, _immediate: bool = false) -> void:
+	pass
+
+
+## 旋轉到某個角度（0 ＝ 北在上）。`immediate` 為真時當場到位，否則走最短的那一邊平滑轉過去。
+func yaw_to(_deg: float, _immediate: bool = false) -> void:
+	pass
+
+
+## 目標角度（`yaw` 是緩動中的目前值）。
+func yaw_goal() -> float:
+	return 0.0
+
+
+## 目前視野的四個角（地圖座標 px；順序＝畫面的左上、右上、右下、左下）。**旋轉或傾斜時視野是歪的四邊形**，
+## 小地圖畫的是它；`view_world_rect()` 只是它的外接矩形。
+func view_quad() -> PackedVector2Array:
+	var r := view_world_rect()
+	return PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)])
+
+
+## 地圖座標 px 的這一點現在在畫面內嗎？（邊緣箭頭問的就是它：看不到的問題才需要箭頭。）
+func in_view(p: Vector2) -> bool:
+	return view_world_rect().has_point(p)
 
 
 ## 讓下一幀整個重畫（有快取的實作用它丟掉所有快取；沒有快取的實作什麼都不用做）。

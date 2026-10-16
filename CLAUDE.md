@@ -182,7 +182,7 @@ TL_CLICKTEST=1 TL_SHOT="C:/tmp/wire.png" TL_MUTE=1 TL_PICK=wire TL_PANEL=campaig
 # 地形是梯田（`Relief`），建築與敵人是手作的多材質造型（`Models`），導管是躺在地上的管子（`Wires`），特效與血條浮在 3D 裡（`Fx3D`），
 # 高度全乘 `lift`——傾斜 0° 就是 2D 那張圖。設定畫面有「傾斜視角（3D）」開關（`settings.tilt_stage`，預設開，下一局起生效）。
 # **有任何 `TL_*` 時預設平面舞台、沒有任何鉤子（玩家實玩）時預設傾斜舞台**；`TL_STAGE=3d｜2d` 明寫時照它。
-# `TL_TILT=<度>` 是起始傾斜角（0–62）。`TL_STAGE=3d TL_CLICKTEST=1` 跑只問契約的 smoke（含傾斜的四個進入點）；
+# `TL_TILT=<度>` 是起始傾斜角（0–62）、`TL_YAW=<度>` 是起始旋轉角（0＝北在上，正＝地圖順時針，B4.4）。`TL_STAGE=3d TL_CLICKTEST=1` 跑只問契約的 smoke（含傾斜與旋轉的進入點）；
 # 舞台契約與造型的 headless 驗收是 `tests/stage3d_test.gd`。
 TL_STAGE=3d TL_TILT=50 TL_SHOT="C:/tmp/tilt.png" TL_PANEL=campaign TL_LEVEL=4 TL_DEMO_TICKS=1600 <godot> --path godot --rendering-driver opengl3
 
@@ -244,6 +244,11 @@ TL_SIM=3000 TL_SEED=42 <godot> --headless --path godot
 1. 任何 `TL_*` 存在時 → `SaveService.persist = false`（絕不寫壞使用者真實存檔）。
 2. `TL_SHOT` 或 `TL_MUTE` 存在時 → 全域靜音。
 3. **絕不在沒有測試鉤子的情況下開遊戲視窗做自動化驗證**——使用者可能正在工作。
+4. **★ 有視窗的自動化一律開在私有桌面上**（使用者 2026-10-16：「測試的時候可以不要讓視窗彈出來到我的螢幕前嗎？」）：
+   `python qa/check.py click|shots|perf` 已內建；手動跑用 `python qa/desk.py --timeout 120 -- <godot 或 exe> <參數>`（`TL_*` 照常傳，輸出回到 stdout）。
+   視窗開在另一個 Windows 桌面物件上（`CreateDesktop`）：不顯示、不搶鍵盤焦點、沒有實體滑鼠；GPU 照常渲染，`TL_SHOT` 與 clicktest 都量過可用。
+   `--position` 沒用（Godot 把視窗夾回螢幕內），`--headless` 沒有 GL。**上面「跑與測」那些裸的 `<godot> …` 指令，agent 不要直接跑**；
+   人在電腦前、明確要親眼看視窗才設 `TL_VISIBLE=1`。
 
 跑完截圖要**親眼讀那張 png**，並回答「這張圖證明了什麼」。
 
@@ -278,6 +283,7 @@ TheGame/
 ├── dev/                       setup.py（一鍵補齊環境）／play.bat／export.bat
 ├── qa/check.py                ★ 統一品質閘門入口（lint／tests／click／shots／perf／all）
 ├── qa/gd_lint.py              靜態地雷掃描（不需要 Godot；含 TL_* 鉤子完備檢查）
+├── qa/desk.py                 ★ 有視窗的行程開在私有 Windows 桌面上（不彈到使用者螢幕、不搶焦點；check.py 已內建）
 ├── qa/gd_graph.py             依賴圖：`--why FILE`、`--cut FILE`（砍掉會壞誰）、`--layers`（分層規則）
 ├── qa/copy_*.py               文案稽核（掃玩家字串 ＋ 比對 §3.5 的四條禁令）
 ├── assetgen/gen_audio.py      音源產生器（純 Python 標準庫；**音源的原始碼**）
@@ -297,6 +303,7 @@ TheGame/
     ├── scripts/ui/            UiKit
     ├── scripts/screens/       各畫面
     │   ├── Battle.gd          局內畫面：**指揮者**（局的建立、每幀節拍、輸入、HUD 版面）
+    │   ├── BattleLoader.gd    ★ 延後載入 `Battle.gd`＋標題一出來就背景預取（開機速度，B4.4）——標題／戰役選擇／難度層不得 `preload` `Battle.gd`
     │   └── battle/            局內畫面的模組（各是 Battle 的子節點，靠同名欄位互相接線）
     │       ├── Stage.gd       ★ 舞台契約（2D→3D 的接縫）；Stage2D.gd 是 2D 實作（視野、拾取、繪圖）
     │       ├── Stage3D.gd     ★ 傾斜舞台（B4.1–B4.3）：內嵌 Stage2D 當地面貼圖 ＋ 3D 地形／建築／敵人／導管／特效；玩家實玩預設用它

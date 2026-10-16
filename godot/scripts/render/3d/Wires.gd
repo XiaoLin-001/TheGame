@@ -17,7 +17,7 @@ extends RefCounted
 ## 原本每條導管一個 `MeshInstance3D`：壓力場景 2045 條就是 2045 個 draw call，而且每次簽章變了要重建整個網格。
 ##
 ## ── 路徑：貼著地形走 ───────────────────────────────────────────────────────
-## 管子沿著 a→b 每 `SAMPLE` 格取一個點，**管底高度 ＝ 那個點附近（±0.3 格）各格頂面的最高者 ＋ 間隙**——
+## 管子沿著 a→b 每 `SAMPLE` 格取一個點，**管底高度 ＝ 管子腳印底下各格頂面的最高者 ＋ 間隙，再做限坡的上包絡**（`route()`）——
 ## 所以管子永遠在地形之上，過梯田的高低差時是一小段斜坡，過橋時抬到橋面上。（路徑只管**管底**，與管寬無關：
 ## 流量一變管子變粗，路徑不必重算，管心 ＝ 管底 ＋ 半個管厚。）兩端落在節點格的中心，被建築本體蓋住
 ## （「管子接進機器」）。共線且等高的中間點併掉，一條直線平地上的導管就是一個方盒。
@@ -28,11 +28,13 @@ extends RefCounted
 const E := preload("res://scripts/render/3d/Extrude.gd")
 
 ## 沿線取樣間距（格）。
-const SAMPLE := 0.5
+const SAMPLE := 0.25
 ## 管底離地面的間隙（格）。
 const CLEAR := 0.012
-## 取高度時看點周圍多遠的格（格）：點在格邊上時，兩側的格都算。
-const REACH := 0.3
+## 管子腳印的半寬（格）：比最寬的管（半寬約 0.19）再寬一點。
+const LAT := 0.2
+## 下台階時管子落下去的最大坡度（高 ÷ 水平）。
+const SLOPE := 0.8
 ## 管厚 ÷ 管寬（偏扁：傾斜時看得到側面，又不像一根水管）；最薄不低於 `MIN_THICK`。
 const THICK_K := 0.75
 const MIN_THICK := 2.4 / 32.0
@@ -75,30 +77,85 @@ void fragment() {
 
 
 ## 管子的路徑：`Vector3(x, 管底高度, z)`，高度未乘 lift。
+##
+## ★ 做法（B4.4 重寫）：沿線每 `SAMPLE` 格量一次「管子腳印底下的地形最高處」`need`（腳印 ＝ 沿管前後各半個間距 × 兩側各 `LAT`），
+## 再做一次**限坡的上包絡**：`y[i] ＝ max(need[i], 左右鄰居 − SLOPE × SAMPLE)`——管子**永遠不低於**腳印底下的任何地形（不鑽進台階），
+## 下台階時沿 `SLOPE` 的坡落下去（緊貼地形，不是整段浮在高處）。舊版每 0.5 格取一個點、點與點之間直線內插：台階的牆是垂直的，
+## 內插的斜坡切進高的那一側（量過：第 4、5 關管底比腳印下的地形低到 0.11 格，管子鑽進梯田）。
+## 腳印下整片一樣高（多數導管）就不取樣，直接一段直線。
 static func route(rel: Dictionary, a: Vector2i, b: Vector2i) -> PackedVector3Array:
 	var pa := Vector2(a) + Vector2(0.5, 0.5)
 	var pb := Vector2(b) + Vector2(0.5, 0.5)
-	var n := maxi(1, ceili(pa.distance_to(pb) / SAMPLE))
-	var pts: Array[Vector3] = []
-	for i in n + 1:
-		var p := pa.lerp(pb, float(i) / float(n))
-		pts.append(Vector3(p.x, _ground_y(rel, p) + CLEAR, p.y))
+	var length := pa.distance_to(pb)
 	var out := PackedVector3Array()
-	out.append(pts[0])
-	for i in range(1, pts.size() - 1):
-		# 前後等高 ＝ 直的一段中間的點，不需要。
-		if absf(pts[i].y - pts[i - 1].y) > 1.0e-4 or absf(pts[i].y - pts[i + 1].y) > 1.0e-4:
-			out.append(pts[i])
-	out.append(pts[pts.size() - 1])
+	if length < 1.0e-6:
+		var y0 := _footprint_y(rel, pa, Vector2.RIGHT) + CLEAR
+		out.append(Vector3(pa.x, y0, pa.y))
+		out.append(Vector3(pb.x, y0, pb.y))
+		return out
+	var dir := (pb - pa) / length
+	# 先看這條線經過的那一片格（外框外加腳印）：全都一樣高就是平地上的一段直線，不必逐點取樣（多數導管）。
+	var box_lo := Vector2(minf(pa.x, pb.x), minf(pa.y, pb.y)) - Vector2(SAMPLE + LAT, SAMPLE + LAT)
+	var box_hi := Vector2(maxf(pa.x, pb.x), maxf(pa.y, pb.y)) + Vector2(SAMPLE + LAT, SAMPLE + LAT)
+	var flat_y := _flat_height(rel, box_lo, box_hi)
+	if flat_y >= 0.0:
+		out.append(Vector3(pa.x, flat_y + CLEAR, pa.y))
+		out.append(Vector3(pb.x, flat_y + CLEAR, pb.y))
+		return out
+	var n := maxi(1, ceili(length / SAMPLE))
+	var need := PackedFloat32Array()
+	need.resize(n + 1)
+	for i in n + 1:
+		need[i] = _footprint_y(rel, pa.lerp(pb, float(i) / float(n)), dir)
+	var drop := SLOPE * length / float(n)
+	var ys := need.duplicate()
+	for i in range(1, n + 1):
+		ys[i] = maxf(ys[i], ys[i - 1] - drop)
+	for i in range(n - 1, -1, -1):
+		ys[i] = maxf(ys[i], ys[i + 1] - drop)
+	out.append(Vector3(pa.x, ys[0] + CLEAR, pa.y))
+	for i in range(1, n):
+		# 前後共線（斜率相同）＝ 中間的點不需要。
+		if absf((ys[i] - ys[i - 1]) - (ys[i + 1] - ys[i])) > 1.0e-4:
+			var p := pa.lerp(pb, float(i) / float(n))
+			out.append(Vector3(p.x, ys[i] + CLEAR, p.y))
+	out.append(Vector3(pb.x, ys[n] + CLEAR, pb.y))
 	return out
 
 
-## 一個點附近的地面高度（最高者）。
-static func _ground_y(rel: Dictionary, p: Vector2) -> float:
+## 管子在 `p` 這一點的腳印底下，地形的最高處：沿管前後各一個取樣間距、兩側各 `LAT` 格的矩形，5×5 個取樣點
+## （間距 ≤ 0.125 格，格是 1 格寬，所以矩形碰到的每一格都取得到）。
+static func _footprint_y(rel: Dictionary, p: Vector2, dir: Vector2) -> float:
+	var w: int = rel["w"]
+	var h: int = rel["h"]
+	var top: PackedFloat32Array = rel["top"]
+	var perp := Vector2(-dir.y, dir.x)
 	var y := 0.0
-	for dx: float in [-REACH, REACH]:
-		for dy: float in [-REACH, REACH]:
-			y = maxf(y, Relief.top_at(rel, Vector2i(floori(p.x + dx), floori(p.y + dy))))
+	for i in 5:
+		var lon := (float(i) - 2.0) * 0.5 * SAMPLE
+		for j in 5:
+			var lat := (float(j) - 2.0) * 0.5 * LAT
+			var q := p + dir * lon + perp * lat
+			var cx := floori(q.x)
+			var cy := floori(q.y)
+			if cx >= 0 and cy >= 0 and cx < w and cy < h:
+				y = maxf(y, top[cy * w + cx])
+	return y
+
+
+## 一個方框（格座標）碰到的所有格若一樣高，回那個高度（圖外算 0）；否則回 -1。
+static func _flat_height(rel: Dictionary, lo: Vector2, hi: Vector2) -> float:
+	var w: int = rel["w"]
+	var h: int = rel["h"]
+	var top: PackedFloat32Array = rel["top"]
+	var y := -1.0
+	for cy in range(floori(lo.y), floori(hi.y) + 1):
+		for cx in range(floori(lo.x), floori(hi.x) + 1):
+			var t := top[cy * w + cx] if cx >= 0 and cy >= 0 and cx < w and cy < h else 0.0
+			if y < 0.0:
+				y = t
+			elif absf(t - y) > 1.0e-4:
+				return -1.0
 	return y
 
 

@@ -1366,6 +1366,14 @@ func _wait_tilt(max_frames: int = 1200) -> void:
 		await get_tree().process_frame
 
 
+## 等旋轉的緩動走完（同樣以「到位」判；走最短的那一邊，所以比的是環上的差）。
+func _wait_yaw(max_frames: int = 1200) -> void:
+	for _i in max_frames:
+		if absf(wrapf(stage.yaw_goal() - stage.yaw, -180.0, 180.0)) < 0.01:
+			return
+		await get_tree().process_frame
+
+
 ## 一顆按鍵事件（前面附一次移動，GUI 的滑鼠路由要先知道游標在哪）。
 ## `pressed=true` 而不送對應的放開，就是「手指還沒鬆開」那一幀。
 func _press_at(at: Vector2, pressed: bool, button: int = MOUSE_BUTTON_LEFT) -> void:
@@ -1870,7 +1878,124 @@ func stage_smoke() -> void:
 	var tl_back: bool = is_equal_approx(stage.tilt, 0.0) and not stage.raised() and tb.text == "3D"
 	var tilt_ok: bool = tl_widgets and tl_touch and tl_on_screen and tl_button and tl_eased and tl_slider and tl_right and tl_wheel and tl_covers and tl_zoom_ok and tl_placed and tl_reset and tl_back
 
-	var ok: bool = round_trip and covers and at_fit and zoomed and smaller and round_trip_zoomed and reset_ok and placed and tilt_ok
+	# ⑤c 旋轉（B4.4）：↺／羅盤／↻ 鈕、Q／E、右鍵左右拖、Ctrl＋滾輪、雙指左右拖都真的轉了視角；
+	#    每個旋轉角下往返仍成立、全景仍框住整張圖（旋轉是玩家自己選的，選了就該看得到全圖）、轉著也點得出節點、羅盤一鍵回北。
+	var yb: Button = scr._yaw_button
+	var yrow: Node = yb.get_parent() if yb != null else null
+	var yl: Button = yrow.get_child(0) as Button if yrow != null else null
+	var yr: Button = yrow.get_child(2) as Button if yrow != null else null
+	var yw_widgets: bool = yb != null and yl != null and yr != null and stage.can_rotate()
+	var yw_touch: bool = yw_widgets
+	var yw_on_screen: bool = yw_widgets
+	for yw_b: Button in [yl, yb, yr]:
+		yw_touch = yw_touch and yw_b != null and yw_b.size.x >= 44.0 and yw_b.size.y >= 44.0
+		yw_on_screen = yw_on_screen and yw_b != null and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(yw_b.get_global_rect())
+	var yw_north0: bool = yw_widgets and yb.text == "北" and is_equal_approx(stage.yaw, 0.0)
+	_click_button(yr)
+	await _wait_yaw()
+	var yw_right: bool = is_equal_approx(stage.yaw, Stage.YAW_STEP) and yb.text == "%d°" % int(Stage.YAW_STEP)
+	_click_button(yl)
+	_click_button(yl)
+	await _wait_yaw()
+	var yw_left: bool = is_equal_approx(stage.yaw, 360.0 - Stage.YAW_STEP)  # 0 → −45 ＝ 315（走最短的那一邊，不繞一圈）
+	_click_button(yb)
+	await _wait_yaw()
+	var yw_compass: bool = is_equal_approx(stage.yaw, 0.0) and yb.text == "北"
+	# 鍵盤 Q／E
+	for kc: int in [KEY_E, KEY_E, KEY_Q]:
+		for down: bool in [true, false]:
+			var ke := InputEventKey.new()
+			ke.keycode = kc
+			ke.physical_keycode = kc
+			ke.pressed = down
+			Input.parse_input_event(ke)
+		await _frames(1)
+	await _wait_yaw()
+	var yw_keys: bool = is_equal_approx(stage.yaw_goal(), Stage.YAW_STEP)  # E E Q ＝ +45 +45 −45
+	stage.yaw_to(0.0, true)
+	# 右鍵往右拖＝順時針；往左拖＝逆時針（上下拖仍是傾斜，這裡水平拖不改傾斜）
+	var drag_from := Stage.FRAME.get_center()
+	var tilt_keep: float = stage.tilt_goal()
+	_drag_px(drag_from, drag_from + Vector2(100.0, 0.0), MOUSE_BUTTON_RIGHT)
+	await _frames(2)
+	var yw_drag_r: bool = stage.yaw_goal() > 20.0 and stage.yaw_goal() < 60.0 and is_equal_approx(stage.tilt_goal(), tilt_keep)
+	var yaw_mid: float = stage.yaw_goal()
+	_drag_px(drag_from, drag_from + Vector2(-100.0, 0.0), MOUSE_BUTTON_RIGHT)
+	await _frames(2)
+	var yw_drag_l: bool = absf(wrapf(stage.yaw_goal() - yaw_mid, -180.0, 180.0)) > 20.0 and wrapf(stage.yaw_goal() - yaw_mid, -180.0, 180.0) < 0.0
+	stage.yaw_to(0.0, true)
+	# Ctrl＋滾輪
+	for wheel_press: bool in [true, false]:
+		var cw := InputEventMouseButton.new()
+		cw.button_index = MOUSE_BUTTON_WHEEL_UP
+		cw.ctrl_pressed = true
+		cw.pressed = wheel_press
+		cw.position = drag_from
+		cw.global_position = drag_from
+		Input.parse_input_event(cw)
+	await _frames(2)
+	var yw_wheel: bool = stage.yaw_goal() > 5.0 and stage.yaw_goal() < 40.0
+	stage.yaw_to(0.0, true)
+	# 雙指左右拖（地圖外不作用）
+	var ypan := InputEventPanGesture.new()
+	ypan.position = Vector2(20.0, 400.0)
+	ypan.delta = Vector2(60.0, 0.0)
+	scr._gui_input(ypan)
+	var yw_pan_out: bool = is_equal_approx(stage.yaw_goal(), 0.0)
+	ypan.position = drag_from
+	scr._gui_input(ypan)
+	var yw_pan: bool = stage.yaw_goal() > 5.0
+	stage.yaw_to(0.0, true)
+	# 每個旋轉角（俯瞰與傾斜各一）：往返、全景框住四個角、不出小地圖
+	# ★ 往返的探針要**離建築兩格以上**：傾斜之後「看得到什麼就是什麼」——從側面看，前面的建築會擋住後面那一格的格心，
+	#   `cell_at()` 回的是擋住它的那一棟（對的），不是探針本身。
+	var yw_probes: Array[Vector2i] = []
+	for pc0: Vector2i in [Vector2i(m.x / 4, m.y / 4), Vector2i(3 * m.x / 4, m.y / 4), Vector2i(m.x / 2, m.y / 2), Vector2i(m.x / 4, 3 * m.y / 4), Vector2i(3 * m.x / 4, 3 * m.y / 4), Vector2i(1, 1), Vector2i(m.x - 2, m.y - 2)]:
+		var clear := true
+		for nd: Dictionary in s.nodes:
+			var nc: Vector2i = nd["cell"]
+			if absi(nc.x - pc0.x) <= 2 and absi(nc.y - pc0.y) <= 2:
+				clear = false
+		if clear:
+			yw_probes.append(pc0)
+	var yw_round: bool = yw_probes.size() >= 3
+	var yw_covers := true
+	var yw_fit := true
+	for tl_deg: float in [0.0, 55.0]:
+		stage.tilt_to(tl_deg, true)
+		for yd: float in [0.0, 30.0, 45.0, 90.0, 135.0, 180.0, 270.0, 315.0]:
+			stage.yaw_to(yd, true)
+			await _frames(1)
+			for pc: Vector2i in yw_probes:
+				yw_round = yw_round and stage.cell_at(stage.to_screen(stage.center(pc))) == pc
+			for corner2: Vector2 in [Vector2.ZERO, Vector2(mpx.x, 0.0), mpx, Vector2(0.0, mpx.y)]:
+				yw_covers = yw_covers and Stage.FRAME.grow(1.0).has_point(stage.to_screen(corner2))
+			yw_fit = yw_fit and not stage.oversized() and is_equal_approx(stage.zoom, stage.fit)
+	# 轉著也點得出節點（真的合成點擊走完整輸入路由）
+	stage.tilt_to(55.0, true)
+	stage.yaw_to(110.0, true)
+	await _frames(3)
+	var before_y: int = s.nodes.size()
+	var free_y := Vector2i(-1, -1)
+	var occ_y: Dictionary = s.occupied()
+	for y2 in m.y:
+		for x2 in m.x:
+			if free_y.x < 0 and Build.can_place(s.sets, occ_y, "relay", Vector2i(x2, y2)) == Build.OK and not stage.threat.has(Vector2i(x2, y2)):
+				free_y = Vector2i(x2, y2)
+	_press(scr.buildbar.build_buttons["relay"])
+	await _frames(2)
+	_click(free_y)
+	await _frames(3)
+	var yw_placed: bool = free_y.x >= 0 and s.nodes.size() == before_y + 1
+	stage.yaw_to(0.0, true)
+	stage.tilt_to(0.0, true)
+	await _frames(2)
+	var yaw_ok: bool = (
+		yw_widgets and yw_touch and yw_on_screen and yw_north0 and yw_right and yw_left and yw_compass and yw_keys and yw_drag_r and yw_drag_l
+		and yw_wheel and yw_pan_out and yw_pan and yw_round and yw_covers and yw_fit and yw_placed
+	)
+
+	var ok: bool = round_trip and covers and at_fit and zoomed and smaller and round_trip_zoomed and reset_ok and placed and tilt_ok and yaw_ok
 	print("[TL_CLICKTEST/stage] 往返=%s 框住全圖=%s 縮放=%s 視野變小=%s 縮放後往返=%s 全景還原=%s 真的點擊蓋出節點=%s（%s）→ %s" % [
 		round_trip, covers, zoomed, smaller, round_trip_zoomed, reset_ok, placed, free,
 		"PASS" if ok else "FAIL"
@@ -1879,6 +2004,10 @@ func stage_smoke() -> void:
 		tl_widgets, tl_touch, tl_on_screen, tl_button, tl_eased, tl_slider, tl_right, tl_wheel, tl_covers,
 		tl_zoom_wheel, tl_zoom_out, tl_pinch, tl_pan_outside, tl_pan2,
 		tl_placed, free_t, tl_reset, tl_back, stage.tilt, stage.tilt_goal(), tb.text, "PASS" if tilt_ok else "FAIL"
+	])
+	print("[TL_CLICKTEST/yaw] 控制在=%s 命中區≥44=%s 在畫面內=%s 起點北=%s ↻=%s ↺↺=%s 羅盤回北=%s Q／E=%s 右鍵右拖=%s 右鍵左拖=%s Ctrl滾輪=%s 雙指拖外無效=%s 雙指左右拖=%s 每個旋轉角往返=%s 全景框住四角=%s 全景不出小地圖=%s 轉著點擊蓋出節點=%s（%s）→ %s" % [
+		yw_widgets, yw_touch, yw_on_screen, yw_north0, yw_right, yw_left, yw_compass, yw_keys, yw_drag_r, yw_drag_l, yw_wheel,
+		yw_pan_out, yw_pan, yw_round, yw_covers, yw_fit, yw_placed, free_y, "PASS" if yaw_ok else "FAIL"
 	])
 	if Hooks.shot_path == "":
 		get_tree().quit(0 if ok else 1)

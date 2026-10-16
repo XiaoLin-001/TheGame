@@ -4,7 +4,9 @@ extends Control
 ## B0.1 只需要它證明三件事：專案能開起來、版面走容器（P1）、CJK 字型不是豆腐字。
 ## 主選單與各面板排在 M1（B1.4）；`TL_PANEL` 的路由表也在那時才長出來。
 
-const BattleScreen := preload("res://scripts/screens/Battle.gd")
+# ★ 局內畫面**不在這裡 preload**：`preload` 會在載入本檔時連整個局內的程式碼一起編譯，玩家就得先等完才看得到標題。
+#   改走 `BattleLoader`（延後載入，標題一出來就在背景預取）。
+const BattleLoader := preload("res://scripts/screens/BattleLoader.gd")
 const CampaignScreen := preload("res://scripts/screens/Campaign.gd")
 const TechScreen := preload("res://scripts/screens/Tech.gd")
 const SettingsScreen := preload("res://scripts/screens/Settings.gd")
@@ -38,13 +40,13 @@ const Tide := preload("res://scripts/sim/Tide.gd")
 ## `endless` ＝ 局內畫面但換成程序生成圖（B2.1a）；種子走 `Rng.next_seed()`，
 ## 所以 `TL_SEED` 底下每次拿到的是同一張圖。
 const PANEL_SCREENS := {
-	"battle": BattleScreen,
-	"sandbox": BattleScreen,
+	"battle": BattleLoader,
+	"sandbox": BattleLoader,
 	"campaign": CampaignScreen,
 	# ★ `endless` 仍然直達局內畫面（第 0 層），**不改**：B2.1a 起的截圖與
 	#   大圖導引自檢全走它，而那些驗的是局內的東西，不該因為前面多一個選擇畫面
 	#   就要多按一顆鈕。難度層選擇畫面自己是 `tiers`（B2.6）。
-	"endless": BattleScreen,
+	"endless": BattleLoader,
 	"tiers": TiersScreen,
 	"daily": DailyScreen,
 	"roster": RosterScreen,
@@ -80,9 +82,11 @@ func _ready() -> void:
 				setup = _endless
 			"daily":
 				setup = _daily
-		_enter(PANEL_SCREENS[Hooks.panel], setup)
+		_enter(_screen_of(Hooks.panel), setup)
 		return
 	_build()
+	# 標題已經在畫面上了：趁玩家還在看選單，把局內那一大包在背景編譯好（`BattleLoader` 開頭有原因）。
+	BattleLoader.prefetch()
 	# 不當掉、不假裝成功：說清楚它還沒被實作，留在標題畫面。
 	if Hooks.panel != "" and Hooks.panel != "title":
 		push_warning("TL_PANEL=%s 尚未實作，停在標題畫面" % Hooks.panel)
@@ -188,7 +192,7 @@ func _click_selftest() -> void:
 				tiers = c
 		await UiKit.click(tiers._enter_buttons[0])
 		for c: Node in tiers.get_children():
-			if c.get_script() == BattleScreen:
+			if c.get_script() == BattleLoader.script():
 				seeded = int(c.endless_seed)
 				generated = bool((c.s.map as Dictionary).get("endless", false))
 	var to_endless: bool = to_tiers and seeded != 0 and generated
@@ -263,7 +267,7 @@ func _endless(screen: Control) -> void:
 ## （§3.10），所以進的是同一個 `BattleScreen`、走同一條 `endless_seed`。
 func _daily(screen: Control) -> void:
 	screen.on_start = func(board: String, date: String, sd: int) -> void:
-		_enter(BattleScreen, func(battle: Control) -> void:
+		_enter(BattleLoader.script(), func(battle: Control) -> void:
 			battle.endless_seed = sd
 			battle.daily_board = board
 			battle.daily_date = date
@@ -273,6 +277,12 @@ func _daily(screen: Control) -> void:
 func _back_to_title() -> void:
 	UiKit.clear(self)
 	_build()
+
+
+## `PANEL_SCREENS` 的值 → 真正的畫面腳本。局內畫面那三列放的是 `BattleLoader`（延後載入的入口），在這裡才換成 `Battle.gd`。
+func _screen_of(panel: String) -> Script:
+	var sc: Script = PANEL_SCREENS[panel]
+	return BattleLoader.script() if sc == BattleLoader else sc
 
 
 func _build() -> void:

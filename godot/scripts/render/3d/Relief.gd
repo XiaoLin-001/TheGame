@@ -14,7 +14,10 @@ extends RefCounted
 ##     那一圈是 walk-by 的傷害半徑，規則要讓人用格子數邊界（`20_ART_DIRECTION.md` §1.6），所以它不起伏。
 ##   · **跨越點（橋）是拱起的橋面**（`BRIDGE`）：導管走在敵人頭上——設計鎖定的「橋是架高的」第一次真的架高了。
 ##     橋面下是**空的**（敵人從底下走過，`cliff_mesh()` 在橋與溝之間不畫牆）。
-##   · 礦點與核心的 3×3 是平台（`BANK`）：採集器與核心蓋在平的地上（路徑最後幾格落在核心的 3×3 裡，也抬到平台高度）。
+##   · 核心的 3×3 是平台（`BANK`）：核心蓋在平的地上（路徑最後幾格落在核心的 3×3 裡，也抬到平台高度）。
+##   · **礦點是一座小台地**（B4.4）：頂面比它周圍八格最高的那一格再高 `ORE_RISE`。舊版把礦點壓成 `BANK`——周圍的梯田一高，
+##     礦點就陷在坑底，傾斜時被前面的台階擋住、水晶被岩石蓋住（使用者：「採集點在某些情況下會變得沒這麼明顯」）。
+##     台地一律高於鄰格，所以從任何角度看都不會被地形擋住；採集器蓋上去，站的就是這個高度。
 ##   · 其餘的格才有起伏，由地貌決定幅度與顆粒（岩礁粗而高、淺灘細而緩、殼場是一階一階的台地），
 ##     離溝 1–3.5 格之間從岸漸漸過渡到自己的高度。
 ## 全部是**地圖 id ＋ 格座標的整數雜湊**（`Terrain.noise()`）：零 RNG，同一張圖在任何機器上長一樣。
@@ -29,10 +32,16 @@ const E := preload("res://scripts/render/3d/Extrude.gd")
 const STEP := 1.0 / 24.0
 ## 溝兩岸與平台的高度（格）。
 const BANK := 0.10
+## 礦點台地比周圍八格最高的那一格再高多少（格）。
+const ORE_RISE := 0.083
 ## 橋面的高度（格）：比岸再高一截，底下留給敵人走。
 const BRIDGE := 0.24
 ## 地圖四周的側壁往下延伸多少（格）。
 const SLAB_DEPTH := 0.30
+## 礦點的框（台地頂面上的亮青環）：外半徑、內半徑、高（格）。
+const ORE_RING_OUT := 0.47
+const ORE_RING_IN := 0.41
+const ORE_RING_H := 0.012
 
 ## 地貌 → [振幅（格）, 頻率（每格）, 疊幾層, 量化倍數]。
 const PROFILE := {
@@ -69,8 +78,6 @@ static func build(map: Dictionary) -> Dictionary:
 	for c: Vector2i in map.get("crossings", []):
 		cross[c] = true
 	var flat: Dictionary = {}
-	for c: Vector2i in map.get("ore", []):
-		flat[c] = true
 	var core: Vector2i = map.get("core", Vector2i.ZERO)
 	for dx in range(-1, 2):
 		for dy in range(-1, 2):
@@ -122,6 +129,23 @@ static func build(map: Dictionary) -> Dictionary:
 			top[y * w + x] = t
 			flr[y * w + x] = f
 			max_top = maxf(max_top, t)
+	# 礦點台地：比周圍八格（不含溝）最高的那一格再高 `ORE_RISE`。先從**原本的**高度算，再一起套（相鄰的兩個礦點不會越疊越高）。
+	var pads: Dictionary = {}
+	for c: Vector2i in map.get("ore", []):
+		if is_path.has(c) or c.x < 0 or c.y < 0 or c.x >= w or c.y >= h or flat.has(c):
+			continue
+		var hi_n := top[c.y * w + c.x]
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				var n := c + Vector2i(dx, dy)
+				if n == c or is_path.has(n) or n.x < 0 or n.y < 0 or n.x >= w or n.y >= h:
+					continue
+				hi_n = maxf(hi_n, top[n.y * w + n.x])
+		pads[c] = roundf((hi_n + ORE_RISE) / STEP) * STEP
+	for c: Vector2i in pads.keys():
+		top[c.y * w + c.x] = pads[c]
+		flr[c.y * w + c.x] = pads[c]
+		max_top = maxf(max_top, float(pads[c]))
 	return {
 		"w": w, "h": h, "top": top, "floor": flr, "max": max_top,
 		"path": is_path, "cross": cross, "biome": biome,
@@ -250,12 +274,22 @@ static func cliff_mesh(rel: Dictionary) -> ArrayMesh:
 
 
 ## 地上的擺設（一整張圖一個網格）：岩石與貝殼（吃 `Terrain.build()` 的零件，擠成低矮的丘）、苔（半球）、
-## 礦點的水晶、橋的四根燈柱。高度站在各自那一格的頂面上；全部乘 lift。
-static func scenery_mesh(map: Dictionary, rel: Dictionary) -> ArrayMesh:
+## 礦點的水晶與框、橋的四根燈柱。高度站在各自那一格的頂面上；全部乘 lift。
+##
+## ★ `occ`（B4.4）：玩家蓋了東西的格（建築 ＝ 1、只有導管經過 ＝ 2）。**岩石與貝殼不長在建築與導管底下**——
+## 擺設是靜態網格、與玩家的建築無關，舊版岩丘會從建築與管子裡長出來（管子鑽進岩石）。零件的腳印（外框）碰到任何有東西的格就略過；
+## 礦點本身與它周圍一圈也一律不擺岩石（2D 的擺設已經避開礦點那一格，但丘會溢到鄰格）。礦點上蓋了東西或有導管經過時，水晶不畫（不從建築裡穿出來）。
+## `parts` 是 `Terrain.build()` 的結果（同一張圖不變，呼叫端可快取）；沒給就現場算。
+static func scenery_mesh(map: Dictionary, rel: Dictionary, occ: Dictionary = {}, parts: Array = []) -> ArrayMesh:
 	var sp := E.Soup.new()
 	var px := Shapes.GRID
+	var keep_clear: Dictionary = {}
+	for c: Vector2i in map.get("ore", []):
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				keep_clear[c + Vector2i(dx, dy)] = true
 	# 地貌的大件。
-	for part: Dictionary in Terrain.build(map, px, 1):
+	for part: Dictionary in (parts if not parts.is_empty() else Terrain.build(map, px, 1)):
 		var col: Color = part["col"]
 		match String(part["kind"]):
 			"fill":
@@ -271,6 +305,8 @@ static func scenery_mesh(map: Dictionary, rel: Dictionary) -> ArrayMesh:
 				var area := _area(pts)
 				if area < 50.0:
 					continue
+				if _footprint_taken(pts, px, occ, keep_clear):
+					continue
 				var cell := Vector2i(floori(mid.x / px), floori(mid.y / px))
 				var base := top_at(rel, cell)
 				var rel_pts := PackedVector2Array()
@@ -283,6 +319,8 @@ static func scenery_mesh(map: Dictionary, rel: Dictionary) -> ArrayMesh:
 				if col.a < 0.4 or r < 0.03:
 					continue
 				var m: Vector2 = part["c"]
+				if _footprint_taken(PackedVector2Array([m - Vector2(r, r) * px, m + Vector2(r, r) * px]), px, occ, keep_clear):
+					continue
 				var cell2 := Vector2i(floori(m.x / px), floori(m.y / px))
 				E.dome(sp, Vector3(m.x / px, top_at(rel, cell2), m.y / px), Vector3(r, r * 0.7, r), _rock(col), 2, 6)
 			_:
@@ -295,14 +333,20 @@ static func scenery_mesh(map: Dictionary, rel: Dictionary) -> ArrayMesh:
 		var base2 := top_at(rel, c)
 		var cx := float(c.x) + 0.5
 		var cz := float(c.y) + 0.5
-		var crystals: Array[Vector3] = [Vector3(0.0, 0.0, 0.17), Vector3(0.14, 0.0, -0.09), Vector3(-0.15, 0.0, -0.07)]
+		# 框：台地頂面的一圈亮青（不吃光照），傾斜時從任何角度都讀得出「這一格是礦」；採集器蓋上去之後它還在建築腳下露出一圈。
+		E.annulus(sp, Vector3(cx, base2, cz), ORE_RING_OUT, ORE_RING_IN, ORE_RING_H, 16, Palette.ORDER_BRIGHT, false)
+		if occ.has(c):
+			continue
+		# 一叢水晶：中間一根高的發光主晶，周圍五根矮的，青／青綠／亮青交替（比舊版的三根小晶高一倍、亮一階）。
+		var crystals: Array[Vector3] = [
+			Vector3(0.0, 0.0, 0.20), Vector3(0.19, 0.0, 0.06), Vector3(0.12, 0.0, -0.16), Vector3(-0.12, 0.0, -0.16), Vector3(-0.19, 0.0, 0.06),
+		]
+		var lens: Array[float] = [0.26, 0.20, 0.30, 0.22, 0.24]
+		var hues: Array[Color] = [Palette.ORDER_CYAN, Palette.ORDER_BRIGHT, Palette.MAT_TEAL, Palette.ORDER_BRIGHT, Palette.ORDER_CYAN]
 		for k in crystals.size():
 			var o: Vector3 = crystals[k]
-			E.spike(
-				sp, Vector3(cx + o.x, base2, cz + o.z), Vector3(o.x * 0.5, 1.0, o.z * 0.5),
-				0.12 + 0.04 * float(k % 2), 0.045, Palette.MAT_TEAL if k % 2 == 0 else Palette.ORDER_CYAN, 4
-			)
-		E.spike(sp, Vector3(cx, base2, cz), Vector3.UP, 0.20, 0.05, Palette.GLOW_CYAN, 4, false)
+			E.spike(sp, Vector3(cx + o.x, base2, cz + o.z), Vector3(o.x * 0.6, 1.0, o.z * 0.6), lens[k], 0.055, hues[k], 5)
+		E.spike(sp, Vector3(cx, base2, cz), Vector3.UP, 0.40, 0.075, Palette.GLOW_CYAN, 5, false)
 	# 橋：四根燈柱（橋面本身是 `top`）。
 	var cross: Dictionary = rel["cross"]
 	for c: Vector2i in cross.keys():
@@ -314,6 +358,23 @@ static func scenery_mesh(map: Dictionary, rel: Dictionary) -> ArrayMesh:
 				E.box(sp, p, Vector2(0.035, 0.035), 0.16, Palette.MAT_IVORY, 0.0, 0.8)
 				E.dome(sp, p + Vector3(0.0, 0.16, 0.0), Vector3(0.05, 0.05, 0.05), Palette.GLOW_CYAN, 2, 6, false)
 	return sp.to_mesh()
+
+
+## 這個零件的腳印（`pts` 是地圖座標 px 的外框頂點）碰到的格，有任何一格有東西（`occ`）或是不許擺的（`keep_clear`）嗎？
+static func _footprint_taken(pts: PackedVector2Array, px: float, occ: Dictionary, keep_clear: Dictionary) -> bool:
+	if occ.is_empty() and keep_clear.is_empty():
+		return false
+	var lo := pts[0]
+	var hi := pts[0]
+	for v: Vector2 in pts:
+		lo = Vector2(minf(lo.x, v.x), minf(lo.y, v.y))
+		hi = Vector2(maxf(hi.x, v.x), maxf(hi.y, v.y))
+	for cy in range(floori(lo.y / px), floori(hi.y / px) + 1):
+		for cx in range(floori(lo.x / px), floori(hi.x / px) + 1):
+			var c := Vector2i(cx, cy)
+			if occ.has(c) or keep_clear.has(c):
+				return true
+	return false
 
 
 ## 岩石的顏色：2D 的岩是「比地再暗一階」的底噪；3D 的岩要讓人看得出是一塊東西，所以提亮一階。

@@ -14,6 +14,9 @@ config/name="潮與線 Tide & Line"
 config/description="塔防 × 節點連線式自動化。你的生產線就是你的防線。"
 run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
+boot_splash/bg_color=Color(0.039216, 0.078431, 0.12549, 1)
+boot_splash/image="res://assets/ui/splash.png"
+boot_splash/fullsize=true
 config/icon="res://icon.svg"
 
 [autoload]

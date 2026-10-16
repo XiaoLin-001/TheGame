@@ -30,7 +30,8 @@ const Stage2D := preload("res://scripts/screens/battle/Stage2D.gd")
 const Stage3D := preload("res://scripts/screens/battle/Stage3D.gd")
 const Overlay2D := preload("res://scripts/screens/battle/Overlay2D.gd")
 const Feedback := preload("res://scripts/screens/battle/Feedback.gd")
-const SelfTest := preload("res://scripts/screens/battle/SelfTest.gd")
+## 測試鉤子執行者**只在有 `TL_*` 鉤子時才載入**（約 1400 行，玩家永遠用不到；`preload` 會讓每次開機都編譯它）。
+const SELFTEST_PATH := "res://scripts/screens/battle/SelfTest.gd"
 const TopBar := preload("res://scripts/screens/battle/hud/TopBar.gd")
 const BuildBar := preload("res://scripts/screens/battle/hud/BuildBar.gd")
 const HintBar := preload("res://scripts/screens/battle/hud/HintBar.gd")
@@ -89,7 +90,7 @@ var s: RefCounted = null
 var stage: Stage = null
 var overlay: Overlay2D = null
 var feedback: Feedback = null
-var selftest: SelfTest = null
+var selftest: Node = null
 
 ## HUD 那一半（`screens/battle/hud/`）：每個面板擁有自己的 widget、狀態、更新與事件處理。
 var topbar: TopBar = null
@@ -154,6 +155,7 @@ var _panning: bool = false
 var _tilting: bool = false
 var _tilt_slider: VSlider = null
 var _tilt_button: Button = null
+var _yaw_button: Button = null    # 羅盤：寫著現在的朝向，按下去轉回北在上
 
 var hover: Vector2i = Vector2i(-999, -999)
 
@@ -215,6 +217,17 @@ func _ready() -> void:
 			selftest.click_selftest.call_deferred()
 
 
+## 鍵盤：Q／E ＝ 旋轉視角（逆／順時針各 45°）。只有能旋轉的舞台才有作用；方向鍵與其他鍵不在這裡。
+func _unhandled_key_input(event: InputEvent) -> void:
+	var ke := event as InputEventKey
+	if ke == null or not ke.pressed or ke.echo or not stage.can_rotate():
+		return
+	if ke.keycode == KEY_Q:
+		stage.yaw_by(-stage.YAW_STEP)
+	elif ke.keycode == KEY_E:
+		stage.yaw_by(stage.YAW_STEP)
+
+
 ## 這一局用傾斜舞台嗎？**有鉤子（自動化）時預設平面、玩家實玩看設定（預設傾斜）**（`Hooks.stage3d`／`stage2d` 明寫時照它）。
 func _wants_tilt_stage() -> bool:
 	if Hooks.stage3d:
@@ -234,7 +247,8 @@ func _build_modules() -> void:
 	stage = Stage3D.new() if _wants_tilt_stage() else Stage2D.new()
 	overlay = Overlay2D.new()
 	feedback = Feedback.new()
-	selftest = SelfTest.new()
+	if Env.any_hook():
+		selftest = (load(SELFTEST_PATH) as GDScript).new()
 	topbar = TopBar.new()
 	buildbar = BuildBar.new()
 	hintbar = HintBar.new()
@@ -254,11 +268,14 @@ func _build_modules() -> void:
 
 ## 全部模組。**舞台與覆蓋層排最前**（繪圖順序，見 `_build_modules()`）。
 func _modules() -> Array[Node]:
-	return [
-		stage, overlay, feedback, selftest,
+	var mods: Array[Node] = [
+		stage, overlay, feedback,
 		topbar, buildbar, hintbar, priopanel, energypanel, codexpanel, inspector,
 		bppanel, helppanel, resultpanel, menulayer,
 	]
+	if selftest != null:
+		mods.insert(3, selftest)
+	return mods
 
 
 ## 把「我」與「同伴」交給每個模組。模組各自宣告它要用到的同伴欄位（欄位名 ＝ 本檔的變數名），
@@ -339,6 +356,8 @@ func _setup_session() -> void:
 	stage.reset_view()
 	if stage.can_tilt() and Hooks.tilt > 0.0:
 		stage.tilt_to(Hooks.tilt, true)
+	if stage.can_rotate() and Hooks.yaw != 0.0:
+		stage.yaw_to(Hooks.yaw, true)
 	# `TL_FOCUS="x,y,zoom"`：2D 舞台在自己的 `reset_view()` 裡處理；傾斜舞台走這裡（拍近照用）。
 	if stage.can_tilt() and Hooks.focus.x >= 0:
 		stage.zoom_by(Hooks.focus_zoom, stage.FRAME.get_center())
@@ -455,6 +474,8 @@ func _gui_input(event: InputEvent) -> void:
 		var pg := event as InputEventPanGesture
 		if stage.can_tilt() and stage.FRAME.has_point(pg.position):
 			stage.tilt_by(-pg.delta.y * 0.35, true)
+		if stage.can_rotate() and stage.FRAME.has_point(pg.position):
+			stage.yaw_by(pg.delta.x * 0.35, true)
 		return
 	if event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
@@ -473,8 +494,11 @@ func _gui_input(event: InputEvent) -> void:
 			return
 		# ★ 傾斜：**按住右鍵上下拖**（B4.1，像地圖 App 的 3D 手勢）。往上拖＝更側視。
 		#   ⚠ 右鍵不是唯一的路（P3）：左上角有「3D」鈕與傾斜滑桿；觸控走那兩個。
+		# 左右拖＝旋轉（往右拖＝地圖順時針），與上下拖的傾斜同一個手勢（B4.4，地圖 App 的語彙）。
 		if _tilting:
 			stage.tilt_by(-mm.relative.y * 0.35, true)
+			if stage.can_rotate():
+				stage.yaw_by(mm.relative.x * 0.35, true)
 			return
 		# ★ 小地圖按住拖曳（B2.1d，使用者指定）：按住不放，視野持續跟著游標走。
 		#   走 `_pan_goal` → 畫面是**平滑**追過去的，不是一格一格跳。
@@ -517,6 +541,10 @@ func _gui_input(event: InputEvent) -> void:
 	#     而那會讓「滑到底之後想捲外層」這個標準行為壞掉。**限制範圍才是對的層級。**
 	if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 		if not stage.FRAME.has_point(mb.position):
+			return
+		# Ctrl＋滾輪 ＝ 旋轉（桌面的便利；同樣不是唯一的路：左上角有 ↺／↻ 與羅盤，鍵盤有 Q／E）。
+		if mb.ctrl_pressed and stage.can_rotate():
+			stage.yaw_by(15.0 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else -15.0)
 			return
 		# Shift＋滾輪 ＝ 傾斜（桌面的便利；同樣不是唯一的路）。
 		if mb.shift_pressed and stage.can_tilt():
@@ -676,7 +704,7 @@ func _build_zoom_bar() -> void:
 	refresh_zoom()
 
 
-## 傾斜控制（B4.1，**只有傾斜舞台才有**）：地圖左上角一顆「3D／2D」切換鈕 ＋ 一根垂直滑桿。
+## 傾斜與旋轉控制（B4.1／B4.4，**只有傾斜舞台才有**）：地圖左上角一顆「3D／2D」切換鈕 ＋ 一根垂直滑桿 ＋ 一排旋轉（↺ 羅盤 ↻）。
 ## 放在地圖框架裡而不是頂欄——頂欄右端那一排（縮放）已經沒有空位；左上角是地圖 App 放視角控制的位置。
 ## 兩個控制都是可點／可拖的（P3：觸控沒有右鍵與 Shift）。
 func _build_tilt_bar() -> void:
@@ -697,6 +725,24 @@ func _build_tilt_bar() -> void:
 	_tilt_slider.custom_minimum_size = Vector2(UiKit.TOUCH_MIN, 120.0)
 	_tilt_slider.value_changed.connect(func(v: float) -> void: stage.tilt_to(v, true))
 	col.add_child(_tilt_slider)
+	# 旋轉：↺／↻ 各轉 45°，中間是羅盤（寫著朝向，按下去轉回北在上）。
+	if stage.can_rotate():
+		var row := UiKit.hbox(4)
+		col.add_child(row)
+		var left := Button.new()
+		left.text = "↺"
+		left.pressed.connect(func() -> void: stage.yaw_by(-stage.YAW_STEP))
+		row.add_child(UiKit.touchable(left))
+		_yaw_button = Button.new()
+		_yaw_button.pressed.connect(func() -> void: stage.yaw_to(0.0))
+		row.add_child(UiKit.touchable(_yaw_button))
+		var right := Button.new()
+		right.text = "↻"
+		right.pressed.connect(func() -> void: stage.yaw_by(stage.YAW_STEP))
+		row.add_child(UiKit.touchable(right))
+		# 3D 鈕與滑桿維持一個鈕寬，不被旋轉那一排撐寬。
+		_tilt_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		_tilt_slider.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	refresh_tilt()
 
 
@@ -707,6 +753,9 @@ func refresh_tilt() -> void:
 	_tilt_button.text = "2D" if stage.tilt_goal() > 5.0 else "3D"
 	if not is_equal_approx(_tilt_slider.value, stage.tilt):
 		_tilt_slider.set_value_no_signal(stage.tilt)
+	if _yaw_button != null:
+		var ang := roundi(stage.yaw) % 360
+		_yaw_button.text = "北" if ang == 0 else "%d°" % ang
 
 
 ## HUD 的版面：**每個面板自己建自己的 widget**（`hud/*.gd`），這裡只決定它們放在哪、

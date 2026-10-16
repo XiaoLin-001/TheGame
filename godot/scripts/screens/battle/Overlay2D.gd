@@ -150,11 +150,20 @@ func _draw_minimap() -> void:
 			Palette.alpha(Palette.WARN_ORANGE, pulse * fade)
 		)
 	# 視野框：「我在哪」——這是小地圖與一張縮圖的唯一差別。
-	var vw := stage.view_world_rect()
-	draw_rect(
-		Rect2(r.position + vw.position * k, vw.size * k).intersection(r),
-		Palette.alpha(Palette.ORDER_BRIGHT, fade), false, 1.0
-	)
+	if stage.can_rotate():
+		# 旋轉／傾斜的視野是歪的四邊形：畫它真正的四個角（夾進小地圖）。
+		var pts := PackedVector2Array()
+		for q: Vector2 in stage.view_quad():
+			var m := r.position + q * k
+			pts.append(Vector2(clampf(m.x, r.position.x, r.end.x), clampf(m.y, r.position.y, r.end.y)))
+		pts.append(pts[0])
+		draw_polyline(pts, Palette.alpha(Palette.ORDER_BRIGHT, fade), 1.0)
+	else:
+		var vw := stage.view_world_rect()
+		draw_rect(
+			Rect2(r.position + vw.position * k, vw.size * k).intersection(r),
+			Palette.alpha(Palette.ORDER_BRIGHT, fade), false, 1.0
+		)
 
 
 ## 邊緣箭頭：畫在框架內緣，指向畫面外的問題。
@@ -179,7 +188,6 @@ func _draw_arrows() -> void:
 ## **繪圖與命中判定共用這一支**——兩份會漂掉，而漂掉的症狀是「看得到但點不到」。
 func _arrow_hits() -> Array:
 	var out: Array = []
-	var vw := stage.view_world_rect()
 	var mid := stage.FRAME.position + stage.FRAME.size * 0.5
 	# 框架內緣，留出箭頭自己的半徑，否則尖端會被邊緣切掉。
 	var inner := stage.FRAME.grow(-(ARROW_SIZE + 6.0))
@@ -187,7 +195,7 @@ func _arrow_hits() -> Array:
 		if out.size() >= ARROW_MAX:
 			break
 		var w := stage.center(c)
-		if vw.has_point(w):
+		if stage.in_view(w):
 			continue
 		var dir := (stage.to_screen(w) - mid)
 		if dir.length() < 0.001:

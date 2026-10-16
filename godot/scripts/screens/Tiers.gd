@@ -12,7 +12,7 @@ extends Control
 ##   而「按下去會得到什麼規則」正是這個選擇唯一的內容。
 
 const Difficulty := preload("res://data/Difficulty.gd")
-const BattleScreen := preload("res://scripts/screens/Battle.gd")
+const BattleLoader := preload("res://scripts/screens/BattleLoader.gd")
 
 ## 卡片尺寸。四張 ＋ 三道間距要放進 1280 的設計基準。
 ## 高度只是**下限**：規則列一層比一層多，卡片自己長高，而「出擊」那一排靠
@@ -77,7 +77,7 @@ func _click_selftest() -> void:
 	await UiKit.click(_enter_buttons[1])
 	var battle: Node = null
 	for c: Node in get_children():
-		if c.get_script() == BattleScreen:
+		if c.get_script() == BattleLoader.script():
 			battle = c
 	# ★ 問的是**局面真的用了生成圖、而且真的帶著那一層的倍率**
 	#   ——「畫面開起來了」在 B2.1a 是一個假綠燈（開的是淺灘測試圖）。
@@ -177,7 +177,7 @@ func _card(tier: int) -> Control:
 ## 一進來就 `_setup_session()`。
 func _enter(tier: int) -> void:
 	UiKit.clear(self)
-	var battle := BattleScreen.new()
+	var battle: Control = BattleLoader.script().new()
 	battle.endless_seed = Rng.next_seed()
 	battle.difficulty = tier
 	battle.on_exit = _build

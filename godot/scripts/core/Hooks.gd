@@ -53,6 +53,8 @@ var stage3d: bool = false
 var stage2d: bool = false
 ## ★ `TL_TILT=<度>`：傾斜舞台的起始傾斜角（0 ＝ 正俯瞰）。拍 3D 截圖要用——傾斜是**互動狀態**，沒有鉤子就拍不到。
 var tilt: float = 0.0
+## ★ `TL_YAW=<度>`：傾斜舞台的起始旋轉角（0 ＝ 北在上，正 ＝ 地圖順時針）。旋轉同樣是互動狀態，拍截圖要靠它（B4.4）。
+var yaw: float = 0.0
 ## ★ `TL_PROF=1`：逐段計時（B3.15，`core/Prof.gd`）。要配 `TL_STRESS`——它在量測結束時印報表。
 var prof: bool = false
 
@@ -71,6 +73,7 @@ func _ready() -> void:
 	stage3d = Env.str_of("TL_STAGE").to_lower() == "3d"
 	stage2d = Env.str_of("TL_STAGE").to_lower() == "2d"
 	tilt = Env.float_of("TL_TILT", 0.0)
+	yaw = Env.float_of("TL_YAW", 0.0)
 	prof = Env.flag("TL_PROF")
 	var f := Env.str_of("TL_FOCUS")
 	if f != "":
@@ -123,15 +126,17 @@ func _ready() -> void:
 ## 截圖**同一份**示範佈局（`data/Maps.gd` 的 `SHOAL_DEMO`），所以圖上看到的線
 ## 和這裡印出來的數字保證是同一個局面——截圖不會和數字各說各話。
 func _run_sim() -> void:
-	var SessionState := preload("res://scripts/game/SessionState.gd")
-	var BattleController := preload("res://scripts/game/BattleController.gd")
-	var BuildController := preload("res://scripts/game/BuildController.gd")
-	var MapsData := preload("res://data/Maps.gd")
+	# ★ `load()` 不是 `preload()`：`preload` 會在載入本檔（autoload，開機第一支腳本）時就把整個模擬層編譯完，
+	#   玩家的每一次開機都白等這一段，而只有 `TL_SIM` 用得到它。
+	var SessionState: GDScript = load("res://scripts/game/SessionState.gd")
+	var BattleController: GDScript = load("res://scripts/game/BattleController.gd")
+	var BuildController: GDScript = load("res://scripts/game/BuildController.gd")
+	var MapsData: GDScript = load("res://data/Maps.gd")
 
 	var s: RefCounted = SessionState.new()
 	s.setup(MapsData.SHOAL)
 	s.alloy = MapsData.DEMO_ALLOY   # 示範佈局的加粗要合金（`Maps.DEMO_ALLOY`）
-	var failures := BuildController.apply_ops(s, MapsData.SHOAL_DEMO)
+	var failures: Variant = BuildController.apply_ops(s, MapsData.SHOAL_DEMO)
 	for _i in sim_ticks:
 		BattleController.step(s)
 
