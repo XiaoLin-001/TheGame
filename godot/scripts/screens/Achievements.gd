@@ -38,7 +38,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 ## ★ 輸入層自檢（`TL_CLICKTEST=1 TL_PANEL=achievements`）。
 ##
 ## 這個畫面沒有鈕可按（返回那一顆除外），所以自檢驗的是**資料真的長在畫面上**：
-##   · 20 列全部建出來（`Achievements.count()`，不是寫死的 20）
+##   · 每一列全部建出來（`Achievements.count()`，不是寫死的數字）
 ##   · 零進度時已達成 0 條、公司等級 1
 ##   · 塞一筆進度進去（**不寫檔**）之後那一列真的變成已達成，而且材料餘額跟著動
 ##   · 捲到底之後**最後一列整條在畫面內**（RG-47／RG-60 的同一課）
@@ -99,7 +99,7 @@ func _build() -> void:
 	# ★ 一行就好。原本這裡另外寫了「它只是一個彙總、不另外發獎勵」——
 	#   那是在回答一個玩家還沒問的問題，而且讀起來像在替自己的設計辩護。
 	col.add_child(UiKit.label(
-		"塔防與潮汐公司的進度都會推它。離下一級 %d／%d 點。"
+		"塔防的進度會推它。離下一級 %d／%d 點。"
 		% [progress[0], progress[1]],
 		14, Palette.TEXT_SECONDARY, false
 	))

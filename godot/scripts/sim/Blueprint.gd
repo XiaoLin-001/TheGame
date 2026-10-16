@@ -13,7 +13,7 @@ extends RefCounted
 const NodeDefs := preload("res://data/NodeDefs.gd")
 const Build := preload("res://scripts/sim/Build.gd")
 
-## 免費藍圖槽。科技「藍圖槽 I／II」各 +1（§7.8），tycoon 的供給排 B2.5。
+## 免費藍圖槽。科技「藍圖槽 I／II」各 +1（§7.8）。
 ##
 ## 為什麼不是 0：**槽數 0 等於這個功能要先買才存在**，而藍圖庫的設計意圖是
 ## 消除重複勞動（§3.7）——那個痛苦第一局就開始了，不該用科技擋在後面。

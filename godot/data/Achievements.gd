@@ -30,11 +30,11 @@ const Difficulty := preload("res://data/Difficulty.gd")
 ## `progress_test._achievement_table_is_consistent()` 用一條通則看著它，
 ## 不是只釘住這四個 id。
 
-## 20 條（M2 的內容矩陣，§5）。
+## 17 條（M2 的內容矩陣，§5 要 20 條；B4.6 拿掉潮汐公司的三條之後少了 3）。
 ##   `metric` ＝ `metrics()` 字典裡的鍵；`need` ＝ 門檻（≥ 即達成）
 ##   `component` ＝ 升級材料；`token` ＝ 聲望券（大部分是 0）
 ##
-## ★ **順序＝畫面上的順序**，由淺到深分五組（戰役／無盡／科技／公司／收藏）。
+## ★ **順序＝畫面上的順序**，由淺到深分四組（戰役／無盡／科技／收藏）。
 const LIST := [
 	{"id": "clear1", "name": "初次通關", "metric": "cleared", "need": 1,
 		"desc": "通過任何一關戰役。", "component": 20, "token": 0},
@@ -62,13 +62,6 @@ const LIST := [
 		"desc": "解鎖 6 個科技節點。", "component": 50, "token": 0},
 	{"id": "tech_all", "name": "整棵樹", "metric": "tech", "need": 12,
 		"desc": "科技樹全解鎖。", "component": 120, "token": 1},
-
-	{"id": "plant3", "name": "廠等三", "metric": "tycoon_level", "need": 3,
-		"desc": "潮汐公司擴廠到 3 級。", "component": 30, "token": 0},
-	{"id": "plant6", "name": "廠等六", "metric": "tycoon_level", "need": 6,
-		"desc": "潮汐公司擴廠到 6 級。", "component": 80, "token": 0},
-	{"id": "bulk", "name": "大宗交貨", "metric": "tycoon_tokens", "need": 3,
-		"desc": "潮汐公司累計交出 3 張附券的訂單。", "component": 40, "token": 0},
 
 	{"id": "recruit1", "name": "第一次招募", "metric": "recruited", "need": 1,
 		"desc": "招募一隻稀有角色。", "component": 20, "token": 0},
@@ -137,7 +130,6 @@ static func metrics(save: Dictionary) -> Dictionary:
 			cleared += 1
 
 	var endless: Dictionary = save.get("endless", {})
-	var tycoon: Dictionary = save.get("tycoon", {})
 
 	# 每日：歷史筆數 ＋ 今天已經有成績的榜數。**兩榜各算一次**——
 	# 打了統一配置榜就算「打過每日」，不必兩榜都打。
@@ -156,8 +148,6 @@ static func metrics(save: Dictionary) -> Dictionary:
 		"best_wave": int(Difficulty.best_any(save)["wave"]),
 		"best_output": int(floor(float(Difficulty.best_any(save)["output"]))),
 		"tech": int(((save.get("tech", {}) as Dictionary).get("unlocked", []) as Array).size()),
-		"tycoon_level": int(tycoon.get("level", 1)),
-		"tycoon_tokens": int(tycoon.get("tokens", 0)),
 		"recruited": int(((save.get("roster", {}) as Dictionary)
 			.get("recruited", []) as Array).size()),
 		"blueprints": int((save.get("blueprints", []) as Array).size()),
@@ -201,10 +191,9 @@ static func _sum(save: Dictionary, key: String) -> int:
 ## 一個點數換一個等級的分母。
 const COMPANY_STEP := 120
 
-## 每一項進度值幾點。**塔防那幾項與 tycoon 那一項都在裡面**，
-## 所以「兩層都推得動公司等級」是式子本身的性質，不是一句宣稱。
+## 每一項進度值幾點。
 const COMPANY_WEIGHTS := {
-	"stars": 10, "best_wave": 2, "tech": 8, "tycoon_level": 12,
+	"stars": 10, "best_wave": 2, "tech": 8,
 }
 
 
@@ -220,10 +209,7 @@ static func company_points(save: Dictionary) -> int:
 	var m := metrics(save)
 	var pts := 0
 	for key: String in COMPANY_WEIGHTS:
-		# 廠等從 1 起跳，所以計點要扣掉那個底——沒扣的話，一份全新的存檔
-		# 會白拿 12 點，而「公司等級 1」看起來就不是從零開始的。
-		var v := int(m[key]) - (1 if key == "tycoon_level" else 0)
-		pts += maxi(0, v) * int(COMPANY_WEIGHTS[key])
+		pts += maxi(0, int(m[key])) * int(COMPANY_WEIGHTS[key])
 	pts += done(save).size() * 15
 	pts += (int(m["tower"]) + int(m["line"])) * 6
 	return pts

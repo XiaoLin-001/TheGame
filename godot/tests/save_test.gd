@@ -12,7 +12,7 @@ const Difficulty := preload("res://data/Difficulty.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("save_test", 105)
+	var t := T.new("save_test", 104)
 
 	# ── 空存檔 → 補完整 schema ──
 	var fresh: Dictionary = Save.normalize({})

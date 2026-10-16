@@ -76,19 +76,18 @@ TheGame/
     │   ├── core/               GameState / SaveService / Hooks / AudioBus / Rng ＋ Env（鉤子讀取層）
     │   ├── sim/          ★     FlowNetwork / Combat / Tide / Build / MapGen / Score / Clock / Daily / Blueprint / Loadout
     │   ├── game/               BattleController（每 tick 解算）/ BuildController / SessionState
-    │   ├── meta/               TycoonSim（局外系統的純函式狀態機）
     │   ├── render/             共用美術 token：Palette / Motion / Shapes
     │   │   └── 2d/             2D 專用：Glyphs（節點幾何）/ Foes（敵人幾何）/ Terrain（地貌）/ TitleBackdrop
     │   ├── ui/                 UiKit.gd（共用 UI helpers，static）
     │   └── screens/            各畫面；局內畫面見 §2.6
     ├── data/                   節點、敵人、地圖、戰役、科技、等級軸、成就、難度層、名冊的資料表（GDScript 表 ＋ 讀它的純函式）
-    ├── tests/                  22 支 headless 測試 ＋ 輔助
+    ├── tests/                  21 支 headless 測試 ＋ 輔助
     └── assets/audio/           bgm 3 首、sfx 14 支（程序生成）
 ```
 
 ### 2.3 狀態擁有權
 
-- **`GameState`（autoload）擁有跨局的持久狀態**：科技樹、名冊、tycoon、設定、紀錄。
+- **`GameState`（autoload）擁有跨局的持久狀態**：科技樹、名冊、設定、紀錄。
 - **`SessionState`（非 autoload）擁有當前局的狀態**：網路拓樸、資源、波次、敵人。局結束即銷毀。
 - 畫面層**以引用**取得狀態，**不得持有副本**。
 - **讀檔時原地變更**（`clear()` + `append_array()` / `merge()`），**絕不重新賦值容器**——重新賦值會讓已持有引用的面板拿到斷裂的舊物件。
@@ -224,7 +223,7 @@ TheGame/
 | 遷移 | 結構性改動寫 `_migrate_sv<N>_to_sv<N+1>()` 分支，鏈式套用。**只增不破**（紅線層級的承諾）<br>**★ B1.4 落地時定的三條**：① **一次跳一版**，不寫「從任何版本直達最新」的捷徑——捷徑要在每加一版時重寫全部組合，而漏掉的那一格是玩家的存檔；② **沒有 `sv` 的檔一律當成 1**（首版出貨的形狀，不是壞檔）；③ **不得假設舊資料自洽**——真實存檔會有中途版本、當機、手改過的檔，遷移要能把不一致的資料收成合理的樣子。<br>**遷移必須冪等**（`save_test` 斷言）：最常見的事故就是「開遊戲兩次跑了兩次遷移」 |
 | sv 沿革 | `sv1` 首版 · **`sv2`（B1.4）移除 `campaign.cleared`**，改由 `campaign.stars` 推導（`cleared` ⟺ `stars[id] >= 1`）——同一個事實存兩份遲早會漂移 |
 | 備份 | 寫檔採「寫入 `.tmp` → 驗證可讀 → 原子改名」，避免寫壞主檔 |
-| 自動存檔 | 局末結算後、tycoon 收成後、設定變更後。**局內不自動存檔**（局內狀態不持久化，失敗重來即可，符合紅線 R1） |
+| 自動存檔 | 局末結算後、設定變更後。**局內不自動存檔**（局內狀態不持久化，失敗重來即可，符合紅線 R1） |
 | 多存檔槽 | M3 前不做，但 schema 預留 `slots` 陣列外層結構 |
 
 **存檔內容**（sv2 schema 骨架，B1.4）：
@@ -238,7 +237,6 @@ TheGame/
   "campaign": { "stars": {} },
   "endless": { "best_wave": 0, "best_score": 0 },
   "daily": { "2026-07-27": { "score": 0, "wave": 0 } },
-  "tycoon": { "level": 1, "credit": 0, "components": 0, "lines": [], "last_seen_unix": 0 },
   "levels": { "towers": {}, "nodes": {} },
   "entitlements": { "purchases": [], "no_ads": false, "pass_season": 0, "pass_owned": false },
   "blueprints": [],
@@ -252,7 +250,7 @@ TheGame/
 
 **購買驗證的固有限制**：離線單機的存檔可被本機竄改，`entitlements` 無法在客戶端可靠防偽。這是桌面 F2P 的結構性限制，**不在 M0–M3 處理**；M4 接平台 API（Steam Inventory 等）時，以平台收據為權威來源，本機 `entitlements` 降為快取。**不要為此在早期批次做加密或混淆——那只會增加除錯痛苦而擋不住任何真正想改的人。**
 
-**離線結算**（tycoon 掛機）：以 `last_seen_unix` 與當前時間差計算，**但上限為倉儲容量**。時間差為負（使用者改系統時鐘）時視為 0，不獎勵也不懲罰。
+**離線結算**：B4.6 移除潮汐公司後沒有任何系統做離線結算（原本是 tycoon 掛機）。舊存檔裡的 `tycoon` 區段（含 `last_seen`）原封不動留著、不再讀。
 
 ---
 
@@ -264,7 +262,7 @@ TheGame/
 |---|---|
 | `TL_SHOT=<png絕對路徑>` | 渲染數秒後截圖存檔並自動退出（截圖驗證的地基） |
 | `TL_SHOT_DELAY=<秒>` | 截圖前等待秒數，讓動效跑完（預設 3） |
-| `TL_PANEL=<畫面名>` | 直接開啟指定畫面，跳過導航（`title` / `battle` / `sandbox` / `campaign` / `endless` / `tech` / `settings`；`roster` / `tycoon` 排 M2）。**B2.1a 起 `endless` ＝ 一局程序生成圖**，種子走 `Rng.next_seed()`，所以**同一個 `TL_SEED` 開出的永遠是同一張圖**。⚠ 生成器的幾何**用截圖判不出來**（說明浮層要放下第一個節點才收、格子 32px）——要看路徑／橋／礦點的擺法，寫一支 `--script` 把 `Maps.path_of()` 印成 ASCII（RG-103）。**B0.3 起 `battle` 會自動蓋出示範佈局**（`data/Maps.gd` 的 `SHOAL_DEMO`）——空地圖的截圖證明不了任何事。**B1.1 起 `sandbox` ＝ 沙盤「靜水」＋ `SANDBOX_DEMO`**：沒有敵人、只有三種資源同時在跑，是**合金流動珠唯一拍得到的地方**（淺灘的示範佈局沒有熔爐）。`flow_test` 的合金端到端測試用的是同一張圖同一份佈局 |
+| `TL_PANEL=<畫面名>` | 直接開啟指定畫面，跳過導航（`title` / `battle` / `sandbox` / `campaign` / `endless` / `tech` / `settings`；`roster` 排 M2）。**B2.1a 起 `endless` ＝ 一局程序生成圖**，種子走 `Rng.next_seed()`，所以**同一個 `TL_SEED` 開出的永遠是同一張圖**。⚠ 生成器的幾何**用截圖判不出來**（說明浮層要放下第一個節點才收、格子 32px）——要看路徑／橋／礦點的擺法，寫一支 `--script` 把 `Maps.path_of()` 印成 ASCII（RG-103）。**B0.3 起 `battle` 會自動蓋出示範佈局**（`data/Maps.gd` 的 `SHOAL_DEMO`）——空地圖的截圖證明不了任何事。**B1.1 起 `sandbox` ＝ 沙盤「靜水」＋ `SANDBOX_DEMO`**：沒有敵人、只有三種資源同時在跑，是**合金流動珠唯一拍得到的地方**（淺灘的示範佈局沒有熔爐）。`flow_test` 的合金端到端測試用的是同一張圖同一份佈局 |
 | `TL_MUTE=1` | 全域靜音 |
 | `TL_SEED=<int>` | 覆寫隨機種子，用於重現特定局面 |
 | `TL_DEMO_TICKS=<ticks>` | **`0` ＝ 完全不要示範佈局**（拍玩家真正的第一眼，`50_QA_PLAN.md` §4.4）。其餘：示範佈局先推幾個 tick 再交給畫面（預設 **860** ＝ 60 秒準備期 ＋ 26 秒戰鬥，敵潮剛進射程）。**推的是 tick 不是階段**，所以 `TL_DEMO_TICKS=N` 與 `TL_SIM=N` 是同一個局面；給小一點就拍得到準備期（階段色調、提前召喚倍率要兩張圖才比得出來） |

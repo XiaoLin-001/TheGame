@@ -25,7 +25,6 @@ const Achievements := preload("res://data/Achievements.gd")
 const Roster := preload("res://data/Roster.gd")
 const Daily := preload("res://scripts/sim/Daily.gd")
 const Blueprint := preload("res://scripts/sim/Blueprint.gd")
-const TycoonSim := preload("res://scripts/meta/TycoonSim.gd")
 const SaveService := preload("res://scripts/core/SaveService.gd")
 const MapGen := preload("res://scripts/sim/MapGen.gd")
 
@@ -42,7 +41,7 @@ const M1_FLOOR := {
 
 
 func _initialize() -> void:
-	var t := T.new("m2_test", 368)
+	var t := T.new("m2_test", 324)
 	_content_matrix(t)
 	_everything_is_reachable(t)
 	_full_playthrough_save_is_clean(t)
@@ -120,15 +119,12 @@ func _content_matrix(t: T) -> void:
 		"無盡佈局": 1,
 		"難度層": Difficulty.MAX_TIER,
 		"成就": Achievements.count(),
-		"tycoon 訂單品項": TycoonSim.ORDER_NAMES.size(),
-		"tycoon 廠等": TycoonSim.MAX_LEVEL,
 	}
 	# §5 的 M2 欄（目標）。**印出來，不斷言**——差距是製作人的排程決定，
 	# 不是一個測試該否決的東西。斷言只守「不得倒退」。
 	var m2_target := {
 		"角色（塔）": 16, "生產節點": 11, "敵人": 12, "戰役關卡": 15,
 		"科技節點": 30, "無盡佈局": 3, "難度層": 3, "成就": 20,
-		"tycoon 訂單品項": 8, "tycoon 廠等": 10,
 	}
 	print("  ── 內容矩陣實測（`10_GDD.md` §5）")
 	for key: String in actual:
@@ -215,12 +211,6 @@ func _full_playthrough_save_is_clean(t: T) -> void:
 	rng.seed = 7
 	var got := SaveService.apply_recruit(save, rng)
 	t.ok(got != "", "招募寫得進存檔")
-	# tycoon：接單 → 上線 → 生產 → 收成。
-	var ty: Dictionary = save["tycoon"]
-	t.ok(TycoonSim.accept(ty, TycoonSim.available_tiers(1)[0]), "訂單接得下來")
-	t.ok(TycoonSim.assign(ty, 0, 0), "訂單上得了產線")
-	TycoonSim.accrue(ty, 9999.0)
-	t.ok(TycoonSim.collect(ty, 0), "訂單收得成")
 	# 等級軸：局末材料 → 升一級。
 	SaveService.apply_components(save, 40)
 	t.ok(SaveService.apply_level_up(save, Levels.TOWER), "等級軸升得了級")
@@ -247,7 +237,6 @@ func _full_playthrough_save_is_clean(t: T) -> void:
 	t.ok(int(Difficulty.best(norm, 0)["wave"]) == 12, "無盡紀錄記在第 0 層")
 	t.ok(Roster.owned(norm).size() > 1, "名冊不只有起始那一隻")
 	t.ok((norm["blueprints"] as Array).size() == 1, "藍圖存得住")
-	t.ok(int((norm["tycoon"] as Dictionary)["credits"]) > 0, "公司真的賺到錢")
 
 	# ★ 讀回來的每一格仍然是玩家那一份（`_repair_containers()` 不得誤傷）。
 	t.eq(int(((norm["campaign"] as Dictionary)["stars"] as Dictionary)[Campaign.id_at(0)]), 3,

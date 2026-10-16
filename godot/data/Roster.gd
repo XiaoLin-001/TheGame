@@ -106,10 +106,8 @@ static func graduated(save: Dictionary) -> bool:
 
 ## 一路上總共賺到幾張聲望券。**里程碑，不是掉落**：玩家看得到「再 2 顆星就有券」。
 ##
-## ★ **第三條路是潮汐公司**（B2.5）：第 4 階起的訂單各附一張券。
-##   它是**加法**不是替代——`roster_test._free_to_play_can_graduate()` 仍然斷言
-##   「純戰役滿星就能畢業」，所以 tycoon 只是讓不想再刷星的人多一條路，
-##   不是把畢業綁到掛機上（憲法 B6：所有東西都能純靠遊玩取得）。
+## ★ （B4.6 起潮汐公司已移除，它那條路——第 4 階起的訂單各附一張券——也一起拿掉。
+##   `roster_test._free_to_play_can_graduate()` 仍然斷言「純戰役滿星就能畢業」。）
 ##
 ## ★ **第四條路是成就**（B2.7）：六條成就各附一張券（§7.15）。同樣是加法。
 ##   ⚠ 這裡 preload `Achievements` 是**單向的**——那邊刻意不 preload 這一份
@@ -121,9 +119,8 @@ static func earned(save: Dictionary) -> int:
 		total += int(stars.get(id, 0))
 	# ★ sv3 的形狀（B3.3 修）。讀舊鍵的那一版自 B2.6 起讓**無盡完全不發券**。
 	var best_wave := int(Difficulty.best_any(save)["wave"])
-	var from_tycoon := int((save.get("tycoon", {}) as Dictionary).get("tokens", 0))
 	return (
-		total / star_per_token() + best_wave / WAVE_PER_TOKEN + from_tycoon
+		total / star_per_token() + best_wave / WAVE_PER_TOKEN
 		+ Achievements.tokens(save)
 	)
 

@@ -42,7 +42,7 @@
 |---|---|---|
 | **T0 脊椎** | 沒有它遊戲開不起來，或核心循環不成立 | 載入失敗／整個玩法不存在 |
 | **T1 核心規則** | 鎖定的設計（`CLAUDE.md`「鎖定的設計」）住在這些函式裡 | 遊戲跑得起來，但**不再是這個遊戲** |
-| **T2 功能模組** | 一個獨立的玩家功能（科技樹、潮汐公司、每日挑戰…） | 主選單少一顆鈕；要改幾個接點，詳見 §2.3 |
+| **T2 功能模組** | 一個獨立的玩家功能（科技樹、每日挑戰、名冊…） | 主選單少一顆鈕；要改幾個接點，詳見 §2.3 |
 | **T3 呈現層** | 畫面、音效、動效 | headless 模擬照跑，但玩家看不見東西 |
 | **T4 開發輔助** | 測試鉤子、自檢、工具 | 一般遊玩完全不受影響 |
 
@@ -87,7 +87,7 @@
 | **⑩ 確定性：同一組 (seed, ops) 必得同一個 `state_hash()`** | `SessionState.state_hash()`；`scripts/sim/` 零系統 RNG（`gd_lint` 規則 3）；`tests/determinism_test.gd` | 每日挑戰公平性、重播、榜單全部依賴它 |
 | **⑪ 不用隱藏係數調難度** | 沒有「新手餘裕」係數；難度只在關卡參數（`data/Maps.gd`／`Campaign.gd`）與難度層（`data/Difficulty.gd`）——玩家看得見的 | 偷改物理＝教錯模型（本作核心是學電力數學） |
 | **⑫ 戰役關卡一屏可見** | `Stage.FRAME`（框架恆定）＋ `Stage2D.reset_view()`（進場自動 fit）；`Shapes.fit_zoom()`；`campaign_test` 斷言每關 fit 後填滿框架 | 地圖尺寸變成受畫面限制 |
-| **⑬ tycoon 是附屬補給站；UI 深度上限兩個畫面** | `scripts/meta/TycoonSim.gd`（純函式、不讀時鐘）；`screens/TycoonOrders.gd` → `TycoonLines.gd` | 長成第二個遊戲＝紅線 |
+| **⑬ ~~tycoon 是附屬補給站；UI 深度上限兩個畫面~~** | （★ B4.6 已移除潮汐公司；這條編號留著，不讓後面的 ⑭⑮ 位移） | — |
 | **⑭ 統一配置榜與玩家進度／課金完全無關** | `Daily.UNIFORM_BUILD`（**明列**的十種）、`Daily.meta_for()`、`sim/Loadout.gd`（局外成長進局的**唯一入口**）；`roster_test`／`daily_test` | 一軸一道閘等於靠列舉守住憲法，漏一道不會報錯——所以只有一道 |
 | **⑮ 失敗只花時間（R1）、無體力值（R2）** | 沒有任何「重試券」「體力」欄位；`SaveService.defaults()` 不存這類東西 | 紅線 |
 
@@ -98,7 +98,6 @@
 
 | 功能 | 檔案 | 外部接點 | 對遊戲其餘部分的影響 |
 |---|---|---|---|
-| **潮汐公司（tycoon）** | `meta/TycoonSim.gd`、`screens/TycoonOrders.gd`、`TycoonLines.gd` | `Main.gd`（`PANEL_SCREENS["tycoon"]`、主選單鈕、`_tycoon_progress`）；`SaveService`（`tycoon` 區段）；`Achievements`／`Roster` 的材料與券來源 | 升級材料與招募券少一個來源——**塔防不依賴 tycoon**（設計鎖定），其餘照跑 |
 | **成就** | `data/Achievements.gd`、`screens/Achievements.gd` | `Main.gd`；`SaveService.components()` 向它問材料獎勵；`Roster` 向它問券。成就是**推導的**（存檔其他欄位 ≥ 門檻），沒有自己的存檔區段 | 少一批獎勵；存檔不受影響 |
 | **名冊與招募** | `data/Roster.gd`、`screens/Roster.gd` | `Main.gd`；`Battle._setup_session()`（無盡／自由榜的建造欄吃名冊）；`SaveService` | 無盡的建造欄回到「全部」；**會改變無盡的玩法**（B2.4 已知變更） |
 | **難度層** | `data/Difficulty.gd`、`screens/Tiers.gd` | `SessionState.setup()`（三層倍率乘在 `mods` 上）；`TopBar`／`ResultPanel`（顯示層數）；`Achievements`／`Roster` | 無盡只剩第 0 層 |
@@ -129,7 +128,7 @@
 ### 2.5 T4 開發輔助（一般遊玩閒置）
 
 `screens/battle/SelfTest.gd`（約 1400 行：`TL_CLICKTEST`／`TL_STRESS`／示範佈局）、`core/Hooks.gd` 的 `TL_SIM`／`TL_SHOT`、
-`tests/`（22 支 headless ＋ 輔助）、`qa/`、`dev/`、`assetgen/`。匯出時 `exclude_filter="tests/*"`——
+`tests/`（21 支 headless ＋ 輔助）、`qa/`、`dev/`、`assetgen/`。匯出時 `exclude_filter="tests/*"`——
 **所以 headless 測試在 exe 上跑不到**，exe 上唯一還在的驗證是 `clicktest` 與 `TL_SHOT`（見 `CLAUDE.md` 每批收尾）。
 
 ---
@@ -150,7 +149,7 @@ screens/ ──► game/ ──► sim/ ──► data/          （箭頭＝可
 
 1. **`SaveService` 認得每個功能**：它的 `defaults()` 為每個 T2 功能各留一個區段，並 `preload` 了 `Daily`／`Blueprint`／`Score`／
    `Roster`／`Achievements`／`Levels`。所以「整塊拿掉一個功能」永遠要同時改存檔——這是持久層的本質，不是壞設計。
-2. **`Main.gd` 是全部畫面的註冊處**（`PANEL_SCREENS` 與九顆主選單鈕）。新增畫面＝加一列表 ＋ 一顆鈕 ＋ 一條 clicktest。
+2. **`Main.gd` 是全部畫面的註冊處**（`PANEL_SCREENS` 與八顆主選單鈕）。新增畫面＝加一列表 ＋ 一顆鈕 ＋ 一條 clicktest。
 3. **`BattleController` 依賴 `render/Motion`**：`Motion.ticks()` 讀 `reduce_motion`，決定要不要生成純渲染的碎片爆
    （`_burst`／`_shield`）。這些記錄**不進 `state_hash()`**，所以不影響確定性；但它是模擬層裡唯一讀到「玩家設定」的地方。
 4. **外界讀 `Battle` 的欄位**：`Campaign`／`Tiers`／`DailyScreen`／`Main` 只做 `new()` → 指派

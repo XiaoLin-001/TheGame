@@ -207,7 +207,7 @@ func _build() -> void:
 	#   （B2.7 截圖抓到）。`UiKit.label()` 預設不換行，長句一律自己開。
 	var intro := UiKit.label(
 		"研究數據買科技，戰役每顆星都有。"
-		+ "升級材料買等級軸，來自局末的波數、潮汐公司與成就。"
+		+ "升級材料買等級軸，來自局末的波數與成就。"
 		+ "兩者都是永久的，下一局起就生效。",
 		14, Palette.TEXT_SECONDARY, false
 	)

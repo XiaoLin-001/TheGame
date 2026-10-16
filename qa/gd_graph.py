@@ -10,8 +10,8 @@
     python qa/gd_graph.py --layers         檢查分層規則（sim/data 不得依賴 screens/render/ui）
 
 「爆炸半徑」＝直接或遞移依賴它的 runtime 檔案數（不含 tests/）。
-它是**載入層級**的，不是功能層級：砍掉 `Tycoon*` 不會讓遊戲載入失敗，
-但主選單會少一顆鈕——這種「功能性」的分級在 `docs/60_CODE_MAP.md`。
+它是**載入層級**的，不是功能層級：能載入不代表功能還在（例如一個畫面被拿掉、主選單少一顆鈕，
+剩下的檔案照樣載得起來）——這種「功能性」的分級在 `docs/60_CODE_MAP.md`。
 """
 from __future__ import annotations
 

@@ -39,6 +39,11 @@ const RESOLUTIONS := [Vector2i(1280, 720), Vector2i(1600, 900), Vector2i(1920, 1
 ##
 ## 反過來，提前宣告有真的代價：每一個空殼鍵都會被寫進玩家的存檔檔案，
 ## 而看到 `"tycoon": {...}` 的人會以為那個系統已經在跑了。
+##
+## ★ **B4.6 移除了潮汐公司，`tycoon` 鍵不在這裡了——但舊存檔裡的那一格原封不動留著**：
+## `normalize()` 複製讀進來的整份資料，只補缺鍵、不砍多的，所以舊檔裡的 `tycoon` 會原樣寫回去
+## （沒有 bump `SAVE_VERSION`、沒有遷移；之後想把公司接回來，進度還在）。
+## 唯一還讀它的地方是 `earned_components()`：已經賺到的材料不能因為功能拿掉而憑空消失。
 const DEFAULTS := {
 	"sv": SAVE_VERSION,
 	"tech": {"unlocked": [], "data": 0},
@@ -73,18 +78,6 @@ const DEFAULTS := {
 	# （`data/Roster.gd` 的說明）——存進來的每一份平行事實都會漂，而漂掉的那天
 	# 玩家會看到「第 3 關通了但潮鳴還鎖著」，兩邊各自都「對」。
 	"roster": {"recruited": []},
-	# ★ B2.5 落地的鍵。同樣**沒有 bump `SAVE_VERSION`**（加鍵不是結構改動）。
-	#
-	# `orders` 的每一筆是 `{tier, done, line}`，`line` ＝ 第幾格產線位（−1 ＝ 沒上線）。
-	# **「哪一格產線位被佔著」是推導的**（`TycoonSim.order_on_line()`）——存一份
-	# slots 陣列等於讓同一個事實有兩個版本，而收成一張訂單會讓後面每個索引位移。
-	#
-	# `last_seen` ＝ Unix 秒，離線結算的基準（`TycoonSim.settle()`）。
-	# 0 ＝ 從沒開過公司，**不結算**（否則會把 1970 年到現在整段算進去）。
-	"tycoon": {
-		"level": 1, "credits": 0, "components": 0, "tokens": 0,
-		"last_seen": 0, "orders": [],
-	},
 	# ★ B2.7 落地的鍵。同樣**沒有 bump `SAVE_VERSION`**（加鍵不是結構改動）。
 	#
 	# 只有三格，而且**沒有一格是「我還剩多少材料」**：餘額是推導的
@@ -379,9 +372,9 @@ static func apply_recruit(d: Dictionary, rng: RandomNumberGenerator) -> String:
 
 ## ★ 升級材料的餘額（B2.7、`10_GDD.md` §7.15）。**推導，不存。**
 ##
-## 三條路各自只增不減（成就是推導的、tycoon 與局末是累計欄位），花掉多少
-## 則由**現在的等級**反推。所以「等級」與「材料」不可能互相矛盾——
-## 這是 sv2 砍掉 `campaign.cleared`、B2.4 不存 `owned`、B2.5 不存產線佔用的同一條。
+## 各條路各自只增不減（成就是推導的、局末是累計欄位；B4.6 之前的潮汐公司留下的累計值也算），
+## 花掉多少則由**現在的等級**反推。所以「等級」與「材料」不可能互相矛盾——
+## 這是 sv2 砍掉 `campaign.cleared`、B2.4 不存 `owned` 的同一條。
 ##
 ## 放在 `SaveService` 而不是 `Levels`：這一支要同時問 `Achievements` 與 `Levels`，
 ## 而 `Achievements` 已經 preload 了 `Levels`——寫進 `Levels` 就是一個環。
@@ -389,7 +382,7 @@ static func components(d: Dictionary) -> int:
 	return maxi(0, earned_components(d) - spent_components(d))
 
 
-## 一路上總共賺到多少材料（三條路，§4.1）。
+## 一路上總共賺到多少材料（局末、成就，以及 B4.6 之前的潮汐公司留在存檔裡的累計值，§4.1）。
 static func earned_components(d: Dictionary) -> int:
 	var lv: Dictionary = d.get("levels", {})
 	return (

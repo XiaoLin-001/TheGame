@@ -53,10 +53,9 @@
 - **自動化模型**：**流量網路**（每 tick 解容量受限比例分配），**不是**實體物品搬運。
   - **供不應求時按比例降速，不停機**（滿足率線性縮放產出與射速）。
   - **不變量：採集器無輸入需求** → 網路結構上不可能全域死鎖。新增節點不得破壞這一點。
-- **主從結構**：塔防是主體，**潮汐公司 tycoon 是附屬補給站，不是第二個遊戲**。
-  - tycoon 產出**全部流向塔防**（升級材料、招募券、藍圖槽、難度鑰匙）。
-  - **防膨脹硬指標：tycoon 的 UI 深度上限為兩個畫面**（訂單板＋產線編輯）。每批 QA 必查。
-  - **塔防不依賴 tycoon**：所有進度都能純靠遊玩取得。
+- **塔防是唯一主體**：★ B4.6（2026-10-16）使用者拿掉了附屬系統「潮汐公司 tycoon」（「把工廠的部分拿掉」），連同它的鎖定設計（主從結構、tycoon UI 深度上限兩個畫面）一起退場。
+  **所有進度都能純靠遊玩取得**仍然成立（升級材料剩局末波數與成就兩條路）。舊存檔裡的 `tycoon` 那一格原封不動留著、不再讀（`earned_components()` 仍計入已賺到的材料）。
+  **變現（M4）原本「賣速度」的主力商品「tycoon 加速」沒了，怎麼補還沒決定**——要動變現先問使用者。
 - **商業模式**：**免費遊玩＋內購**（含 P2W 成分）。Windows 版**無廣告**；廣告保留至手機移植版。
   - **B6 賣速度，不賣次數，不賣進度**。禁止：體力、重試權、關卡鑰匙、**付費復活**。
   - **等級軸（付費可買，+80% 上限）的增幅必須被難度層同步吃掉**——買到的是「能挑戰更高難度層」，不是碾壓現有內容。
@@ -77,10 +76,10 @@
 - **中文 UI 一律 `SystemFont`**（微軟正黑體）。**不要改回 Godot 預設字型**（無 CJK，會變豆腐字）。
 - **狀態讀檔時原地變更**（`clear()` + `append_array()`），絕不重新賦值容器——重新賦值會讓已持有引用的面板拿到斷裂的舊物件。
 - **GDScript 嚴格型別地雷**：泛型 `lerp()` 編譯錯 → 用 `lerpf()`；untyped array 的 `for` 變數要顯式型別；`match` 各分支共享作用域，變數名要唯一；**三元式產出的是 untyped `Array`**——`var a: Array[int] = [1,-1] if c else [-1,1]` 過得了編譯、**在執行期才炸**，而且炸在生成器裡的樣子是「礦點靜靜地變成 0 個」。
-- **`data/` 與 `scripts/meta/` 的分界**（B2.7.2 補寫）：兩邊都是純函式、零副作用，差別在形狀——
+- **`data/` 與 `scripts/meta/` 的分界**（B2.7.2 補寫；★ B4.6 起 `scripts/meta/` 目錄是空的，`TycoonSim` 隨潮汐公司移除）：兩邊都是純函式、零副作用，差別在形狀——
   **`data/` 是一張表 ＋ 讀它的函式**（`NodeDefs`、`Tech`、`Levels`、`Achievements`、`Roster`、`Campaign`：
-  加內容是**加一列**）；**`scripts/meta/` 是有狀態轉移的局外系統**（`TycoonSim`：accept / assign /
-  accrue / collect / expand）。不確定時問自己：「新增一筆內容是加資料還是加一個動詞？」
+  加內容是**加一列**）；**`scripts/meta/` 是有狀態轉移的局外系統**（曾經只有 `TycoonSim`：accept / assign /
+  accrue / collect / expand，日後再有這種東西才會再用到）。不確定時問自己：「新增一筆內容是加資料還是加一個動詞？」
 - 存檔：`SaveService.SAVE_VERSION` 常數；讀取一律 `d.get(key, default)`；結構改動寫 `_migrate_sv<N>_to_sv<N+1>()`。**只增不破。**
 
 ---
@@ -96,7 +95,7 @@
 # 新增腳本/資源後必跑（生成 .uid/.import，需一起 commit）
 <godot> --headless --path godot --import
 
-# 自動化測試（22 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / tycoon / progress / difficulty / m2 / fuzz / stage3d / render_cache）
+# 自動化測試（21 支：flow / build / combat / tide / save / determinism / hud / tech / audio / perf / campaign / endless / daily / blueprint / roster / progress / difficulty / m2 / fuzz / stage3d / render_cache）
 <godot> --headless --path godot --script res://tests/flow_test.gd
 
 # ★ 音源是程序生成的（B1.5）。改音色改腳本，**不要去修 wav**；改完要重新匯入。
@@ -142,11 +141,6 @@ TL_SHOT="C:/tmp/daily.png" TL_PANEL=daily <godot> --path godot --rendering-drive
 # 其餘七張卡是暗的並寫著怎麼拿到。
 TL_SHOT="C:/tmp/roster.png" TL_PANEL=roster <godot> --path godot --rendering-driver opengl3
 
-# ★ 潮汐公司（B2.5）：TL_PANEL=tycoon 是**訂單板**。產線編輯不在 PANEL_SCREENS 上
-# （兩個畫面、一條路），所以拍它要**配 clicktest ＋ TL_LEVEL=2**——自檢跑完之後
-# 再往前一步開產線編輯。零進度的公司是空的，要看的是它忙起來的樣子。
-TL_CLICKTEST=1 TL_SHOT="C:/tmp/ty_orders.png" TL_MUTE=1 TL_PANEL=tycoon <godot> --path godot --rendering-driver opengl3
-TL_CLICKTEST=1 TL_SHOT="C:/tmp/ty_lines.png" TL_MUTE=1 TL_PANEL=tycoon TL_LEVEL=2 <godot> --path godot --rendering-driver opengl3
 # ★ 「有券可招募」那一格**只有互動才到得了**（零進度沒券、抽完就畢業）。
 # 兩個鉤子一起下 → 自檢跑完全部斷言之後把畫面留在那一格再拍。
 TL_CLICKTEST=1 TL_SHOT="C:/tmp/roster_open.png" TL_MUTE=1 TL_PANEL=roster <godot> --path godot --rendering-driver opengl3
@@ -214,11 +208,9 @@ TL_CLICKTEST=1 TL_PANEL=daily TL_MUTE=1 <godot> --path godot --rendering-driver 
 # 名冊（招募鈕真的扣券、連抽三次不重複、畢業後再按也不扣、抽到的進得了建造欄）
 # ★ 存檔在有鉤子時是零進度＝零券，所以自檢自己先把戰役塞成滿星再點——不寫檔。
 TL_CLICKTEST=1 TL_PANEL=roster TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
-# ★ 潮汐公司（B2.5）：一整條循環——接單 → 產線編輯指派 → 回來 → 收成 → 擴廠
-TL_CLICKTEST=1 TL_PANEL=tycoon TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
 # 設定（音量真的接到匯流排、reduce_motion 當場生效、視窗真的變大再變回來）
 TL_CLICKTEST=1 TL_PANEL=settings TL_MUTE=1 <godot> --path godot --rendering-driver opengl3
-# 主選單（九顆鈕、ESC 往返、無盡那一顆真的開出生成圖）
+# 主選單（八顆鈕、ESC 往返、無盡那一顆真的開出生成圖）
 # ★ on_screen 量的是**那一欄的每一個子節點**，不只是鈕——B2.5 只列舉鈕，
 #   於是 B2.7 多一行字把版本號切出畫面時它照樣是綠的（RG-149）。
 # ★ 斷言看的是**局面裡的地圖帶不帶 endless 旗標**，不是 `endless_seed` 有沒有值
@@ -293,7 +285,6 @@ TheGame/
     ├── scripts/sim/     ★     FlowNetwork / Combat / Tide / Build / MapGen / Score / Clock / Daily / Blueprint /
     │                          Loadout（局外成長進局的唯一入口）——純函式、零 RNG
     ├── scripts/game/          BattleController（每 tick 解算）/ BuildController / SessionState（局的狀態）
-    ├── scripts/meta/          TycoonSim（純函式的**狀態機**）
     ├── scripts/render/        共用美術 token：Palette / Motion / Shapes
     │   ├── 2d/                2D 專用的幾何與繪製：Glyphs（節點幾何＋體積語言）/ Foes（敵人幾何，由欄位推導）/
     │   │                      Terrain（每張圖的地貌）/ TitleBackdrop（標題背景）/ Batch（同色圖形併成一個指令）

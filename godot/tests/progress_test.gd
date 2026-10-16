@@ -3,8 +3,8 @@ extends SceneTree
 ##
 ## 這支測試守的是**憲法級的五件事**，不是數值：
 ##   ① **等級軸的上限就是 +80%**（§1 B2 ②），兩軸各自量，不與科技軸混。
-##   ② **B6：以一份「從沒開過 tycoon」的存檔可以把等級軸推到滿級**——
-##      §4.1 明文「升級材料必須有三條路」，而不通就是違憲。
+##   ② **B6：純靠塔防遊玩（沒有付費、沒有任何附屬系統）可以把等級軸推到滿級**——
+##      §4.1 明文「所有進度都能純靠遊玩取得」，而不通就是違憲。（B4.6 移除潮汐公司後，材料的來源是局末波數與成就。）
 ##   ③ **B3：統一配置榜吃不到等級軸**——它是可以課金加速的那一軸，
 ##      而統一榜是「對 P2W 的唯一制衡」。
 ##   ④ **材料的餘額是推導的**：等級與材料不可能互相矛盾（沒有餘額欄位）。
@@ -29,7 +29,7 @@ const BattleController := preload("res://scripts/game/BattleController.gd")
 
 
 func _initialize() -> void:
-	var t := T.new("progress_test", 146)
+	var t := T.new("progress_test", 137)
 	_axis_cap(t)
 	_axis_actually_moves_the_sim(t)
 	_components_are_derived(t)
@@ -39,7 +39,7 @@ func _initialize() -> void:
 	_metrics_move_with_real_writes(t)
 	_free_to_play_can_max_levels(t)
 	_uniform_board_ignores_levels(t)
-	_company_level_moves_from_both_layers(t)
+	_company_level_moves(t)
 	_save_round_trip(t)
 	quit(t.report())
 
@@ -191,7 +191,7 @@ func _achievements_are_derived(t: T) -> void:
 
 
 func _achievement_table_is_consistent(t: T) -> void:
-	t.eq(Achievements.count(), 20, "M2 的內容矩陣：20 條成就（§5）")
+	t.eq(Achievements.count(), 17, "成就 17 條（§5 的 M2 目標是 20；B4.6 拿掉潮汐公司的三條）")
 	var m := Achievements.metrics(_fresh())
 	var ids: Dictionary = {}
 	for a: Dictionary in Achievements.rows():
@@ -215,12 +215,12 @@ func _achievement_table_is_consistent(t: T) -> void:
 
 	# ★★ **同一份進度不得發兩次券**（B2.7 的第一版就犯了，`roster_test` 抓到）。
 	#
-	# `Roster.earned()` 已經在數戰役星數、無盡波數與 tycoon 的券；成就再對著
+	# `Roster.earned()` 已經在數戰役星數與無盡波數的券；成就再對著
 	# 同一個量發一張，就是同一份進度領兩次——而它的症狀是「戰役滿星 ＝ 3 券」
 	# （§7.13 刻意的對齊，也就是 B6 的證明）悄悄變成 5 券。
 	#
 	# 寫成**通則**而不是釘住那四個 id：日後加第 21 條成就時，這條會自己攔下來。
-	var already_counted := ["cleared", "stars", "best_wave", "tycoon_tokens", "tycoon_level"]
+	var already_counted := ["cleared", "stars", "best_wave"]
 	for a: Dictionary in Achievements.rows():
 		if int(a["token"]) > 0:
 			t.ok(not already_counted.has(String(a["metric"])),
@@ -274,16 +274,17 @@ func _metrics_move_with_real_writes(t: T) -> void:
 	)
 
 
-# ── ② B6：不碰 tycoon 也能滿級 ───────────────────────────────────────
+# ── ② B6：純遊玩也能滿級 ───────────────────────────────────────────
 
-## §4.1 明文：**升級材料必須有三條路**，而且「以從未開啟 tycoon 的存檔可將
-## 等級軸推至滿級」。慢是可以的，不通就是違憲。
+## §4.1 明文：所有進度都能純靠遊玩取得，等級軸也一樣。慢是可以的，不通就是違憲。
 func _free_to_play_can_max_levels(t: T) -> void:
 	var d := _fresh()
 	# 一份「只打塔防」的存檔：戰役滿星、無盡打到 50 波、科技全解鎖、藍圖、每日、招募。
 	for id: String in CampaignData.ids():
 		((d["campaign"] as Dictionary)["stars"] as Dictionary)[id] = 3
-	d["endless"] = {"best_wave": 50, "best_output": 60.0}
+	# ★ sv3 的形狀（逐難度層一筆）：舊的 `{"best_wave", "best_output"}` 讀不到，於是五條無盡成就在這份存檔上永遠達不成、
+	#   印出來的缺口大了一截（520 對 860 材料）。走真正的寫入路徑，不手捏結構。
+	SaveService.apply_endless(d, 50, 60.0, 0)
 	var all_tech: Array = []
 	for n: Dictionary in Tech.NODES:
 		all_tech.append(n["id"])
@@ -292,11 +293,15 @@ func _free_to_play_can_max_levels(t: T) -> void:
 	((d["daily"] as Dictionary)["today"] as Dictionary)["uniform"] = {"wave": 8, "output": 3.0}
 	(d["roster"] as Dictionary)["recruited"] = Roster.RECRUIT_POOL.duplicate()
 
-	# ★ tycoon 一動也沒動。
-	t.eq(d["tycoon"], (SaveService.defaults()["tycoon"] as Dictionary),
-		"★ 這份存檔從沒開過潮汐公司")
+	# ★ B4.6：潮汐公司已移除，存檔裡根本沒有那一格；材料只來自成就與局末。
+	t.ok(not d.has("tycoon"), "★ 新存檔沒有潮汐公司那一格（功能已移除）")
 	var tycoon_free := SaveService.components(d)
 	t.ok(tycoon_free > 0, "純塔防的成就真的發得出材料（得到 %d）" % tycoon_free)
+	# ★ 舊存檔留著的潮汐公司累計材料仍然算數（B4.6：功能拿掉，不能讓已經賺到的東西憑空消失）。
+	var legacy := _fresh()
+	legacy["tycoon"] = {"components": 55}
+	t.eq(SaveService.earned_components(legacy), SaveService.earned_components(_fresh()) + 55,
+		"★ 舊存檔 `tycoon.components` 仍計入已賺到的材料（讀檔不掉東西）")
 
 	# 剩下的缺口用局末波數補。**算得出來要打幾波**才是一條有意義的斷言。
 	var need := Levels.total_cost() * Levels.AXES.size()
@@ -307,7 +312,7 @@ func _free_to_play_can_max_levels(t: T) -> void:
 			SaveService.apply_level_up(d, axis)
 	for axis: String in Levels.AXES:
 		t.eq(Levels.level_of(d, axis), Levels.MAX_LEVEL,
-			"★ 從沒開過 tycoon 的存檔把「%s」推到滿級（憲法 B6）" % axis)
+			"★ 純遊玩的存檔把「%s」推到滿級（憲法 B6）" % axis)
 	print("  [B6] 兩軸滿級共 %d 材料；純塔防成就給 %d，缺口 %d 波（≈ %d 局打到 50 波）" % [
 		need, tycoon_free, short, int(ceil(float(short) / 50.0))
 	])
@@ -360,22 +365,17 @@ func _uniform_board_ignores_levels(t: T) -> void:
 
 # ── 公司等級 ─────────────────────────────────────────────────────────
 
-func _company_level_moves_from_both_layers(t: T) -> void:
+func _company_level_moves(t: T) -> void:
 	var base := _fresh()
 	t.eq(Achievements.company_level(base), 1, "新存檔是公司等級 1")
 	t.eq(Achievements.company_points(base), 0,
-		"★ 新存檔 0 點（廠等從 1 起跳，不該白送那 12 點）")
+		"★ 新存檔 0 點（公司等級 1 看起來要是從零開始的）")
 
 	# 只推塔防。
 	var tower_only := _fresh()
 	for id: String in CampaignData.ids():
 		((tower_only["campaign"] as Dictionary)["stars"] as Dictionary)[id] = 3
 	t.ok(Achievements.company_points(tower_only) > 0, "★ 只玩塔防也推得動公司等級")
-
-	# 只推 tycoon。
-	var tycoon_only := _fresh()
-	(tycoon_only["tycoon"] as Dictionary)["level"] = 6
-	t.ok(Achievements.company_points(tycoon_only) > 0, "★ 只玩潮汐公司也推得動公司等級")
 
 	var p := Achievements.company_progress(base)
 	t.eq(p[1], Achievements.COMPANY_STEP, "進度條的分母是常數本身")

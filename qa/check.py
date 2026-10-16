@@ -5,7 +5,7 @@ CLAUDE.md「跑與測」列了二十幾條各自獨立的指令。這支把它�
 讓接手的人不必先讀完 CLAUDE.md 才知道「改完要跑什麼」。
 
     python qa/check.py lint                 靜態地雷掃描（不需要 Godot，約 1 秒）
-    python qa/check.py tests                headless 單元／整合測試（22 支，約 5 分鐘）
+    python qa/check.py tests                headless 單元／整合測試（21 支，約 5 分鐘）
     python qa/check.py tests flow save      只跑指定幾支
     python qa/check.py tests --fast         跳過最慢的 campaign_test（約 3 分鐘）
     python qa/check.py click                輸入層自檢（需要視窗；每條約 6 秒）
@@ -43,7 +43,7 @@ GODOT = Path(os.environ.get("TL_GODOT", ROOT / "tools" / "godot" / "Godot_v4.7-s
 # 跑的順序 ＝ 從快到慢，壞掉的地基先紅。campaign 最慢（五關參考解實跑）。
 TESTS = [
     "flow", "build", "combat", "tide", "save", "determinism", "hud", "tech", "audio",
-    "perf", "fuzz", "stage3d", "render_cache", "endless", "daily", "blueprint", "roster", "tycoon", "progress",
+    "perf", "fuzz", "stage3d", "render_cache", "endless", "daily", "blueprint", "roster", "progress",
     "difficulty", "m2", "campaign",
 ]
 
@@ -51,7 +51,7 @@ TESTS = [
 # ⚠ 這是唯一不能 --headless 的檢查（dummy display server 不做 GUI 命中測試）。
 CLICKTESTS: list[tuple[str, str, dict[str, str]]] = [
     ("battle", "", {}), ("endless", "endless", {}), ("campaign", "campaign", {}), ("tech", "tech", {}), ("achievements", "achievements", {}),
-    ("tiers", "tiers", {}), ("daily", "daily", {}), ("roster", "roster", {}), ("tycoon", "tycoon", {}),
+    ("tiers", "tiers", {}), ("daily", "daily", {}), ("roster", "roster", {}),
     ("settings", "settings", {}), ("title", "title", {}),
     # 傾斜舞台的 smoke（B4.0 脊椎 → B4.1）：只問 `Stage.gd` 的契約，走完整輸入路由蓋出一個節點；
     # 並走一遍傾斜的四個進入點（按鈕、滑桿、右鍵拖曳、Shift＋滾輪）與傾斜下的全景、點擊。
@@ -80,8 +80,6 @@ SHOTS: dict[str, dict[str, str]] = {
     "daily": {"TL_PANEL": "daily"},
     "roster": {"TL_PANEL": "roster"},
     "roster_open": {"TL_CLICKTEST": "1", "TL_PANEL": "roster"},
-    "tycoon_orders": {"TL_CLICKTEST": "1", "TL_PANEL": "tycoon"},
-    "tycoon_lines": {"TL_CLICKTEST": "1", "TL_PANEL": "tycoon", "TL_LEVEL": "2"},
     "tech": {"TL_CLICKTEST": "1", "TL_PANEL": "tech"},
     "achievements": {"TL_CLICKTEST": "1", "TL_PANEL": "achievements"},
     "settings": {"TL_PANEL": "settings"},
